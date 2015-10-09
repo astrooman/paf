@@ -1,8 +1,10 @@
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <string>
 #include <vector>
 
 #include <cuda.h>
@@ -31,6 +33,8 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 	nvtxRangePushEx(&eventAttrib); \
 }
 #define POP_RANGE nvtxRangePop();
+
+void geterror(cufftResult res, std::string place);
 
 int main(int argc, char* argv[])
 {
@@ -68,11 +72,11 @@ int main(int argc, char* argv[])
 
     PUSH_RANGE("Single FFT init", 1)
     cufftHandle singleplan;
-    cufftPlan1d(&singleplan, fftsize, CUFFT_C2C, 1);
+    geterror(cufftPlan1d(&singleplan, fftsize, CUFFT_C2C, 1), "single FFT plan");
     POP_RANGE
 
     PUSH_RANGE("Single FFT exec", 2)
-    cufftExecC2C(singleplan, d_inarray, d_inarray, CUFFT_FORWARD);
+    geterror(cufftExecC2C(singleplan, d_inarray, d_inarray, CUFFT_FORWARD), "single FFT execution");
     POP_RANGE
 
     cufftDestroy(singleplan);
@@ -97,11 +101,11 @@ int main(int argc, char* argv[])
 
     PUSH_RANGE("Multi FFT init", 3)
     cufftHandle multiplan;
-    cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize);
+    geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi FFT plan");
     POP_RANGE
 
     PUSH_RANGE("Multi FFT exec", 4)
-    cufftExecC2C(multiplan, d_inarraym, d_inarraym, CUFFT_FORWARD);
+    geterror(cufftExecC2C(multiplan, d_inarraym, d_inarraym, CUFFT_FORWARD), "multi FFT execution");
     POP_RANGE
 
     cufftDestroy(multiplan);
@@ -110,4 +114,10 @@ int main(int argc, char* argv[])
 
     return 0;
 
+}
+
+void geterror(cufftResult res, std::string place)
+{
+    if (res != CUFFT_SUCCESS)
+        cout << "Error in " << place << "!! Error: " << tres << endl;
 }
