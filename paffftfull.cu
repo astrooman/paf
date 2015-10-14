@@ -1,3 +1,16 @@
+/***********************************
+VERSION OF THE FFT ALGORITHM FOR PAF
+WITH FFT, POWER, AND AVERAGING ADDED
+
+GENERAL TIMING RESULRS:
+(E - EVENTS, P - NVPROF)
+
+
+BOTH RESULTS QUOTED AS THERE ARE
+SOME DISAGREEMENTS ON WHICH ONE IS
+THE MOST RELIABLE ESTIMATE
+***********************************/
+
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -39,6 +52,10 @@ void geterror(cufftResult res, std::string place);
 int main(int argc, char* argv[])
 {
 
+    if (argc >= 2) {
+
+
+    }
 
 
     const unsigned int arrsize = 32;
