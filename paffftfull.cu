@@ -2,7 +2,7 @@
 VERSION OF THE FFT ALGORITHM FOR PAF
 WITH FFT, POWER, AND AVERAGING ADDED
 
-GENERAL TIMING RESULRS:
+GENERAL TIMING RESULTS:
 (E - EVENTS, P - NVPROF)
 
 
@@ -28,6 +28,7 @@ THE MOST RELIABLE ESTIMATE
 using std::cerr;
 using std::cout;
 using std::endl;
+using std::string;
 
 
 static const uint32_t colors[] = { 0x0000ff00, 0x000000ff, 0x00ffff00, 0x00ff00ff, 0x0000ffff, 0x00ff0000, 0x00ffffff, 0x00fd482f };
@@ -47,40 +48,80 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 }
 #define POP_RANGE nvtxRangePop();
 
-void geterror(cufftResult res, std::string place);
+void etrror(cufftResult res, std::string place);
+void printhelp(void);
+
+// GPU kernels
+__global__ void powerk();
+
+__global__ void addk();
 
 int main(int argc, char* argv[])
 {
-
+	bool preinit = true;
+	bool usekernel = true;
+	string mode = "n";
     if (argc >= 2) {
-
-
+		for (int ii = 0; ii < argc; ii++) {
+			if (string(argv[ii]) == "-h") {
+				printhelp();
+			} else if (string(argv[ii]) == "-m") {
+				ii++;
+				mode = string(argv++);
+			} else if (string(argv[ii]) == "-p") {
+				preinit = false;
+			} else if (string(argv[ii]) == "-t") {
+				usekernel = false;
+			}
     }
 
+	if (preinit) {
 
-    const unsigned int arrsize = 32;
+		cout << "Pre-initialisation...\n";
+    	PUSH_RANGE("FFT pre-init", 0)
+    	// this should make the first proper FFT execution faster
+    	cufftHandle preinit;
+    	cufftPlan1d(&preinit, fftsize, CUFFT_C2C, 1);
+    	POP_RANGE
+
+	}
+
+	// this stuff will stay the same between runs
+	// const so I don't change it by mistake at some point
+	const unsigned int arrsize = 32;
     const unsigned int fftsize = arrsize;
     const unsigned int batchsize = 1152;    // the number of FFTs we want to perform at once
-    cufftComplex *h_inarray = new cufftComplex[arrsize];
+	const unsigned int fullsize = fftsize * batchsize;
+    cufftComplex *h_inarray = new cufftComplex[fullsize];
     int sizes[1] = {fftsize};
+	unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
+	std::mt19937_64 arreng{seed};
+	std::normal_distribution<float> arrdis(0.0, 1.0);
+	// treat is as one array, but in reality it is batch of independent arrays
+	for (int ii = 0; ii < fullsize; ii++) {
+			h_inarray[ii].x = arrdis(arreng);
+			h_inarray[ii].y = arrdis(arreng);
+	}
+
+	if (mode == "n") {
+
+		cout << "Will use standard memory copies...\n";
+
+	} else if (mode == "p") {
+
+		cout << "Will use pinned host memory...\n";
+
+	} else if (mode == "a") {
+
+		cout << "Will use asynchronous memory copies...\n";
+
+	} else {
+		cout << "Invalid memory mode option!! Will now quit!!";
+		exit(EXIT_FAILURE);
+	}
 
 
-    cout << "Pre-initialisation...\n";
 
-    PUSH_RANGE("FFT pre-init", 0)
-    // this should make the first proper FFT execution faster
-    cufftHandle preinit;
-    cufftPlan1d(&preinit, fftsize, CUFFT_C2C, 1);
-    POP_RANGE
-
-    unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::mt19937_64 arreng{seed};
-    std::normal_distribution<float> arrdis(0.0, 1.0);
-
-    for (int ii = 0; ii < arrsize; ii++) {
-            h_inarray[ii].x = arrdis(arreng);
-            h_inarray[ii].y = arrdis(arreng);
-    }
 
     cufftComplex *d_inarray;
     cudaMalloc((void**)&d_inarray, sizeof(cufftComplex) * arrsize);
@@ -243,4 +284,15 @@ void geterror(cufftResult res, std::string place)
 {
     if (res != CUFFT_SUCCESS)
         cout << "Error in " << place << "!! Error: " << res << endl;
+}
+
+void printhelp(void)
+{
+	cout << "Test code for PAF FFT code" << endl << endl;
+	cout << "Available options:" << endl;
+	cout << "\t-p - switch pre-initialisation off" << endl;
+	cout << "\t-t - use Thrust functions instead of custom kernels for power and averaging" << endl;
+	cout << "\t-m - memory mode: n (default) - use cudaMemcpy()" << endl;
+	cout << "\t\tp - use pinned memory, a - use asynchronous copies" << endl;
+
 }
