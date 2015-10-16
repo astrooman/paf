@@ -48,7 +48,7 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 }
 #define POP_RANGE nvtxRangePop();
 
-void etrror(cufftResult res, std::string place);
+void geterror(cufftResult res, std::string place);
 void printhelp(void);
 
 // GPU kernel
@@ -57,7 +57,8 @@ void printhelp(void);
 // which will significantly decrease the effective bandwidth
 
 // st version with offset memory access
-__global__ void poweraddkof(cufftComplex *arr_in, float *arr_out, unsigned int size) {
+__global__ void poweraddkof(cufftComplex *arr_in, float *arr_out, unsigned int size)
+{
 
 	int index1 = blockIdx.x * blockDim.x + threadIdx.x;
 	int index2 = blockIdx.x * blockDim.x + threadIdx.x + size;
@@ -65,7 +66,7 @@ __global__ void poweraddkof(cufftComplex *arr_in, float *arr_out, unsigned int s
 	if (index1 < size) {
 		float power1 = arr_in[index1].x * arr_in[index1].x + arr_in[index1].y * arr_in[index1].y;
 		float power2 = arr_in[index2].x * arr_in[index2].x + arr_in[index2].y * arr_in[index2].y;
-		float arr_out[index1] = (power1 + power2) / 2;
+		arr_out[index1] = (power1 + power2) / 2;
 	}
 }
 
@@ -80,12 +81,13 @@ int main(int argc, char* argv[])
 				printhelp();
 			} else if (string(argv[ii]) == "-m") {
 				ii++;
-				mode = string(argv++);
+				mode = string(argv[ii]);
 			} else if (string(argv[ii]) == "-p") {
 				preinit = false;
 			} else if (string(argv[ii]) == "-t") {
 				usekernel = false;
 			}
+    		}
     }
 
 	if (preinit) {
@@ -94,7 +96,7 @@ int main(int argc, char* argv[])
     	PUSH_RANGE("FFT pre-init", 0)
     	// this should make the first proper FFT execution faster
     	cufftHandle preinit;
-    	cufftPlan1d(&preinit, fftsize, CUFFT_C2C, 1);
+    	cufftPlan1d(&preinit, 32, CUFFT_C2C, 1);
     	POP_RANGE
 
 	}
@@ -156,7 +158,7 @@ int main(int argc, char* argv[])
 
 	} else if (mode == "p") {
 
-		cout << "Will use pinned memory"
+		cout << "Will use pinned memory";
 
 	} else if (mode == "m") {
 
@@ -164,11 +166,11 @@ int main(int argc, char* argv[])
 
 		cufftComplex d_inarray;
 		cudaSetDeviceFlags(cudaDeviceMapHost);
-		cudaHostAlloc(void**)&h_inarraym, memsize, cudaHostAllocMapped);
-		cudaHostGetDevicePointer(&d_inarray, h_inarraym, 0);
+		cudaHostAlloc((void**)&h_inarray, memsize, cudaHostAllocMapped);
+		cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarray, 0);
 		for (int ii = 0; ii < fullsize; ii++) {
-				h_inarraym[ii].x = arrdis(arreng);
-				h_inarraym[ii].y = arrdis(arreng);
+				h_inarray[ii].x = arrdis(arreng);
+				h_inarray[ii].y = arrdis(arreng);
 		}
 
 	} else if (mode == "a") {
