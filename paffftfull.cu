@@ -51,10 +51,23 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 void etrror(cufftResult res, std::string place);
 void printhelp(void);
 
-// GPU kernels
-__global__ void powerk();
+// GPU kernel
+// need to figure out how to store the data efficienty
+// don't want to introduce offset memory access
+// which will significantly decrease the effective bandwidth
 
-__global__ void addk();
+// st version with offset memory access
+__global__ void poweraddkof(cufftComplex *arr_in, float *arr_out, unsigned int size) {
+
+	int index1 = blockIdx.x * blockDim.x + threadIdx.x;
+	int index2 = blockIdx.x * blockDim.x + threadIdx.x + size;
+
+	if (index1 < size) {
+		float power1 = arr_in[index1].x * arr_in[index1].x + arr_in[index1].y * arr_in[index1].y;
+		float power2 = arr_in[index2].x * arr_in[index2].x + arr_in[index2].y * arr_in[index2].y;
+		float arr_out[index1] = (power1 + power2) / 2;
+	}
+}
 
 int main(int argc, char* argv[])
 {
@@ -91,13 +104,18 @@ int main(int argc, char* argv[])
 	const unsigned int arrsize = 32;
     const unsigned int fftsize = arrsize;
     const unsigned int batchsize = 1152;    // the number of FFTs we want to perform at once
-	const unsigned int fullsize = fftsize * batchsize;
-    cufftComplex *h_inarray = new cufftComplex[fullsize];
+	const unsigned int timesamp = 2;	// will need to process more than one timesamples for averaging
+	const unsigned int fullsize = fftsize * batchsize * timesamp;
+	const unsigned int memsize = fullsize * sizeof(cufftComplex);
+    // complex voltage goes in
+	cufftComplex *h_inarray = new cufftComplex[fullsize];
+	// time-averaged power goes out
+	float *h_outarray = new float[fullsize / timesamp];
     int sizes[1] = {fftsize};
 	unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
 	std::mt19937_64 arreng{seed};
 	std::normal_distribution<float> arrdis(0.0, 1.0);
-	// treat is as one array, but in reality it is batch of independent arrays
+
 	for (int ii = 0; ii < fullsize; ii++) {
 			h_inarray[ii].x = arrdis(arreng);
 			h_inarray[ii].y = arrdis(arreng);
@@ -105,11 +123,53 @@ int main(int argc, char* argv[])
 
 	if (mode == "n") {
 
+		// limit is 1024 threads per block on all compute capablities
+		// warp size is 32 on all compute capabilities
+		unsigned int nthreads = 256;
+		unsigned int nblocks = (fullsize / timesamp - 1) / nthreads + 1;
+
 		cout << "Will use standard memory copies...\n";
+
+		cufftComplex *d_inarray;
+		cudaMalloc((void**)&d_inarray, memsize);
+		// make sure memsize is even, i.e. timesamp is even
+		// need only half of the original size for data averaged in time
+		float *d_outarray;
+		cudaMalloc((void**)&d_outarray, fullsize / timesamp * sizeof(float));
+
+		PUSH_RANGE("Multi FFT init", 1)
+		cufftHandle multiplan;
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi FFT plan");
+		POP_RANGE
+
+		// time everything, together with memory copies
+		PUSH_RANGE("Multi FFT exec", 2)
+		cudaMemcpy(d_inarray, h_inarray, memsize, cudaMemcpyHostToDevice);
+		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "multi FFT execution");
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		cudaMemcpy(h_outarray, d_outarray, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost);
+		POP_RANGE
+
+		cufftDestroy(multiplan);
+		cudaFree(d_inarray);
+		cudaFree(d_outarray);
 
 	} else if (mode == "p") {
 
-		cout << "Will use pinned host memory...\n";
+		cout << "Will use pinned memory"
+
+	} else if (mode == "m") {
+
+		cout << "Will use mapped pinned memory...\n";
+
+		cufftComplex d_inarray;
+		cudaSetDeviceFlags(cudaDeviceMapHost);
+		cudaHostAlloc(void**)&h_inarraym, memsize, cudaHostAllocMapped);
+		cudaHostGetDevicePointer(&d_inarray, h_inarraym, 0);
+		for (int ii = 0; ii < fullsize; ii++) {
+				h_inarraym[ii].x = arrdis(arreng);
+				h_inarraym[ii].y = arrdis(arreng);
+		}
 
 	} else if (mode == "a") {
 
@@ -117,128 +177,13 @@ int main(int argc, char* argv[])
 
 	} else {
 		cout << "Invalid memory mode option!! Will now quit!!";
-		exit(EXIT_FAILURE);
 	}
 
+	cufftDestroy(preinit);
+	delete [] h_inarray;
+	delete [] h_outarray;
 
-
-
-    cufftComplex *d_inarray;
-    cudaMalloc((void**)&d_inarray, sizeof(cufftComplex) * arrsize);
-    cudaMemcpy(d_inarray, h_inarray, sizeof(cufftComplex) * arrsize, cudaMemcpyHostToDevice);
-
-    cout << "Performing single FFT...\n";
-
-    cudaProfilerStart();
-
-    PUSH_RANGE("Single FFT init", 1)
-    cufftHandle singleplan;
-    geterror(cufftPlan1d(&singleplan, fftsize, CUFFT_C2C, 1), "single FFT plan");
-    POP_RANGE
-
-    PUSH_RANGE("Single FFT exec", 2)
-    geterror(cufftExecC2C(singleplan, d_inarray, d_inarray, CUFFT_FORWARD), "single FFT execution");
-    POP_RANGE
-
-    cufftDestroy(singleplan);
-    cudaFree(d_inarray);
-    delete [] h_inarray;
-
-    cufftComplex *h_inarraym = new cufftComplex[arrsize * batchsize];
-
-    for (int ii = 0; ii < arrsize * batchsize; ii++) {
-        h_inarraym[ii].x = arrdis(arreng);
-        h_inarraym[ii].y = arrdis(arreng);
-
-    }
-
-    cufftComplex *d_inarraym;
-    cudaMalloc((void**)&d_inarraym, sizeof(cufftComplex) * arrsize * batchsize);
-    cudaMemcpy(d_inarraym, h_inarraym, sizeof(cufftComplex) * arrsize * batchsize, cudaMemcpyHostToDevice);
-
-    PUSH_RANGE("Multi FFT init", 3)
-    cufftHandle multiplan;
-    geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi FFT plan");
-    POP_RANGE
-
-    PUSH_RANGE("Multi FFT exec", 4)
-    geterror(cufftExecC2C(multiplan, d_inarraym, d_inarraym, CUFFT_FORWARD), "multi FFT execution");
-    POP_RANGE
-
-    cufftDestroy(multiplan);
-    cudaFree(d_inarraym);
-    delete [] h_inarraym;
-
-    unsigned int timesamp = 1;
-
-    cufftComplex *h_inarraym2 = new cufftComplex[arrsize * batchsize * timesamp];
-
-    for (int ii = 0; ii < arrsize * batchsize * timesamp; ii++) {
-        h_inarraym2[ii].x = arrdis(arreng);
-        h_inarraym2[ii].y = arrdis(arreng);
-
-    }
-
-    cufftComplex *d_inarraym2;
-    cudaMalloc((void**)&d_inarraym2, sizeof(cufftComplex) * arrsize * batchsize * timesamp);
-    cudaMemcpy(d_inarraym2, h_inarraym2, sizeof(cufftComplex) * arrsize * batchsize * timesamp, cudaMemcpyHostToDevice);
-
-    PUSH_RANGE("Multi FFT 2 init", 5)
-    cufftHandle multi2plan;
-    geterror(cufftPlanMany(&multi2plan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "multi FFT 2 plan");
-    POP_RANGE
-
-    PUSH_RANGE("Multi FFT 2 exec", 6)
-    geterror(cufftExecC2C(multi2plan, d_inarraym2, d_inarraym2, CUFFT_FORWARD), "multi FFT 2 execution");
-    POP_RANGE
-
-    cufftDestroy(multi2plan);
-    cudaFree(d_inarraym2);
-    delete [] h_inarraym2;
-
-    cout << "Use different timing methods...\n";
-
-    cufftComplex *h_inarraym3 = new cufftComplex[arrsize * batchsize * timesamp];
-
-    for (int ii = 0; ii < arrsize * batchsize * timesamp; ii++) {
-        h_inarraym3[ii].x = arrdis(arreng);
-        h_inarraym3[ii].y = arrdis(arreng);
-
-    }
-
-    cufftComplex *d_inarraym3;
-    cudaMalloc((void**)&d_inarraym3, sizeof(cufftComplex) * arrsize * batchsize * timesamp);
-    cudaMemcpy(d_inarraym3, h_inarraym3, sizeof(cufftComplex) * arrsize * batchsize * timesamp, cudaMemcpyHostToDevice);
-
-    cudaEvent_t init_start, init_end, exec_start, exec_end;
-    cudaEventCreate(&init_start);
-    cudaEventCreate(&init_end);
-    cudaEventCreate(&exec_start);
-    cudaEventCreate(&exec_end);
-
-    cudaEventRecord(init_start);
-    cufftHandle multi3plan;
-    geterror(cufftPlanMany(&multi3plan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "multi FFT 3 plan");
-    cudaEventRecord(init_end);
-
-    cudaEventRecord(exec_start);
-    geterror(cufftExecC2C(multi3plan, d_inarraym3, d_inarraym3, CUFFT_FORWARD), "multi FFT 3 execution");
-    cudaEventRecord(exec_end);
-
-    float init_time, exec_time;
-
-    cudaEventElapsedTime(&init_time, init_start, init_end);
-    cudaEventElapsedTime(&exec_time, exec_start, exec_end);
-
-    cout << "Init time: " << init_time << "ms\n";
-    cout << "Exec time: " << exec_time << "ms\n";
-
-    cufftDestroy(multi3plan);
-    cudaFree(d_inarraym3);
-    delete [] h_inarraym3;
-
-    // try slightly different approach to memory to limit HtoD time
-    cudaSetDeviceFlags(cudaDeviceMapHost);
+	/*
 
     cufftComplex *h_inarraym4;
     cufftComplex *d_inarraym4;
@@ -274,6 +219,8 @@ int main(int argc, char* argv[])
     cudaEventDestroy(exec_start);
     cudaEventDestroy(exec_end);
 
+	*/
+
     cudaDeviceReset();
 
     return 0;
@@ -293,6 +240,6 @@ void printhelp(void)
 	cout << "\t-p - switch pre-initialisation off" << endl;
 	cout << "\t-t - use Thrust functions instead of custom kernels for power and averaging" << endl;
 	cout << "\t-m - memory mode: n (default) - use cudaMemcpy()" << endl;
-	cout << "\t\tp - use pinned memory, a - use asynchronous copies" << endl;
+	cout << "\t\tp - use pinned memory, m - use mapped pinned memory, a - use asynchronous copies" << endl;
 
 }
