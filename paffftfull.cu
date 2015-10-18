@@ -48,7 +48,13 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 }
 #define POP_RANGE nvtxRangePop();
 
-void geterror(cufftResult res, std::string place);
+template <typename T>
+void geterror(T res, std::string place)
+{
+    if ( (res != CUFFT_SUCCESS) && (res != CUDA_SUCCESS) )
+        cout << "Error in " << place << "!! Error: " << res << endl;
+}
+
 void printhelp(void);
 
 // GPU kernel
@@ -100,7 +106,7 @@ int main(int argc, char* argv[])
     	PUSH_RANGE("FFT pre-init", 0)
     	// this should make the first proper FFT execution faster
     	cufftHandle preinit;
-    	cufftPlan1d(&preinit, 32, CUFFT_C2C, 1);
+    	geterror(cufftPlan1d(&preinit, 32, CUFFT_C2C, 1), "init plan make");
     	POP_RANGE
 
 	}
@@ -133,32 +139,31 @@ int main(int argc, char* argv[])
 
 	if (mode == "n") {
 
-
 		cout << "Will use standard memory copies...\n";
 
 		cufftComplex *d_inarray;
-		cudaMalloc((void**)&d_inarray, memsize);
+		geterror(cudaMalloc((void**)&d_inarray, memsize), "device out malloc");
 		// make sure memsize is even, i.e. timesamp is even
 		// need only half of the original size for data averaged in time
 		float *d_outarray;
-		cudaMalloc((void**)&d_outarray, fullsize / timesamp * sizeof(float));
+		geterror(cudaMalloc((void**)&d_outarray, fullsize / timesamp * sizeof(float)), "device out malloc");
 
 		PUSH_RANGE("Multi FFT init", 1)
 		cufftHandle multiplan;
-		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi FFT plan");
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "default plan make");
 		POP_RANGE
 
 		// time everything, together with memory copies
 		PUSH_RANGE("Multi FFT exec", 2)
-		cudaMemcpy(d_inarray, h_inarray, memsize, cudaMemcpyHostToDevice);
-		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "multi FFT execution");
-		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
-		cudaMemcpy(h_outarray, d_outarray, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost);
+		geterror(cudaMemcpy(d_inarray, h_inarray, memsize, cudaMemcpyHostToDevice), "HtD copy");
+		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "default execution");
+		geterror(poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp), "default kernel exec");
+		geterror(cudaMemcpy(h_outarray, d_outarray, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost), "DtH copy");
 		POP_RANGE
 
-		cufftDestroy(multiplan);
-		cudaFree(d_inarray);
-		cudaFree(d_outarray);
+		geterror(cufftDestroy(multiplan), "default plan destroy");
+		geterror(cudaFree(d_inarray), "device in free");
+		geterror(cudaFree(d_outarray), "device out free");
 
 	} else if (mode == "p") {
 
@@ -170,10 +175,10 @@ int main(int argc, char* argv[])
 
 		cufftComplex *h_inarraym, *d_inarray;
 		float *h_outarraym, *d_outarray;
-		cudaHostAlloc((void**)&h_inarraym, memsize, cudaHostAllocMapped);
-		cudaHostAlloc((void**)&h_outarraym, memsize / timesamp, cudaHostAllocMapped);
-		cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarraym, 0);
-		cudaHostGetDevicePointer((void**)&d_outarray, (void*)h_outarraym, 0);
+		geterror(cudaHostAlloc((void**)&h_inarraym, memsize, cudaHostAllocMapped), "host in alloc");
+		geterror(cudaHostAlloc((void**)&h_outarraym, memsize / timesamp, cudaHostAllocMapped), "host out alloc");
+		geterror(cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarraym, 0), "in dev pointer");
+		geterror(cudaHostGetDevicePointer((void**)&d_outarray, (void*)h_outarraym, 0), "out dev pointer");
 
 		for (int ii = 0; ii < fullsize; ii++) {
 				h_inarraym[ii].x = arrdis(arreng);
@@ -182,16 +187,17 @@ int main(int argc, char* argv[])
 
 		PUSH_RANGE("Multi mapped FFT init", 1)
 		cufftHandle multiplan;
-		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi mapped FFT plan");
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "mapped plan make");
 		POP_RANGE
 
 		PUSH_RANGE("Multi mapped FFT exec", 2)
-		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "multi mapped FFT execution");
-		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "mapped execution");
+		geterror(poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp), "mapped kernel exec");
 		POP_RANGE
 
-		cudaFreeHost(h_inarraym);
-		cudaFreeHost(h_outarraym);
+		geterror(cufftDestroy(multiplan), "mapped plan destroy")
+		geterror(cudaFreeHost(h_inarraym), "host in free");
+		geterror(cudaFreeHost(h_outarraym), "host out free");
 
 	} else if (mode == "a") {
 
@@ -201,7 +207,7 @@ int main(int argc, char* argv[])
 		cout << "Invalid memory mode option!! Will now quit!!";
 	}
 
-	cufftDestroy(preinit);
+	geterror(cufftDestroy(preinit), "init plan destroy";
 	delete [] h_inarray;
 	delete [] h_outarray;
 
@@ -209,12 +215,6 @@ int main(int argc, char* argv[])
 
     return 0;
 
-}
-
-void geterror(cufftResult res, std::string place)
-{
-    if (res != CUFFT_SUCCESS)
-        cout << "Error in " << place << "!! Error: " << res << endl;
 }
 
 void printhelp(void)
