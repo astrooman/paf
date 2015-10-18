@@ -90,6 +90,10 @@ int main(int argc, char* argv[])
     		}
     }
 
+	// that must be done before any CUDA context is created
+	if (mode == "m")
+		cudaSetDeviceFlags(cudaDeviceMapHost);
+
 	if (preinit) {
 
 		cout << "Pre-initialisation...\n";
@@ -165,13 +169,28 @@ int main(int argc, char* argv[])
 		cout << "Will use mapped pinned memory...\n";
 
 		cufftComplex d_inarray;
-		cudaSetDeviceFlags(cudaDeviceMapHost);
-		cudaHostAlloc((void**)&h_inarray, memsize, cudaHostAllocMapped);
-		cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarray, 0);
+		cudaHostAlloc((void**)&h_inarraym, memsize, cudaHostAllocMapped);
+		cudaHostAlloc((void**)&h_outarraym, memsize / timesamp, cudaHostAllocMapped);
+		cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarraym, 0);
+		cudaHostGetDevicePointer((void**)&d_outarray, (void*)h_outarraym, 0);
+
 		for (int ii = 0; ii < fullsize; ii++) {
-				h_inarray[ii].x = arrdis(arreng);
-				h_inarray[ii].y = arrdis(arreng);
+				h_inarraym[ii].x = arrdis(arreng);
+				h_inarraym[ii].y = arrdis(arreng);
 		}
+
+		PUSH_RANGE("Multi mapped FFT init", 1)
+		cufftHandle multiplan;
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi mapped FFT plan");
+		POP_RANGE
+
+		PUSH_RANGE("Multi mapped FFT exec", 2)
+		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "multi mapped FFT execution");
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		POP_RANGE
+
+		cudaFreeHost(h_inarraym);
+		cudaFreeHost(h_outarraym);
 
 	} else if (mode == "a") {
 
@@ -184,44 +203,6 @@ int main(int argc, char* argv[])
 	cufftDestroy(preinit);
 	delete [] h_inarray;
 	delete [] h_outarray;
-
-	/*
-
-    cufftComplex *h_inarraym4;
-    cufftComplex *d_inarraym4;
-
-    cudaHostAlloc((void**)&h_inarraym4, sizeof(cufftComplex) * arrsize * batchsize, cudaHostAllocMapped);
-    cudaHostGetDevicePointer((void**)&d_inarraym4, (void *)h_inarraym4, 0);
-
-    for (int ii = 0; ii < arrsize * batchsize; ii++) {
-        h_inarraym4[ii].x = arrdis(arreng);
-        h_inarraym4[ii].y = arrdis(arreng);
-
-    }
-
-    cudaEventRecord(init_start);
-    cufftHandle multi4plan;
-    geterror(cufftPlanMany(&multi4plan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "multi FFT 4 plan");
-    cudaEventRecord(init_end);
-
-    cudaEventRecord(exec_start);
-    geterror(cufftExecC2C(multi4plan, d_inarraym4, d_inarraym4, CUFFT_FORWARD), "multi FFT 4 execution");
-    cudaEventRecord(exec_end);
-
-    cudaEventElapsedTime(&init_time, init_start, init_end);
-    cudaEventElapsedTime(&exec_time, exec_start, exec_end);
-
-    cout << "Init time: " << init_time << "ms\n";
-    cout << "Exec time: " << exec_time << "ms\n";
-
-    cudaFreeHost(h_inarraym4);
-    cufftDestroy(multi4plan);
-    cudaEventDestroy(init_start);
-    cudaEventDestroy(init_end);
-    cudaEventDestroy(exec_start);
-    cudaEventDestroy(exec_end);
-
-	*/
 
     cudaDeviceReset();
 
