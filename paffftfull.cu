@@ -113,6 +113,10 @@ int main(int argc, char* argv[])
 	const unsigned int timesamp = 2;	// will need to process more than one timesamples for averaging
 	const unsigned int fullsize = fftsize * batchsize * timesamp;
 	const unsigned int memsize = fullsize * sizeof(cufftComplex);
+	// limit is 1024 threads per block on all compute capablities
+	// warp size is 32 on all compute capabilities
+	unsigned int nthreads = 256;
+	unsigned int nblocks = (fullsize / timesamp - 1) / nthreads + 1;
     // complex voltage goes in
 	cufftComplex *h_inarray = new cufftComplex[fullsize];
 	// time-averaged power goes out
@@ -129,10 +133,6 @@ int main(int argc, char* argv[])
 
 	if (mode == "n") {
 
-		// limit is 1024 threads per block on all compute capablities
-		// warp size is 32 on all compute capabilities
-		unsigned int nthreads = 256;
-		unsigned int nblocks = (fullsize / timesamp - 1) / nthreads + 1;
 
 		cout << "Will use standard memory copies...\n";
 
@@ -168,7 +168,8 @@ int main(int argc, char* argv[])
 
 		cout << "Will use mapped pinned memory...\n";
 
-		cufftComplex d_inarray;
+		cufftComplex *h_inarraym, *d_inarray;
+		float *h_outarraym, *d_outarray;
 		cudaHostAlloc((void**)&h_inarraym, memsize, cudaHostAllocMapped);
 		cudaHostAlloc((void**)&h_outarraym, memsize / timesamp, cudaHostAllocMapped);
 		cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarraym, 0);
