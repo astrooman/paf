@@ -62,11 +62,12 @@ void printhelp(void);
 // don't want to introduce offset memory access
 // which will significantly decrease the effective bandwidth
 
-// st version with offset memory access
+// of version with offset memory access
 __global__ void poweraddkof(cufftComplex *arr_in, float *arr_out, unsigned int size)
 {
 
 	int index1 = blockIdx.x * blockDim.x + threadIdx.x;
+	// offset introduced - can cause some slowing down
 	int index2 = blockIdx.x * blockDim.x + threadIdx.x + size;
 
 	if (index1 < size) {
@@ -177,7 +178,7 @@ int main(int argc, char* argv[])
 		cufftComplex *h_inarraym, *d_inarray;
 		float *h_outarraym, *d_outarray;
 		geterror(cudaHostAlloc((void**)&h_inarraym, memsize, cudaHostAllocMapped), "host in alloc");
-		geterror(cudaHostAlloc((void**)&h_outarraym, memsize / timesamp, cudaHostAllocMapped), "host out alloc");
+		geterror(cudaHostAlloc((void**)&h_outarraym, fullsize / timesamp * sizeof(float), cudaHostAllocMapped), "host out alloc");
 		geterror(cudaHostGetDevicePointer((void**)&d_inarray, (void*)h_inarraym, 0), "in dev pointer");
 		geterror(cudaHostGetDevicePointer((void**)&d_outarray, (void*)h_outarraym, 0), "out dev pointer");
 
@@ -204,6 +205,56 @@ int main(int argc, char* argv[])
 	} else if (mode == "a") {
 
 		cout << "Will use asynchronous memory copies...\n";
+
+		// 2 streams should be enough, or might not show any benefit at all
+		cudaStream_t stream1, stream2;
+		cudaStreamCreate(&stream1);
+		cudaStreamCreate(&stream2);
+
+		// must use pinned memory
+		// very crude memory managment here
+		// this will end up in loops at the end of the day
+		// I will assume this stuff executes OK
+		cufftComplex *h_inarraya1, *d_inarray1, *h_inarraya2, *d_inarray2;
+		float *h_outarraya1, *d_outarray1, h_outarraya2, *d_outarray2;
+		cudaHostAlloc((void**)&h_inarraya1, memsize);
+		cudaHostAlloc((void**)&h_inarraya2, memsize);
+
+		for (int ii = 0; ii < fullsize; ii++) {
+				h_inarraya1[ii].x = arrdis(arreng);
+				h_inarraya1[ii].y = arrdis(arreng);
+				h_inarraya2[ii].x = arrdis(arreng);
+				h_inarraya2[ii].y = arrdis(arreng);
+		}
+
+		cudaHostAlloc((void**)&h_outarraya1, fullsize / timesamp * sizeof(float));
+		cudaHostAlloc((void**)&h_outarraya2, fullsize / timesamp * sizeof(float));
+		cudaMalloc((void**)&d_inarray1, memsize);
+		cudaMalloc((void**)&d_inarray2, memsize);
+		cudaMalloc((void**)&d_outarray1, fullsize / timesamp * sizeof(float));
+		cudaMalloc((void**)&d_outarray2, fullsize / timesamp * sizeof(float));
+
+		geterror(cudaMemcpyAsync(d_inarray1, h_inarraya1, memsize, cudaMemcpyHostToDevice, stream1), "HtD async copy 1";
+		geterror(cudaMemcpyAsync(d_inarray2, h_inarraya2, memsize, cudaMemcpyHostToDevice, stream2), "HtD async copy 2";
+
+		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inarray1, d_outarray1, fullsize / timesamp);
+		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inarray2, d_outarray2, fullsize / timesamp);
+
+		geterror(cudaMemcpyAsync(h_outarraya1, d_outarray1, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost, stream1), "DtH async copy 1");
+		geterror(cudaMemcpyAsync(h_outarraya2, d_outarray2, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost, stream2), "DtH async copy 2");
+
+		// I will assume this stuff executes OK as well
+		cudaStreamDestroy(stream1);
+		cudaStreamDestroy(stream2);
+
+		cudaFree(d_inarray1);
+		cudaFree(d_inarray2);
+		cudaFree(d_outarray1);
+		cudaFree(d_outarray2);
+		cudaFreeHost(h_inarraya1);
+		cudaFreeHost(h_inarraya2);
+		cudaFreeHost(h_outarraya1);
+		cudaFreeHost(h_outarraya2);
 
 	} else {
 		cout << "Invalid memory mode option!! Will now quit!!";
