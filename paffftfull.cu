@@ -216,9 +216,9 @@ int main(int argc, char* argv[])
 		// this will end up in loops at the end of the day
 		// I will assume this stuff executes OK
 		cufftComplex *h_inarraya1, *d_inarray1, *h_inarraya2, *d_inarray2;
-		float *h_outarraya1, *d_outarray1, h_outarraya2, *d_outarray2;
-		cudaHostAlloc((void**)&h_inarraya1, memsize);
-		cudaHostAlloc((void**)&h_inarraya2, memsize);
+		float *h_outarraya1, *d_outarray1, *h_outarraya2, *d_outarray2;
+		cudaHostAlloc((void**)&h_inarraya1, memsize, cudaHostAllocDefault);
+		cudaHostAlloc((void**)&h_inarraya2, memsize, cudaHostAllocDefault);
 
 		for (int ii = 0; ii < fullsize; ii++) {
 				h_inarraya1[ii].x = arrdis(arreng);
@@ -227,15 +227,15 @@ int main(int argc, char* argv[])
 				h_inarraya2[ii].y = arrdis(arreng);
 		}
 
-		cudaHostAlloc((void**)&h_outarraya1, fullsize / timesamp * sizeof(float));
-		cudaHostAlloc((void**)&h_outarraya2, fullsize / timesamp * sizeof(float));
+		cudaHostAlloc((void**)&h_outarraya1, fullsize / timesamp * sizeof(float), cudaHostAllocDefault);
+		cudaHostAlloc((void**)&h_outarraya2, fullsize / timesamp * sizeof(float), cudaHostAllocDefault);
 		cudaMalloc((void**)&d_inarray1, memsize);
 		cudaMalloc((void**)&d_inarray2, memsize);
 		cudaMalloc((void**)&d_outarray1, fullsize / timesamp * sizeof(float));
 		cudaMalloc((void**)&d_outarray2, fullsize / timesamp * sizeof(float));
 
-		geterror(cudaMemcpyAsync(d_inarray1, h_inarraya1, memsize, cudaMemcpyHostToDevice, stream1), "HtD async copy 1";
-		geterror(cudaMemcpyAsync(d_inarray2, h_inarraya2, memsize, cudaMemcpyHostToDevice, stream2), "HtD async copy 2";
+		geterror(cudaMemcpyAsync(d_inarray1, h_inarraya1, memsize, cudaMemcpyHostToDevice, stream1), "HtD async copy 1");
+		geterror(cudaMemcpyAsync(d_inarray2, h_inarraya2, memsize, cudaMemcpyHostToDevice, stream2), "HtD async copy 2");
 
 		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inarray1, d_outarray1, fullsize / timesamp);
 		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inarray2, d_outarray2, fullsize / timesamp);
