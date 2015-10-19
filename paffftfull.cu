@@ -51,7 +51,7 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 template <typename T>
 void geterror(T res, std::string place)
 {
-    if ( (res != CUFFT_SUCCESS) && (res != CUDA_SUCCESS) )
+    if ( (res != CUFFT_SUCCESS) && (res != cudaSuccess) )
         cout << "Error in " << place << "!! Error: " << res << endl;
 }
 
@@ -157,7 +157,8 @@ int main(int argc, char* argv[])
 		PUSH_RANGE("Multi FFT exec", 2)
 		geterror(cudaMemcpy(d_inarray, h_inarray, memsize, cudaMemcpyHostToDevice), "HtD copy");
 		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "default execution");
-		geterror(poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp), "default kernel exec");
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		geterror(cudaGetLastError(), "default kernel exec");
 		geterror(cudaMemcpy(h_outarray, d_outarray, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost), "DtH copy");
 		POP_RANGE
 
@@ -192,10 +193,11 @@ int main(int argc, char* argv[])
 
 		PUSH_RANGE("Multi mapped FFT exec", 2)
 		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "mapped execution");
-		geterror(poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp), "mapped kernel exec");
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		geterror(cudaGetLastError(), "mapped kernel exec");
 		POP_RANGE
 
-		geterror(cufftDestroy(multiplan), "mapped plan destroy")
+		geterror(cufftDestroy(multiplan), "mapped plan destroy");
 		geterror(cudaFreeHost(h_inarraym), "host in free");
 		geterror(cudaFreeHost(h_outarraym), "host out free");
 
@@ -207,7 +209,7 @@ int main(int argc, char* argv[])
 		cout << "Invalid memory mode option!! Will now quit!!";
 	}
 
-	geterror(cufftDestroy(preinit), "init plan destroy";
+	geterror(cufftDestroy(preinit), "init plan destroy");
 	delete [] h_inarray;
 	delete [] h_outarray;
 
