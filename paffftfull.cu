@@ -237,6 +237,16 @@ int main(int argc, char* argv[])
 		geterror(cudaMemcpyAsync(d_inarray1, h_inarraya1, memsize, cudaMemcpyHostToDevice, stream1), "HtD async copy 1";
 		geterror(cudaMemcpyAsync(d_inarray2, h_inarraya2, memsize, cudaMemcpyHostToDevice, stream2), "HtD async copy 2";
 
+		cufftHandle multiplans1, multiplans2;
+		geterror(cufftPlanMany(&multiplans1, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "async plan make 1");
+		geterror(cufftPlanMany(&multiplans2, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "async plan make 2");
+
+		geterror(cufftSetStream(multiplans1, stream1), "FFT set stream 1");
+		geterror(cufftSetStream(multiplans2, stream2), "FFT set stream 2");
+
+		geterror(cufftExecC2C(multiplans1, d_inarray1, d_inarray1, CUFFT_FORWARD), "async execution 1");
+		geterror(cufftExecC2C(multiplans2, d_inarray2, d_inarray2, CUFFT_FORWARD), "async execution 2");
+
 		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inarray1, d_outarray1, fullsize / timesamp);
 		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inarray2, d_outarray2, fullsize / timesamp);
 
