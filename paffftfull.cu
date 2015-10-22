@@ -17,6 +17,7 @@ THE MOST RELIABLE ESTIMATE
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <stdlib.h>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,8 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 	nvtxRangePushEx(&eventAttrib); \
 }
 #define POP_RANGE nvtxRangePop();
+
+#define MEMALIGN 4096
 
 template <typename T>
 void geterror(T res, std::string place)
@@ -122,7 +125,7 @@ int main(int argc, char* argv[])
 	const unsigned int memsize = fullsize * sizeof(cufftComplex);
 	// limit is 1024 threads per block on all compute capablities
 	// warp size is 32 on all compute capabilities
-	unsigned int nthreads = 256;
+	unsigned int nthreads = 128;
 	unsigned int nblocks = (fullsize / timesamp - 1) / nthreads + 1;
     // complex voltage goes in
 	cufftComplex *h_inarray = new cufftComplex[fullsize];
@@ -151,14 +154,14 @@ int main(int argc, char* argv[])
 
 		PUSH_RANGE("Multi FFT init", 1)
 		cufftHandle multiplan;
-		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "default plan make");
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "default plan make");
 		POP_RANGE
 
 		// time everything, together with memory copies
 		PUSH_RANGE("Multi FFT exec", 2)
 		geterror(cudaMemcpy(d_inarray, h_inarray, memsize, cudaMemcpyHostToDevice), "HtD copy");
 		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "default execution");
-		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / 2);
 		geterror(cudaGetLastError(), "default kernel exec");
 		geterror(cudaMemcpy(h_outarray, d_outarray, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost), "DtH copy");
 		POP_RANGE
@@ -170,6 +173,79 @@ int main(int argc, char* argv[])
 	} else if (mode == "p") {
 
 		cout << "Will use pinned memory";
+
+		cudaStream_t stream1, stream2;
+		cudaStreamCreate(&stream1);
+		cudaStreamCreate(&stream2);
+
+		cufftComplex *h_inp, *d_inp;
+		cufftComplex *h_inp2, *d_inp2;
+		float *h_outp, *d_outp;
+		float *h_outp2, *d_outp2;
+
+		// make sure the size is a multiple of the page size
+		// no need to actually use all of this memory in calculations
+		// might not be necessary with out data as we end up with multiples of 4096
+		// but better leave to be one the safe side
+		int alignsizein = ((int)((int)memsize + MEMALIGN - 1) / MEMALIGN) * MEMALIGN;
+		int alignsizeout = ((int)((int)(fullsize / 2) * sizeof(float) + MEMALIGN -1) / MEMALIGN) * MEMALIGN;
+
+		cout << "Original in size: " << memsize << "B\n";
+		cout << "Page multiple in size: " << alignsizein << "B\n";
+		cout << "Page multiple out size: " << alignsizeout << "B\n";
+
+		cufftHandle plan1, plan2;
+		cufftPlanMany(&plan1, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp);
+		cufftPlanMany(&plan2, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp);
+
+		cufftSetStream(plan1, stream1);
+		cufftSetStream(plan2, stream2);
+
+		posix_memalign((void**)&h_inp, MEMALIGN, alignsizein);
+		posix_memalign((void**)&h_inp2, MEMALIGN, alignsizein);
+		posix_memalign((void**)&h_outp, MEMALIGN, alignsizeout);
+		posix_memalign((void**)&h_outp2, MEMALIGN, alignsizeout);
+
+		for (int ii = 0; ii < fullsize; ii++) {
+			h_inp[ii].x = ii;
+			h_inp[ii].y = 2 * ii;
+
+			h_inp2[ii].x = ii;
+			h_inp2[ii].y = 2 * ii;
+
+
+                        //h_inp[ii].x = arrdis(arreng);
+                        //h_inp[ii].y = arrdis(arreng);
+        	}
+
+		cudaHostRegister(h_inp, alignsizein, cudaHostRegisterDefault);
+		cudaHostRegister(h_inp2, alignsizein, cudaHostRegisterDefault);
+		cudaHostRegister(h_outp, alignsizeout, cudaHostRegisterDefault);
+		cudaHostRegister(h_outp2, alignsizeout, cudaHostRegisterDefault);
+
+		cudaHostGetDevicePointer((void**)&d_inp, (void*)h_inp, 0);
+		cudaHostGetDevicePointer((void**)&d_outp, (void*)h_outp, 0);
+		cudaHostGetDevicePointer((void**)&d_inp2, (void*)h_inp2, 0);
+		cudaHostGetDevicePointer((void**)&d_outp2, (void*)h_outp2, 0);
+
+		cufftExecC2C(plan1, d_inp, d_inp, CUFFT_FORWARD);
+		cufftExecC2C(plan2, d_inp2, d_inp2, CUFFT_FORWARD);
+
+		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inp, d_outp, fullsize / 2);
+		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inp2, d_outp2, fullsize / 2);
+
+		if(cudaGetLastError() != cudaSuccess)
+			cout << "Error!!" << endl;
+
+		cudaHostUnregister(h_inp);
+		cudaHostUnregister(h_outp);
+		cudaHostUnregister(h_inp2);
+		cudaHostUnregister(h_outp2);
+
+		free(h_inp);
+		free(h_outp);
+		free(h_inp2);
+		free(h_outp2);
 
 	} else if (mode == "m") {
 
@@ -189,18 +265,20 @@ int main(int argc, char* argv[])
 
 		PUSH_RANGE("Multi mapped FFT init", 1)
 		cufftHandle multiplan;
-		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "mapped plan make");
+		geterror(cufftPlanMany(&multiplan, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "mapped plan make");
 		POP_RANGE
 
 		PUSH_RANGE("Multi mapped FFT exec", 2)
 		geterror(cufftExecC2C(multiplan, d_inarray, d_inarray, CUFFT_FORWARD), "mapped execution");
-		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / timesamp);
+		poweraddkof<<<nblocks, nthreads>>>(d_inarray, d_outarray, fullsize / 2);
 		geterror(cudaGetLastError(), "mapped kernel exec");
 		POP_RANGE
 
 		geterror(cufftDestroy(multiplan), "mapped plan destroy");
 		geterror(cudaFreeHost(h_inarraym), "host in free");
 		geterror(cudaFreeHost(h_outarraym), "host out free");
+
+		
 
 	} else if (mode == "a") {
 
@@ -212,8 +290,8 @@ int main(int argc, char* argv[])
 		cudaStreamCreate(&stream2);
 
 		cufftHandle multiplans1, multiplans2;
-		geterror(cufftPlanMany(&multiplans1, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "async plan make 1");
-		geterror(cufftPlanMany(&multiplans2, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize), "async plan make 2");
+		geterror(cufftPlanMany(&multiplans1, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "async plan make 1");
+		geterror(cufftPlanMany(&multiplans2, 1, sizes, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, batchsize * timesamp), "async plan make 2");
 
 		geterror(cufftSetStream(multiplans1, stream1), "FFT set stream 1");
 		geterror(cufftSetStream(multiplans2, stream2), "FFT set stream 2");
@@ -247,8 +325,8 @@ int main(int argc, char* argv[])
 		geterror(cufftExecC2C(multiplans1, d_inarray1, d_inarray1, CUFFT_FORWARD), "async execution 1");
 		geterror(cufftExecC2C(multiplans2, d_inarray2, d_inarray2, CUFFT_FORWARD), "async execution 2");
 
-		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inarray1, d_outarray1, fullsize / timesamp);
-		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inarray2, d_outarray2, fullsize / timesamp);
+		poweraddkof<<<nblocks, nthreads, 0, stream1>>>(d_inarray1, d_outarray1, fullsize / 2);
+		poweraddkof<<<nblocks, nthreads, 0, stream2>>>(d_inarray2, d_outarray2, fullsize / 2);
 
 		geterror(cudaMemcpyAsync(h_outarraya1, d_outarray1, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost, stream1), "DtH async copy 1");
 		geterror(cudaMemcpyAsync(h_outarraya2, d_outarray2, fullsize / timesamp * sizeof(float), cudaMemcpyDeviceToHost, stream2), "DtH async copy 2");
