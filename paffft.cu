@@ -36,19 +36,77 @@ static const int num_colors = sizeof(colors)/sizeof(uint32_t);
 
 void geterror(cufftResult res, std::string place);
 
+class Streams {
+
+	private:
+		const unsigned int fftsize;
+		const unsigned int batchsize;
+		const unsigned int timesamp;
+
+		cudaStream_t *streams;
+		cufftHandle *plans;
+	protected:
+
+	public:
+		Streams(void);
+		~Streams(void);
+
+};
+
+Streams::Streams(unsigned int fs, unsigned int bs, unsigned int ts) :
+ 					fftsize(fs), batchsize(bs), timesamp(ts) {
+
+	streams = new cudaStream_t[4];
+	plans = new cufftHandle[4];
+
+	for (int ii = 0; ii < 4; ii++) {
+		cudaStreamCreate(&streams[ii]);
+		cufftPlanMany(&plans[ii],);
+		cufftSetStream(plans[ii], streams[ii]);
+	}
+
+}
+
+Streams::~Streams(void) {
+
+	for (int ii = 0; ii < 4; ii++) {
+		cufftDestroy(plans[ii]);
+		cudaStreamDestroy(streams[ii]);
+	}
+
+	delete [] streams;
+	delete [] plans;
+
+}
+
+void gpuprocess()
+{
+
+	cudaMemcpyAsync(d_in, h_in, memsize, cudaMemcpyHostToDevice, stream);
+	cufftExecC2C(plan, d_in, d_in, CUFFT_FORWARD);
+	poweradd<<<nblocks, nthreads>>>();
+
+}
+
 int main(int argc, char* argv[])
 {
 
-
-
+	// this is proper test case with data flowing in
+	// and multiple streams working on the data
     const unsigned int arrsize = 32;
     const unsigned int fftsize = arrsize;
     const unsigned int batchsize = 1152;    // the number of FFTs we want to perform at once
     cufftComplex *h_inarray = new cufftComplex[arrsize];
     int sizes[1] = {fftsize};
 
+	// need to initialise everything
+    // data pointers, streams, etc
 
-    cout << "Pre-initialisation...\n";
+	for (unsigned int pack = 0; pack < 65536; pack++) {
+
+		gpuprocess()
+
+	}
 
     PUSH_RANGE("FFT pre-init", 0)
     // this should make the first proper FFT execution faster
