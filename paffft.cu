@@ -6,6 +6,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <time.h>
 
 #include <cuda.h>
 #include <cuda_profiler_api.h>
@@ -16,25 +17,16 @@ using std::cerr;
 using std::cout;
 using std::endl;
 
-
-static const uint32_t colors[] = { 0x0000ff00, 0x000000ff, 0x00ffff00, 0x00ff00ff, 0x0000ffff, 0x00ff0000, 0x00ffffff, 0x00fd482f };
-static const int num_colors = sizeof(colors)/sizeof(uint32_t);
-
-#define PUSH_RANGE(name,cid) { \
-	int color_id = cid; \
-	color_id = color_id%num_colors;\
-	nvtxEventAttributes_t eventAttrib = {0}; \
-	eventAttrib.version = NVTX_VERSION; \
-	eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE; \
-	eventAttrib.colorType = NVTX_COLOR_ARGB; \
-	eventAttrib.color = colors[color_id]; \
-	eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII; \
-	eventAttrib.message.ascii = name; \
-	nvtxRangePushEx(&eventAttrib); \
-}
-#define POP_RANGE nvtxRangePop();
 #define MEMALIGN 4096
 void geterror(cufftResult res, std::string place);
+
+struct my_stream {
+
+	cudaStream_t stream;
+	cufftHandle plan;
+	int streamid;
+
+};
 
 class Streams {
 
@@ -53,9 +45,10 @@ class Streams {
 		// fs - size of single fft
 		// bs - batchsize in one timesample
 		// ts - number of timesamples
-		Streams(unsigned int fs, unsigned int bs, unsigned int ts;
+		Streams(unsigned int fs, unsigned int bs, unsigned int ts);
 		~Streams(void);
-
+		my_stream claim_stream(void);
+		void free_stream(int streamid);
 };
 
 Streams::Streams(unsigned int fs, unsigned int bs, unsigned int ts) :
@@ -83,25 +76,60 @@ Streams::~Streams(void) {
 		cudaStreamDestroy(streams[ii]);
 	}
 
+	delete [] savbl;
 	delete [] streams;
 	delete [] plans;
 
 }
 
-__global__ void poweradd(void)
-{
+// will be improved later
+// now expects at least one stream to be free
+my_stream Streams::claim_stream(void) {
 
+	for (int streamid = 0; streamid < 4; streamid++) {
+		if (savbl[streamid] == 1) {
+			savbl[streamid] = 0;
+			return my_stream{streams[streamid], plans[streamid], streamid};
+		}
+	}
 
 }
 
-void gpuprocess()
+void Streams::free_stream(int streamid) {
+	savbl[streamid] = 1;
+}
+
+
+
+__global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 {
 
-	cudaMemcpyAsync(d_in, h_in, memsize, cudaMemcpyHostToDevice, stream);
+	int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
+	// offset introduced - can cause some slowing down
+	int idx2 = blockIdx.x * blockDim.x + threadIdx.x + jump;
+
+	if (idx1 < jump	) {
+		float power1 = in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y;
+		float power2 = in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y;
+		out[idx1] = (power1 + power2) / 2;
+	}
+
+}
+
+void gpuprocess(cufftComplex *h_in, cufftComplex *d_in, float *d_out, float* h_out,
+					unsigned int size, cudaStream_t stream, cufftHandle plan)
+{
+
+	unsigned int nthreads = 256;
+	unsigned int nblocks = (size / 2 - 1) / nthreads + 1;
+
+	cudaMemcpyAsync(d_in, h_in, size * sizeof(cufftComplex), cudaMemcpyHostToDevice, stream);
 	cufftExecC2C(plan, d_in, d_in, CUFFT_FORWARD);
-	poweradd<<<nblocks, nthreads>>>();
+	poweradd<<<nblocks, nthreads>>>(d_in, d_out, size / 2);
+	cudaMemcpyAsync(h_out, d_out, size / 2 * sizeof(float), cudaMemcpyDeviceToHost, stream);
 
 }
+
 
 int main(int argc, char* argv[])
 {
@@ -117,9 +145,12 @@ int main(int argc, char* argv[])
 	// returns half of the original samples after summing
 	//const unsigned int alignout = (int)((totalsize * 4 / 2 * sizeof(float) + MEMALIGN - 1) / MEMALIGN) * MEMALIGN;
 
+	timespec time1, time2;
+	time1.tv_sec = 0;
+	time1.tv_nsec = 104000;
+
 	cufftComplex *h_in, *d_in;
 	float *h_out, *d_out;
-    int sizes[1] = {fftsize};
 
 	cudaHostAlloc((void**)&h_in, totalsize * 4 * sizeof(cufftComplex), cudaHostAllocDefault);
 	cudaHostAlloc((void**)&h_out, totalsize * 4 / 2 * sizeof(float), cudaHostAllocDefault);
@@ -130,30 +161,32 @@ int main(int argc, char* argv[])
     // data pointers, streams, etc
 	Streams gstreams(fftsize, batchsize, timesamp);
 
-	for (unsigned int pack = 0; pack < 65536; pack++) {
+	unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
+	std::mt19937_64 arreng{seed};
+	std::normal_distribution<float> arrdis(0.0, 1.0);
 
-		// need to check which stream is available
-		gpuprocess();
-
-	}
-
-    unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::mt19937_64 arreng{seed};
-    std::normal_distribution<float> arrdis(0.0, 1.0);
-
-    for (int ii = 0; ii < arrsize; ii++) {
-            h_inarray[ii].x = arrdis(arreng);
-            h_inarray[ii].y = arrdis(arreng);
+	for (int ii = 0; ii < totalsize * 4; ii++) {
+            h_in[ii].x = arrdis(arreng);
+            h_in[ii].y = arrdis(arreng);
     }
 
-    cudaDeviceReset();
+	// for now, we are just going to overwrite data over and over again
+	for (unsigned int pack = 0; pack < 65536; pack++) {
 
+		nanosleep(&time1, &time2);
+		my_stream current = gstreams.claim_stream();
+		// need to check which stream is available
+		unsigned int start = current.streamid * totalsize;
+		gpuprocess(d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan);
+		gstreams.free_stream(current.streamid);
+	}
+
+	cudaFreeHost(h_in);
+	cudaFreeHost(h_out);
+	cudaFree(d_in);
+	cudaFree(d_out);
+
+    cudaDeviceReset();
     return 0;
 
-}
-
-void geterror(cufftResult res, std::string place)
-{
-    if (res != CUFFT_SUCCESS)
-        cout << "Error in " << place << "!! Error: " << res << endl;
 }
