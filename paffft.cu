@@ -5,6 +5,7 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 #include <time.h>
 
@@ -76,6 +77,9 @@ Streams::~Streams(void) {
 		cudaStreamDestroy(streams[ii]);
 	}
 
+	cout << "Destructor called";
+	cout.flush();
+
 	delete [] savbl;
 	delete [] streams;
 	delete [] plans;
@@ -86,13 +90,15 @@ Streams::~Streams(void) {
 // now expects at least one stream to be free
 my_stream Streams::claim_stream(void) {
 
+	while(true) {
 	for (int streamid = 0; streamid < 4; streamid++) {
 		if (savbl[streamid] == 1) {
+			//cout << "Stream " << streamid << " is free" << endl;
 			savbl[streamid] = 0;
 			return my_stream{streams[streamid], plans[streamid], streamid};
 		}
 	}
-
+	}
 }
 
 void Streams::free_stream(int streamid) {
@@ -116,17 +122,26 @@ __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 
 }
 
+void tprocess(cufftComplex *h_in, cufftComplex *d_in, float *d_out, float* h_out, unsigned int size, cudaStream_t stream, cufftHandle plan, Streams &gtreams) {
+
+
+}
+
 void gpuprocess(cufftComplex *h_in, cufftComplex *d_in, float *d_out, float* h_out,
-					unsigned int size, cudaStream_t stream, cufftHandle plan)
+					unsigned int size, cudaStream_t stream, cufftHandle plan, Streams &gstreams, int id)
 {
 
 	unsigned int nthreads = 256;
 	unsigned int nblocks = (size / 2 - 1) / nthreads + 1;
 
+	//cout << "Stream: " << stream << endl;
+
 	cudaMemcpyAsync(d_in, h_in, size * sizeof(cufftComplex), cudaMemcpyHostToDevice, stream);
 	cufftExecC2C(plan, d_in, d_in, CUFFT_FORWARD);
 	poweradd<<<nblocks, nthreads>>>(d_in, d_out, size / 2);
 	cudaMemcpyAsync(h_out, d_out, size / 2 * sizeof(float), cudaMemcpyDeviceToHost, stream);
+	cudaStreamSynchronize(stream);
+	gstreams.free_stream(id);
 
 }
 
@@ -144,6 +159,8 @@ int main(int argc, char* argv[])
     //const unsigned int alignin = (int)((totalsize * 4 * sizeof(cufftComplex) + MEMALIGN - 1) / MEMALIGN) * MEMALIGN;
 	// returns half of the original samples after summing
 	//const unsigned int alignout = (int)((totalsize * 4 / 2 * sizeof(float) + MEMALIGN - 1) / MEMALIGN) * MEMALIGN;
+
+	std::thread thrd[4];
 
 	timespec time1, time2;
 	time1.tv_sec = 0;
@@ -171,15 +188,24 @@ int main(int argc, char* argv[])
     }
 
 	// for now, we are just going to overwrite data over and over again
-	for (unsigned int pack = 0; pack < 65536; pack++) {
+	for (unsigned int pack = 0; pack < 4; pack++) {
 
-		nanosleep(&time1, &time2);
+		// nanosleep will not sleep with sub-ms accuracy
+		//nanosleep(&time1, &time2);
+		for (int dumb = 0; dumb < 10000; dumb++) {}
 		my_stream current = gstreams.claim_stream();
-		// need to check which stream is available
 		unsigned int start = current.streamid * totalsize;
-		gpuprocess(d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan);
-		gstreams.free_stream(current.streamid);
+		thrd[current.streamid] = std::thread(tprocess, d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan, gstreams); //, current.streamid);
+		//cout << "Will get stream " << current.streamid;
+		// need to check which stream is available
+//gpuprocess(d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan, gstreams, current.streamid);
+		//cout << "Launch " << pack << " done" << endl;
+		//cout.flush();
+
 	}
+
+	for (int ii = 0; ii < 4; ii++)
+		thrd[ii].join();
 
 	cudaFreeHost(h_in);
 	cudaFreeHost(h_out);
