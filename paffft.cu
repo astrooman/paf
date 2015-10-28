@@ -37,9 +37,7 @@ class Streams {
 		const unsigned int timesamp;
 
 		bool *savbl;
-		cudaStream_t *streams;
-		cufftHandle *plans;
-		int sizes[1];
+
 	protected:
 
 	public:
@@ -50,6 +48,9 @@ class Streams {
 		~Streams(void);
 		my_stream claim_stream(void);
 		void free_stream(int streamid);
+		cudaStream_t *streams;
+		cufftHandle *plans;
+		int sizes[1];
 };
 
 Streams::Streams(unsigned int fs, unsigned int bs, unsigned int ts) :
@@ -77,8 +78,7 @@ Streams::~Streams(void) {
 		cudaStreamDestroy(streams[ii]);
 	}
 
-	cout << "Destructor called";
-	cout.flush();
+	cudaDeviceReset();
 
 	delete [] savbl;
 	delete [] streams;
@@ -182,37 +182,42 @@ int main(int argc, char* argv[])
 	std::mt19937_64 arreng{seed};
 	std::normal_distribution<float> arrdis(0.0, 1.0);
 
+	unsigned int nthreads = 256;
+	unsigned int nblocks = (totalsize / 2 - 1) / nthreads + 1;
+	size_t start;
+
 	for (int ii = 0; ii < totalsize * 4; ii++) {
             h_in[ii].x = arrdis(arreng);
             h_in[ii].y = arrdis(arreng);
     }
 
 	// for now, we are just going to overwrite data over and over again
-	for (unsigned int pack = 0; pack < 4; pack++) {
+	for (unsigned int pack = 0; pack < 4; pack+=4) {
 
-		// nanosleep will not sleep with sub-ms accuracy
-		//nanosleep(&time1, &time2);
-		for (int dumb = 0; dumb < 10000; dumb++) {}
-		my_stream current = gstreams.claim_stream();
-		unsigned int start = current.streamid * totalsize;
-		thrd[current.streamid] = std::thread(tprocess, d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan, gstreams); //, current.streamid);
-		//cout << "Will get stream " << current.streamid;
-		// need to check which stream is available
-//gpuprocess(d_in + start, h_in + start, d_out + start, h_out + start, totalsize, current.stream, current.plan, gstreams, current.streamid);
-		//cout << "Launch " << pack << " done" << endl;
-		//cout.flush();
+		for (int sid = 0; sid < 4; sid++) {
+			start = totalsize * sid;
+			cudaMemcpyAsync(d_in + start, h_in + start, sizeof(cufftComplex) * totalsize, cudaMemcpyHostToDevice, gstreams.streams[sid]);
+		}
+
+		for (int sid = 0; sid < 4; sid++) {
+			start = totalsize * sid;
+			cufftExecC2C(gstreams.plans[ii], d_in + start, d_in + start, CUFFT_FORWARD);
+			poweradd<<<nblocks, nthreads, 0, gstreams.streams[sid]>>>(d_in + start, d_out + start, size / 2);
+		}
+
+		for (int sid = 0; sid < 4; sid++) {
+			start = totalsize * sid;
+			cudaMemcpyAsync(h_out + start, d_out + start, size / 2 * sizeof(float), cudaMemcpyDeviceToHost, gstreams.streams[sid]);
+		}
+		cudaDeviceSynchronize();
 
 	}
-
-	for (int ii = 0; ii < 4; ii++)
-		thrd[ii].join();
 
 	cudaFreeHost(h_in);
 	cudaFreeHost(h_out);
 	cudaFree(d_in);
 	cudaFree(d_out);
 
-    cudaDeviceReset();
-    return 0;
+	return 0;
 
 }
