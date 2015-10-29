@@ -192,7 +192,7 @@ int main(int argc, char* argv[])
     }
 
 	// for now, we are just going to overwrite data over and over again
-	for (unsigned int pack = 0; pack < 4; pack+=4) {
+	for (unsigned int pack = 0; pack < 65536 * 2; pack+=4) {
 
 		for (int sid = 0; sid < 4; sid++) {
 			start = totalsize * sid;
@@ -201,15 +201,18 @@ int main(int argc, char* argv[])
 
 		for (int sid = 0; sid < 4; sid++) {
 			start = totalsize * sid;
-			cufftExecC2C(gstreams.plans[ii], d_in + start, d_in + start, CUFFT_FORWARD);
-			poweradd<<<nblocks, nthreads, 0, gstreams.streams[sid]>>>(d_in + start, d_out + start, size / 2);
+			cufftExecC2C(gstreams.plans[sid], d_in + start, d_in + start, CUFFT_FORWARD);
+			poweradd<<<nblocks, nthreads, 0, gstreams.streams[sid]>>>(d_in + start, d_out + start, totalsize / 2);
 		}
 
 		for (int sid = 0; sid < 4; sid++) {
-			start = totalsize * sid;
-			cudaMemcpyAsync(h_out + start, d_out + start, size / 2 * sizeof(float), cudaMemcpyDeviceToHost, gstreams.streams[sid]);
+			start = totalsize / 2  * sid;
+			if( cudaMemcpyAsync(h_out + start, d_out + start, totalsize / 2 * sizeof(float), cudaMemcpyDeviceToHost, gstreams.streams[sid]) != cudaSuccess)
+				cout << "Error: DtoH copy in stream " << sid << ", error " << cudaGetErrorString(cudaGetLastError()) << endl;
 		}
+
 		cudaDeviceSynchronize();
+		//cudaStreamSynchronize(gstreams.streams[4]);
 
 	}
 
