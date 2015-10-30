@@ -20,13 +20,22 @@ using std::endl;
 #define PORT "4000"   // just a random port number, must be passed as string to getaddrinfo
 #define MAXBUFLEN 128
 
+void *get_addr(sockaddr *sadr)
+{
+    if (sadr->sa_family == AF_INET) {
+        return &(((sockaddr_in*)sadr)->sin_addr);
+    }
+
+    return &(((sockaddr_in6*)sadr)->sin6_addr);
+}
+
 int main(int argc, char *argv[])
 {
 
     int sfd, numbytes;
     socklen_t addrlen;     // socklen_t has length of at least 32 bits
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr;     // sockaddr_storage is large enough accommodate all supported  protocol-specific address structures
+    addrinfo hints, *servinfo, *p;
+    sockaddr_storage their_addr;     // sockaddr_storage is large enough accommodate all supported  protocol-specific address structures
     char s[INET6_ADDRSTRLEN];   // length of the string form for IPv6
     char buf[MAXBUFLEN];
 
@@ -65,15 +74,26 @@ int main(int argc, char *argv[])
     freeaddrinfo(servinfo);     // no longer need this
     cout << "listener: waiting to recvfrom..." << endl;
 
-    if ((numbytes = recvfrom(sockfd, buf, MAXBUFLEN-1, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
-        cout << "error recvfrom" << endl;
-        exit(EXIT_FAILURE);
+    while(true)
+    {
+        if ((numbytes = recvfrom(sfd, buf, MAXBUFLEN-1, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
+            cout << "error recvfrom" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        if (!numbytes)
+            break;
+
+    // convert IPv4 and IPv6 addresses between binary and test form
+    // casting pointers is beautiful
+    inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
+    cout << "listener: got packet from " << s << endl;
+    cout << "listener: packet is " << numbytes << " bytes long" << endl;
+    buf[numbytes] = '\0';
+    cout << "listener: packet contains " << buf << endl;
     }
 
-    cout << "listener: got packet from" << inet_ntop(their_addr.ss_family, s, sizeof(s)) << endl;
-    cout << "listener: packet is " << numbytes << "long" << endl;
-    buf[numbytes] = '\0';
-    cout << "listener: packet contains" << buf << endl;
+    cout << "Stopped receiving stuff" << endl;
 
     close(sfd);
 
