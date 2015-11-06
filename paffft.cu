@@ -9,6 +9,8 @@
 #include <vector>
 #include <time.h>
 
+
+
 #include <cuda.h>
 #include <cuda_profiler_api.h>
 #include <cufft.h>
