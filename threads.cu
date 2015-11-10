@@ -1,5 +1,6 @@
 #include <iostream>
 #include <queue>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -21,7 +22,7 @@ using std::queue;
 using std::thread;
 using std::vector;
 
-#define PORT "39478"
+#define PORT "45003"
 
 __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump);
 
@@ -79,7 +80,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts) : batchsize(bs),
                                                                 nthreads(256)
 {
 
-    avt = thread::hardware_concurrency();
+    avt = min(4,thread::hardware_concurrency());
     bufsize = fftsize * batchsize * timesamp;
     bufmem = bufsize * sizeof(cufftComplex);
     totsize = bufsize * avt;
@@ -132,6 +133,7 @@ void Pool::minion(int stream)
     cout.flush();
 
     unsigned int skip = stream * bufsize;
+    unsigned int outmem = bufsize / 2 * sizeof(float);
 
     while(working) {
         // need to protect if with mutex
@@ -141,9 +143,17 @@ void Pool::minion(int stream)
             std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
             mydata.pop();
             datamutex.unlock();
-            cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice);
+            if(cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
+		cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
+		cout.flush();
+	    }
+            if(cufftExecC2C(myplans[stream], d_in + skip, d_in + skip, CUFFT_FORWARD) != CUFFT_SUCCESS)
+		cout << "Error in FFT execution\n";
             poweradd<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_in + skip, d_out + skip / 2, fftsize * batchsize);
-            cudaMemcpyAsync(h_out + skip / 2, d_out + skip / 2, bufmem / 2, cudaMemcpyDeviceToHost);
+            if(cudaMemcpyAsync(h_out + skip / 2, d_out + skip / 2, outmem, cudaMemcpyDeviceToHost, mystreams[stream]) != cudaSuccess) {
+		cout << "DtH copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
+		cout.flush();
+	    }
             cudaThreadSynchronize();
         } else {
             std::this_thread::yield();
@@ -171,7 +181,7 @@ int main(int argc, char *argv[])
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{96};
+    unsigned int batchs{24};
     unsigned int ffts{32};
     unsigned int times{2};
     Pool mypool(batchs, ffts, times);
@@ -187,7 +197,7 @@ int main(int argc, char *argv[])
     size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET6;     //force IPv6 for now, as there were some problems with IPv4 on certain hardware
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;    // allows to use NULL in getaddrinfo
 
@@ -219,22 +229,31 @@ int main(int argc, char *argv[])
     freeaddrinfo(servinfo);     // no longer need it
     cout << "Waitin to receive from the server...\n";
 
-    while(true) {
+    int packetno = 0;
+
+    while(packetno < 8) {
 
         if((numbytes = recvfrom(sfd, inbuf, memsize, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
             cout << "error recvfrom" << endl;
             exit(EXIT_FAILURE);
         }
-
-        mypool.add_data(inbuf);
+	cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
+        cout.flush();
+	mypool.add_data(inbuf);
 
         // will send 0 bytes as a last packet to end the loop
         if(!numbytes)
             break;
 
+	packetno++;
+
         inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
 
     }
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    cudaDeviceReset();
 
     return 0;
 }
