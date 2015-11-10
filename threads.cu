@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 using std::cout;
 using std::endl;
@@ -22,7 +23,16 @@ using std::vector;
 
 #define PORT "39478"
 
-__global__ void poweradd(unsigned int jump);
+__global__ void poweradd(cufftComplex *in, float *out, unsigned int jump);
+
+void *get_addr(sockaddr *sadr)
+{
+    if (sadr->sa_family == AF_INET) {
+        return &(((sockaddr_in*)sadr)->sin_addr);
+    }
+
+    return &(((sockaddr_in6*)sadr)->sin6_addr);
+}
 
 class Pool
 {
@@ -39,11 +49,13 @@ class Pool
         unsigned int totsize;
         unsigned int totmem;
         // GPU and thread stuff
+        cufftComplex *h_in, *d_in;
+        float *h_out, *d_out;
         int sizes[1];
         int avt;
         cudaStream_t *mystreams;
         cufftHandle *myplans;
-        mutex addmutex;
+        mutex datamutex;
         mutex workmutex;
         unsigned int nthreads;
         unsigned int nblocks;
@@ -66,7 +78,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts) : batchsize(bs),
                                                                 working(true),
                                                                 nthreads(256)
 {
-    cout << "Starting up. This may take few seconds..." << endl;
+
     avt = thread::hardware_concurrency();
     bufsize = fftsize * batchsize * timesamp;
     bufmem = bufsize * sizeof(cufftComplex);
@@ -80,6 +92,11 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts) : batchsize(bs),
     // every thread will be associated with its own stream
     mystreams = new cudaStream_t[avt];
     myplans = new cufftHandle[avt];
+
+    cudaHostAlloc((void**)&h_in, totsize * sizeof(cufftComplex), cudaHostAllocDefault);
+    cudaHostAlloc((void**)&h_out, totsize / 2 * sizeof(float), cudaHostAllocDefault);
+    cudaMalloc((void**)&d_in, totsize * sizeof(cufftComplex));
+    cudaMalloc((void**)&d_out, totsize * avt / 2 * sizeof(float));
 
     for (int ii = 0; ii < avt; ii++) {
         cudaStreamCreate(&mystreams[ii]);
@@ -104,7 +121,7 @@ Pool::~Pool(void)
 
 void Pool::add_data(cufftComplex *buffer)
 {
-    std::lock_guard<mutex> addguard(addmutex);
+    std::lock_guard<mutex> addguard(datamutex);
     // that has to have a mutex
     mydata.push(vector<cufftComplex>(buffer, buffer + bufsize));
 }
@@ -114,12 +131,19 @@ void Pool::minion(int stream)
     cout << "Starting thread associated with stream " << stream << endl << endl;
     cout.flush();
 
+    unsigned int skip = stream * bufsize;
+
     while(working) {
         // need to protect if with mutex
+        // current mutex implementation is a big ugly, but just need a dirty hack
         if(!mydata.empty()) {
-            //cudaMemcpyAsync(d_in, h_in, memsize, cudaMemcpyHostToDevice);
-            poweradd<<<nblocks, nthreads, 0, mystreams[stream]>>>(fftsize * batchsize);
-            //cudaMemcpyAsync(h_out, d_out, memsize / 2, cudaMemcpyDeviceToHost);
+            datamutex.lock();
+            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
+            mydata.pop();
+            datamutex.unlock();
+            cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice);
+            poweradd<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_in + skip, d_out + skip / 2, fftsize * batchsize);
+            cudaMemcpyAsync(h_out + skip / 2, d_out + skip / 2, bufmem / 2, cudaMemcpyDeviceToHost);
             cudaThreadSynchronize();
         } else {
             std::this_thread::yield();
@@ -127,27 +151,40 @@ void Pool::minion(int stream)
     }
 }
 
-__global__ void poweradd(unsigned int jump)
+__global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 {
     int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
 	// offset introduced - can cause some slowing down
 	int idx2 = blockIdx.x * blockDim.x + threadIdx.x + jump;
+
+    if (idx1 < jump) {      // half of the input data
+        float power1 = in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y;
+        float power2 = in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y;
+        out[idx1] = (power1 + power2) / 2.0;
+    }
 }
 
 int main(int argc, char *argv[])
 {
+    // wshould not take more than 5 seconds
+    cout << "Starting up. This may take few seconds..." << endl;
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    Pool mypool(192, 32, 2);
+    unsigned int batchs{96};
+    unsigned int ffts{32};
+    unsigned int times{2};
+    Pool mypool(batchs, ffts, times);
 
     // networking stuff
     int sfd, numbytes, rv;
-    socklen_t addrlen;     // socklen_t has length of at least 32 bits
+    socklen_t addrlen;              // socklen_t has length of at least 32 bits
     addrinfo hints, *servinfo, *p;
     sockaddr_storage their_addr;    // sockaddr_storage is large enough accommodate all supported
                                     //protocol-specific address structures
-    char s[INET6_ADDRSTRLEN];   // length of the string form for IPv6
+    char s[INET6_ADDRSTRLEN];       // length of the string form for IPv6
+    cufftComplex *inbuf = new cufftComplex[batchs * ffts * times];
+    size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET6;     //force IPv6 for now, as there were some problems with IPv4 on certain hardware
@@ -166,17 +203,38 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        if(bind(sfd, pi->ai_addr, p->ai_addrlen) == -1) {
+        if(bind(sfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sfd);
             perror("bind ");
             continue;
         }
         break;
     }
-
-    if (p = NULL) {
+    // didn't bind to anything
+    if (p == NULL) {
         cout << "error: failed to bind the socket\n";
         exit(EXIT_FAILURE);
     }
+
+    freeaddrinfo(servinfo);     // no longer need it
+    cout << "Waitin to receive from the server...\n";
+
+    while(true) {
+
+        if((numbytes = recvfrom(sfd, inbuf, memsize, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
+            cout << "error recvfrom" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        mypool.add_data(inbuf);
+
+        // will send 0 bytes as a last packet to end the loop
+        if(!numbytes)
+            break;
+
+        inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
+
+    }
+
     return 0;
 }

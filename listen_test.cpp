@@ -39,8 +39,8 @@ struct mycomplex {
 int main(int argc, char *argv[])
 {
 
-    const unsigned int fftsize = 32;
-    const unsigned int batchsize = 32;    // the number of FFTs we want to perform at once
+    const unsigned int fftsize = 8;
+    const unsigned int batchsize = 1;    // the number of FFTs we want to perform at once
     const unsigned int timesamp = 1;		// the number fo timesamples we will store in buffer before processing
     const unsigned int totalsize = fftsize * batchsize * timesamp;
     const unsigned int memsize = totalsize * sizeof(mycomplex);
