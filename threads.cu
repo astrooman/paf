@@ -181,7 +181,7 @@ int main(int argc, char *argv[])
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{24};
+    unsigned int batchs{576};       // 3 beams * 192 channels
     unsigned int ffts{32};
     unsigned int times{2};
     Pool mypool(batchs, ffts, times);
@@ -193,9 +193,16 @@ int main(int argc, char *argv[])
     sockaddr_storage their_addr;    // sockaddr_storage is large enough accommodate all supported
                                     //protocol-specific address structures
     char s[INET6_ADDRSTRLEN];       // length of the string form for IPv6
-    cufftComplex *inbuf = new cufftComplex[batchs * ffts * times];
+    cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
+    unsigned int mempacket = 6144;   // how many bytes per packet to read
     size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
-
+    const unsigned int packets = memsize / mempacket;   // const to avoid accidental changes
+                                                        // number of packets require to receive
+                                                        // one data 'chunk', i.e. the amount of
+                                                        // data required to performed filterbanking
+                                                        // with averaging for all necessary beams and channels
+    unsigned int packetel = mempacket / sizeof(cufftComplex);
+    cufftComplex *inbuf = new cufftComplex[packetel];
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -229,26 +236,28 @@ int main(int argc, char *argv[])
     freeaddrinfo(servinfo);     // no longer need it
     cout << "Waitin to receive from the server...\n";
 
-    int packetno = 0;
+    int chunkno{0};
 
-    while(packetno < 8) {
+    while(chunkno < 4) {
 
-        if((numbytes = recvfrom(sfd, inbuf, memsize, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
-            cout << "error recvfrom" << endl;
-            exit(EXIT_FAILURE);
+        for (unsigned int packetno  = 0; packetno < packets; packetno++) {
+            if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
+                cout << "error recvfrom" << endl;
+                exit(EXIT_FAILURE);
+            }
+            cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
+            cout.flush();
+            // I am not happy with the amount of copying done here and below
+            std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
         }
-	cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
-        cout.flush();
-	mypool.add_data(inbuf);
+
+
+	    mypool.add_data(chunkbuf);
 
         // will send 0 bytes as a last packet to end the loop
         if(!numbytes)
             break;
-
-	packetno++;
-
         inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
-
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
