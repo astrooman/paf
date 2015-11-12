@@ -125,6 +125,8 @@ void Pool::add_data(cufftComplex *buffer)
     std::lock_guard<mutex> addguard(datamutex);
     // that has to have a mutex
     mydata.push(vector<cufftComplex>(buffer, buffer + bufsize));
+    //cout << "Data added\n";
+    //cout.flush(); 
 }
 
 void Pool::minion(int stream)
@@ -138,11 +140,14 @@ void Pool::minion(int stream)
     while(working) {
         // need to protect if with mutex
         // current mutex implementation is a big ugly, but just need a dirty hack
+	// will write a new, thread-safe queue implementation
+        datamutex.lock();
         if(!mydata.empty()) {
-            datamutex.lock();
             std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
             mydata.pop();
             datamutex.unlock();
+	    //cout << "Stream " << stream << " got the data\n";
+	    //cout.flush();
             if(cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
 		cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
 		cout.flush();
@@ -156,6 +161,7 @@ void Pool::minion(int stream)
 	    }
             cudaThreadSynchronize();
         } else {
+	    datamutex.unlock();
             std::this_thread::yield();
         }
     }
@@ -208,6 +214,9 @@ int main(int argc, char *argv[])
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;    // allows to use NULL in getaddrinfo
 
+    cout << "Will process " << memsize / 1024.0 << "KB chunks\n"
+		<< "Divided into " << packets << " 6144B packets\n";
+
     if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
         cout << "getaddrinfo error " << gai_strerror(rv) << endl;
         exit(EXIT_FAILURE);
@@ -238,22 +247,23 @@ int main(int argc, char *argv[])
 
     int chunkno{0};
 
-    while(chunkno < 4) {
+    while(chunkno < 32) {
 
         for (unsigned int packetno  = 0; packetno < packets; packetno++) {
             if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
                 cout << "error recvfrom" << endl;
                 exit(EXIT_FAILURE);
             }
-            cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
-            cout.flush();
+            //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
+            //cout.flush();
             // I am not happy with the amount of copying done here and below
             std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
         }
 
-
-	    mypool.add_data(chunkbuf);
-
+	mypool.add_data(chunkbuf);
+	//cout << "Received chunk " << chunkno << endl;
+	//cout.flush();
+	chunkno++;
         // will send 0 bytes as a last packet to end the loop
         if(!numbytes)
             break;
