@@ -1,6 +1,7 @@
 #include <iostream>
 #include <queue>
 #include <mutex>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -126,7 +127,7 @@ void Pool::add_data(cufftComplex *buffer)
     // that has to have a mutex
     mydata.push(vector<cufftComplex>(buffer, buffer + bufsize));
     //cout << "Data added\n";
-    //cout.flush(); 
+    //cout.flush();
 }
 
 void Pool::minion(int stream)
@@ -246,8 +247,9 @@ int main(int argc, char *argv[])
     cout << "Waitin to receive from the server...\n";
 
     int chunkno{0};
+    int chunks{32};
 
-    while(chunkno < 32) {
+    while(chunkno < chunks) {
 
         for (unsigned int packetno  = 0; packetno < packets; packetno++) {
             if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
@@ -260,14 +262,42 @@ int main(int argc, char *argv[])
             std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
         }
 
-	mypool.add_data(chunkbuf);
-	//cout << "Received chunk " << chunkno << endl;
-	//cout.flush();
-	chunkno++;
+        mypool.add_data(chunkbuf);
+        //cout << "Received chunk " << chunkno << endl;
+        //cout.flush();
+        chunkno++;
         // will send 0 bytes as a last packet to end the loop
         if(!numbytes)
             break;
         inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
+    }
+
+    if(std::string(argv[1]) == "-t") {
+
+        cout << "Test buffer\n";
+        cout.flush();
+        // sleep just in case processing is slow
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        cufftComplex *testbuf = new cufftComplex[batchs * ffts * times * chunks];
+
+        unsigned int seed = std::chrono::system_clock::now().time_since_epoch().count();
+        std::mt19937_64 bufeng{seed};
+        std::normal_distribution<float> bufdis(0.0, 1.0);
+
+        cout << "Filling the test array...\n";
+
+        for (int ii = 0; ii < batchs * ffts * times * chunks; ii++) {
+            testbuf[ii].x = bufdis(bufeng);
+            testbuf[ii].y = bufdis(bufeng);
+        }
+
+        chunkno = 0;
+        while(chunkno < chunks) {
+            mypool.add_data(testbuf + chunkno * batchs * ffts * times);
+            chunkno++;
+        }
+
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
