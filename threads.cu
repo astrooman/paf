@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <iostream>
 #include <queue>
 #include <mutex>
@@ -7,6 +8,7 @@
 
 #include <cuda.h>
 #include <cufft.h>
+#include <dedisp.h>
 
 #include <errno.h>
 #include <netdb.h>
@@ -20,6 +22,7 @@ using std::cout;
 using std::endl;
 using std::mutex;
 using std::queue;
+using std::string;
 using std::thread;
 using std::vector;
 
@@ -44,6 +47,8 @@ class Pool
         const unsigned int batchsize;
         const unsigned int fftsize;
         const unsigned int timesamp;
+        const unsigned int streamno;
+        const unsigned int freqavg;
         // one buffer
         unsigned int bufsize;
         unsigned int bufmem;
@@ -68,20 +73,22 @@ class Pool
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts);
+        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr);
         ~Pool(void);
         void add_data(cufftComplex *buffer);
         void minion(int stream);
 };
 
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts) : batchsize(bs),
+Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr) : batchsize(bs),
                                                                 fftsize(fs),
                                                                 timesamp(ts),
                                                                 working(true),
+                                                                streamno(sn),
+                                                                freqavg(fr),
                                                                 nthreads(256)
 {
 
-    avt = min(4,thread::hardware_concurrency());
+    avt = min(streamno,thread::hardware_concurrency());
     bufsize = fftsize * batchsize * timesamp;
     bufmem = bufsize * sizeof(cufftComplex);
     totsize = bufsize * avt;
@@ -183,15 +190,54 @@ __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 
 int main(int argc, char *argv[])
 {
+    bool test{false};           // don't use test buffer by default
+    unsigned int chunks{32};    // 32 chunks by default
+    unsigned int streamno{4};   // 4 streams by default
+    unsigned int beamno{3};     // 3 beams by default
+    unsigned int times{2};      // 2 time samples by default
+    unsigned int freq{0};       // no frequency averaging by default
+
+    if (argc >= 2) {
+        for (int ii = 0; ii < argc; ii++) {
+            if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
+                ii++;
+                chunks = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-s") {     // the number of streams to use
+                ii++;
+                streamno = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-b") {     // the number of beams to accept the data from
+                ii++;
+                beamno = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-t") {     // the number of time sample to average
+                ii++;
+                times = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
+                ii++;
+                freq = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
+                test = true;
+            } else if (std::string(argv[ii]) == "-h") {
+                cout << "Options:\n"
+                        << "\t -c - the number of chunks to process\n"
+                        << "\t -b - the number of beams to process\n"
+                        << "\t -t - the number of time samples to average\n"
+                        << "\t -f - the number of frequency channels to average\n"
+                        << "\t -s - the number of CUDA streams to use\n"
+                        << "\t -b - use the test buffer\n"
+                        << "\t -h - print out this message\n\n";
+                exit(EXIT_SUCCESS);
+            }
+        }
+
+    }
     // wshould not take more than 5 seconds
     cout << "Starting up. This may take few seconds..." << endl;
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{576};       // 3 beams * 192 channels
+    unsigned int batchs{beamno * 192};       // # beams * 192 channels
     unsigned int ffts{32};
-    unsigned int times{2};
-    Pool mypool(batchs, ffts, times);
+    Pool mypool(batchs, ffts, times, streamno, freq);
 
     // networking stuff
     int sfd, numbytes, rv;
@@ -244,10 +290,9 @@ int main(int argc, char *argv[])
     }
 
     freeaddrinfo(servinfo);     // no longer need it
-    cout << "Waitin to receive from the server...\n";
+    cout << "Waiting to receive from the server...\n";
 
     int chunkno{0};
-    int chunks{32};
 
     while(chunkno < chunks) {
 
@@ -272,7 +317,7 @@ int main(int argc, char *argv[])
         inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
     }
 
-    if(std::string(argv[1]) == "-t") {
+    if(test) {
 
         cout << "Test buffer\n";
         cout.flush();
