@@ -9,6 +9,9 @@
 #include <cuda.h>
 #include <cufft.h>
 #include <dedisp.h>
+#include <DedispPlan.hpp>
+#include <kernels.cuh>
+
 
 #include <errno.h>
 #include <netdb.h>
@@ -27,6 +30,7 @@ using std::thread;
 using std::vector;
 
 #define PORT "45003"
+#define SINGLE_GULP 262144      // number of time samples per single-pulse detection data chunk
 
 __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump);
 
@@ -38,6 +42,19 @@ void *get_addr(sockaddr *sadr)
 
     return &(((sockaddr_in6*)sadr)->sin6_addr);
 }
+
+class Buffer
+{
+    private:
+        size_t start;
+        size_t end;
+    protected:
+
+    public:
+        Buffer(void);
+        ~Buffer(void);
+        // add deleted copy, move, etc constructors
+};
 
 class Pool
 {
@@ -75,6 +92,7 @@ class Pool
     public:
         Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr);
         ~Pool(void);
+        // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
         void minion(int stream);
 };
@@ -148,7 +166,7 @@ void Pool::minion(int stream)
     while(working) {
         // need to protect if with mutex
         // current mutex implementation is a big ugly, but just need a dirty hack
-	// will write a new, thread-safe queue implementation
+        // will write a new, thread-safe queue implementation
         datamutex.lock();
         if(!mydata.empty()) {
             std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
@@ -191,6 +209,7 @@ __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 int main(int argc, char *argv[])
 {
     bool test{false};           // don't use test buffer by default
+    bool verbose{false};        // don't use verbose mode by default
     unsigned int chunks{32};    // 32 chunks by default
     unsigned int streamno{4};   // 4 streams by default
     unsigned int beamno{3};     // 3 beams by default
@@ -216,8 +235,11 @@ int main(int argc, char *argv[])
                 freq = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
                 test = true;
+            } else if (std::string(argv[ii]) == "-v") {
+                verbose = true;
             } else if (std::string(argv[ii]) == "-h") {
                 cout << "Options:\n"
+                        << "\t -v - use verbose mode\n"
                         << "\t -c - the number of chunks to process\n"
                         << "\t -b - the number of beams to process\n"
                         << "\t -t - the number of time samples to average\n"
@@ -235,9 +257,24 @@ int main(int argc, char *argv[])
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{beamno * 192};       // # beams * 192 channels
+    unsigned int batchs{beamno * 192};      // # beams * 192 channels
+                                            // need to decide how this data will be stored
     unsigned int ffts{32};
     Pool mypool(batchs, ffts, times, streamno, freq);
+
+    DedispPlan dedisp();
+    dedisp.generate_dm_list();
+
+    cout << "Will try " << dedisp.get_dm_count() << " DM trials" << endl;
+    if (verbose) {
+        std::vector<float> dm_list = dedisp.get_dm_list();
+        cout << "The DM trials:\n";
+        for (int ii = 0; ii < dedisp.get_dm_count(); ii++)
+            cout << dm_list[ii] << endl;
+    }
+    if (false)       // switch off for now
+        dedisp.set_killmask();
+    // everything should be ready for dedispersion after this point
 
     // networking stuff
     int sfd, numbytes, rv;
