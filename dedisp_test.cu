@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
     float dstart{0.0};
     float dend{2000.0};
 
-    if (argc > 2) {
+    if (argc >= 2) {
         for (int ii = 0; ii < argc; ii++) {
             if (string(argv[ii]) == "-t") {
                 ii++;
@@ -52,17 +52,18 @@ int main(int argc, char *argv[]) {
                         << "\t -n - the number of frequency channels\n"
                         << "\t -g - gulp size\n"
                         << "\t -h - print out this message\n\n";
+		exit(EXIT_SUCCESS);
             }
         }
     }
 
     unsigned int seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::mt19937_64 reng{seed};
-    std::normal_distribution<unsigned char> rdist(128, 32);
+    std::normal_distribution<float> rdist(128.0, 32.0);
 
     unsigned char *data_in = new unsigned char[nchans * gulp * 2];
     for (int ii = 0; ii < nchans * gulp * 2; ii++)
-        data_in[ii] = rdist(reng);
+        data_in[ii] = (unsigned char)rdist(reng);
 
     unsigned char *data_out= new unsigned char[gulp];
 
@@ -71,12 +72,14 @@ int main(int argc, char *argv[]) {
     std::chrono::time_point<std::chrono::system_clock> dedistart, dediend;
     std::chrono::duration<double> dedielapsed;
 
+    cout << "Initialising...\n";
     initstart = std::chrono::system_clock::now();
     DedispPlan dedisp(nchans, tsamp, ftop, foff);
     dedisp.generate_dm_list(dstart, dend, (float)64.0, (float)1.10);
     initend = std::chrono::system_clock::now();
     initelapsed = initend - initstart;
 
+    cout << "Dedispersing...\n";
     dedistart = std::chrono::system_clock::now();
     dedisp.execute(gulp, data_in, sizeof(float) * 8, data_out, sizeof(unsigned char) * 8, 0);
     dediend = std::chrono::system_clock::now();
