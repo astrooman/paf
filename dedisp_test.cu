@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <string>
@@ -22,10 +23,10 @@ int main(int argc, char *argv[]) {
     float ftop{1700};          // highest frequency channel in MHz
     float foff{0.5291};        // channel bandwidth in MHz
     unsigned int nchans{567};
-    unsigned int gulp{262144};
+    unsigned int gulp{1024};
 
     float dstart{0.0};
-    float dend{2000.0};
+    float dend{0.0};
 
     if (argc >= 2) {
         for (int ii = 0; ii < argc; ii++) {
@@ -44,6 +45,12 @@ int main(int argc, char *argv[]) {
             } else if (string(argv[ii]) == "-g") {
                 ii++;
                 gulp = atoi(argv[ii]);
+	    } else if (string(argv[ii]) == "--ds") {
+		ii++;
+		dstart = atof(argv[ii]);
+	    } else if (string(argv[ii]) == "--de") {
+		ii++;
+		dend = atof(argv[ii]);
             } else if (string(argv[ii]) == "-h") {
                 cout << "Options:\n"
                         << "\t -t - sampling time in seconds\n"
@@ -51,6 +58,8 @@ int main(int argc, char *argv[]) {
                         << "\t -o - channel bandwidth in MHz\n"
                         << "\t -n - the number of frequency channels\n"
                         << "\t -g - gulp size\n"
+			<< "\t --ds - start dm\n"
+			<< "\t --de - end dm\n"
                         << "\t -h - print out this message\n\n";
 		exit(EXIT_SUCCESS);
             }
@@ -60,12 +69,6 @@ int main(int argc, char *argv[]) {
     unsigned int seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::mt19937_64 reng{seed};
     std::normal_distribution<float> rdist(128.0, 32.0);
-
-    unsigned char *data_in = new unsigned char[nchans * gulp * 2];
-    for (int ii = 0; ii < nchans * gulp * 2; ii++)
-        data_in[ii] = (unsigned char)rdist(reng);
-
-    unsigned char *data_out= new unsigned char[gulp];
 
     std::chrono::time_point<std::chrono::system_clock> initstart, initend;
     std::chrono::duration<double> initelapsed;
@@ -79,9 +82,21 @@ int main(int argc, char *argv[]) {
     initend = std::chrono::system_clock::now();
     initelapsed = initend - initstart;
 
+    cout << "Filling the array...\n";
+    cout << "Will generate " << nchans << " channels with " << gulp + dedisp.get_max_delay() << " time samples each\n";
+    unsigned char *data_in = new unsigned char[nchans * gulp + nchans * (int)dedisp.get_max_delay()];
+    cout << std::setprecision(2) << std::fixed;
+    for (int ii = 0; ii < nchans * gulp + nchans * (int)dedisp.get_max_delay(); ii++) {
+        data_in[ii] = (unsigned char)rdist(reng);
+	cout << (double)ii / (double)(nchans * gulp + nchans * (int)dedisp.get_max_delay()) * (double)100 << "% complete\r";
+	cout.flush();
+    }
+    std::cin.get();
+    unsigned char *data_out= new unsigned char[gulp * dedisp.get_dm_count()];
+
     cout << "Dedispersing...\n";
     dedistart = std::chrono::system_clock::now();
-    dedisp.execute(gulp, data_in, sizeof(float) * 8, data_out, sizeof(unsigned char) * 8, 0);
+    dedisp.execute(gulp + dedisp.get_max_delay(), data_in, sizeof(unsigned char) * 8, data_out, sizeof(unsigned char) * 8, 0);
     dediend = std::chrono::system_clock::now();
     dedielapsed = dediend - dedistart;
 
@@ -90,4 +105,7 @@ int main(int argc, char *argv[]) {
     cout << "Dedispersion time " << dedielapsed.count() << "s\n";
     if (dedielapsed.count() >= tsamp * gulp)
         cout << "We have a problem!!\n";
+    std::cin.get();
+    delete [] data_in;
+    delete [] data_out;
 }
