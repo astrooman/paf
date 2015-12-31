@@ -77,6 +77,7 @@ int main(int argc, char *argv[]) {
 
     cout << "Initialising...\n";
     initstart = std::chrono::system_clock::now();
+    // ftop and fofff in MHz
     DedispPlan dedisp(nchans, tsamp, ftop, foff);
     dedisp.generate_dm_list(dstart, dend, (float)64.0, (float)1.10);
     initend = std::chrono::system_clock::now();
