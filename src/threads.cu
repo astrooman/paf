@@ -10,7 +10,6 @@
 #include <cufft.h>
 #include <dedisp.h>
 #include <DedispPlan.hpp>
-#include <kernels.cuh>
 #include <vdif_head.hpp>
 
 #include <errno.h>
@@ -54,22 +53,33 @@ class Buffer
     protected:
 
     public:
-        Buffer(void);
+        Buffer(size_t size);
         ~Buffer(void);
+
+        void write(T *data);
         // add deleted copy, move, etc constructors
 };
 
-Buffer::Buffer(size_t size) : size(size)
+template<class T>
+Buffer<T>::Buffer(size_t size) : size(size)
 {
     start = 0;
     end = 0;
     cudaMalloc((void**)&d_buf, size * sizeof(T));
 }
 
-Buffer::~Buffer()
+template<class T>
+Buffer<T>::~Buffer()
 {
     end = 0;
     cudaFree(d_buf);
+}
+
+template<class T>
+void Buffer<T>::write(T *d_data, unsigned int amount)
+{
+    end = end + amount;
+    cudaMemcpy
 }
 
 class Pool
@@ -226,6 +236,8 @@ __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
 
 int main(int argc, char *argv[])
 {
+    std::string config_file;
+
     bool test{false};           // don't use test buffer by default
     bool verbose{false};        // don't use verbose mode by default
     unsigned int chunks{32};    // 32 chunks by default - this is just for testing purposes
@@ -237,12 +249,16 @@ int main(int argc, char *argv[])
     unsigned int nchans{192};   // number of 1MHz channels - might change
 
     // dedispersion parameters
-    double band = 1.185         // sampling rate for each band in MHz
+    double band = 1.185;         // sampling rate for each band in MHz
+    double dstart{0.0};
+    double dend{4000.0};
     double foff{0.0};
     double ftop{0.0};
     double tsamp = ((double)1.0 / (band * 1e+06) * (double)32.0);
     unsigned int filchans{nchans * 27 / freq};
     unsigned int gulp{131072};  // 2^17, equivalent to ~14s for 108us sampling time
+
+    int *killmask = new int[filchans];
 
     // too many parameters to load as arguments - use config file
     if (argc >= 2) {
@@ -298,13 +314,12 @@ int main(int argc, char *argv[])
     unsigned int buffno = (buffsize - 1) / gulp + 1;
     cout << "Will try " << dedisp.get_dm_count() << " DM trials" << endl;
     if (verbose) {
-        std::vector<float> dm_list = dedisp.get_dm_list();
-        cout << "The DM trials:\n";
+        cout << "Will try " << dedisp.get_dm_count() << " DM trials:\n";
         for (int ii = 0; ii < dedisp.get_dm_count(); ii++)
-            cout << dm_list[ii] << endl;
+            cout << *(dedisp.get_dm_list() + ii) << endl;
     }
     if (false)       // switch off for now
-        dedisp.set_killmask();
+        dedisp.set_killmask(killmask);
     // everything should be ready for dedispersion after this point
 
     // using thread pool will remove the need of checking which stream is used
@@ -370,6 +385,8 @@ int main(int argc, char *argv[])
 
     int chunkno{0};
 
+    header_s head;
+
     while(chunkno < chunks) {
 
         for (unsigned int packetno  = 0; packetno < packets; packetno++) {
@@ -378,7 +395,7 @@ int main(int argc, char *argv[])
                 exit(EXIT_FAILURE);
             }
             // get the vdif header and strip it off the data
-            get_header(inbuf);
+            get_header(inbuf, head);
             //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
             //cout.flush();
             // I am not happy with the amount of copying done here and below
