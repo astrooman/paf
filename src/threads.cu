@@ -46,9 +46,10 @@ template <class T>
 class Buffer
 {
     private:
+        const size_t size;
+        mutex buffermutex;
         size_t start;
         size_t end;
-        const size_t size;
         T *d_buf;
     protected:
 
@@ -56,7 +57,8 @@ class Buffer
         Buffer(size_t size);
         ~Buffer(void);
 
-        void write(T *data);
+        void send();
+        void write(T *d_data, unsigned int amount);
         // add deleted copy, move, etc constructors
 };
 
@@ -76,15 +78,34 @@ Buffer<T>::~Buffer()
 }
 
 template<class T>
+void Buffer<T>::send()
+{
+
+}
+
+
+template<class T>
 void Buffer<T>::write(T *d_data, unsigned int amount)
 {
+    // need to make sure only one stream saves the data to the buffer
+    // we will save one data sample at a time, with fixed size
+    // no need to check that there is enough space available to fit all the data before the end of the buffer
+    std::lock_guard<mutex> addguard(buffermutex);
+    if (end == size)    // reached the end of the buffer
+        end = start;    // go back to the start
     end = end + amount;
-    cudaMemcpy
+    // need to figure out how to work with these
+    int index{0};
+    int stream{0};
+    cudaMemcpyAsync(d_buf + index, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
 }
+
 
 class Pool
 {
     private:
+        Buffer<int> mainbuffer;
+
         bool working;
         // const to be safe
         const unsigned int batchsize;
@@ -93,7 +114,6 @@ class Pool
         const unsigned int streamno;
         const unsigned int freqavg;
         // one buffer
-        unsigned int bufs;
         unsigned int bufsize;
         unsigned int bufmem;
         // buffer for all streams together
@@ -117,21 +137,21 @@ class Pool
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, unsigned int bn);
+        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr);
         ~Pool(void);
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
         void minion(int stream);
 };
 
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, unsigned int bn) : batchsize(bs),
+Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr) : batchsize(bs),
                                                                 fftsize(fs),
                                                                 timesamp(ts),
                                                                 working(true),
                                                                 streamno(sn),
                                                                 freqavg(fr),
-                                                                bufs(bn),
-                                                                nthreads(256)
+                                                                nthreads(256),
+                                                                mainbuffer(bs)
 {
 
     avt = min(streamno,thread::hardware_concurrency());
@@ -310,8 +330,9 @@ int main(int argc, char *argv[])
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
     dedisp.generate_dm_list(dstart, dend, (float)64.0, (float)1.10);
-    size_t buffsize = (size_t)gulp + dedisp.get_max_delay();
-    unsigned int buffno = (buffsize - 1) / gulp + 1;
+    size_t totsamples = (size_t)gulp + dedisp.get_max_delay();
+    unsigned int buffno = (totsamples - 1) / gulp + 1;
+    size_t buffsize = buffno * gulp + dedisp.get_max_delay();
     cout << "Will try " << dedisp.get_dm_count() << " DM trials" << endl;
     if (verbose) {
         cout << "Will try " << dedisp.get_dm_count() << " DM trials:\n";
@@ -328,7 +349,7 @@ int main(int argc, char *argv[])
     unsigned int batchs{beamno * nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
-    Pool mypool(batchs, ffts, times, streamno, freq, buffno);
+    Pool mypool(batchs, ffts, times, streamno, freq);
 
     // networking stuff
     int sfd, numbytes, rv;
@@ -346,7 +367,7 @@ int main(int argc, char *argv[])
                                                         // data required to performed filterbanking
                                                         // with averaging for all necessary beams and channels
     unsigned int packetel = mempacket / sizeof(cufftComplex);
-    cufftComplex *inbuf = new cufftComplex[packetel];
+    unsigned char *inbuf = new unsigned char[packetel];
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -399,7 +420,8 @@ int main(int argc, char *argv[])
             //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
             //cout.flush();
             // I am not happy with the amount of copying done here and below
-            std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
+            // COMMENTED OUT FOR COMPILATION - READING VDIF FILES WILL BE SORTED OUT
+            //std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
         }
 
         mypool.add_data(chunkbuf);
