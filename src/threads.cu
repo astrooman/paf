@@ -6,6 +6,8 @@
 #include <thread>
 #include <vector>
 
+#include <buffer.hpp>
+#include <config.hpp>
 #include <cuda.h>
 #include <cufft.h>
 #include <dedisp.h>
@@ -41,70 +43,12 @@ void *get_addr(sockaddr *sadr)
 
     return &(((sockaddr_in6*)sadr)->sin6_addr);
 }
-// make a template to support dfferent dedisp input types
-template <class T>
-class Buffer
-{
-    private:
-        const size_t size;
-        mutex buffermutex;
-        size_t start;
-        size_t end;
-        T *d_buf;
-    protected:
-
-    public:
-        Buffer(size_t size);
-        ~Buffer(void);
-
-        void send();
-        void write(T *d_data, unsigned int amount);
-        // add deleted copy, move, etc constructors
-};
-
-template<class T>
-Buffer<T>::Buffer(size_t size) : size(size)
-{
-    start = 0;
-    end = 0;
-    cudaMalloc((void**)&d_buf, size * sizeof(T));
-}
-
-template<class T>
-Buffer<T>::~Buffer()
-{
-    end = 0;
-    cudaFree(d_buf);
-}
-
-template<class T>
-void Buffer<T>::send()
-{
-
-}
-
-
-template<class T>
-void Buffer<T>::write(T *d_data, unsigned int amount)
-{
-    // need to make sure only one stream saves the data to the buffer
-    // we will save one data sample at a time, with fixed size
-    // no need to check that there is enough space available to fit all the data before the end of the buffer
-    std::lock_guard<mutex> addguard(buffermutex);
-    if (end == size)    // reached the end of the buffer
-        end = start;    // go back to the start
-    end = end + amount;
-    // need to figure out how to work with these
-    int index{0};
-    int stream{0};
-    cudaMemcpyAsync(d_buf + index, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
-}
-
 
 class Pool
 {
     private:
-        Buffer<int> mainbuffer;
+        // that can be anything, depending on how many output bits we decide to use
+        Buffer<float> mainbuffer;
 
         bool working;
         // const to be safe
@@ -141,7 +85,9 @@ class Pool
         ~Pool(void);
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
+        void dedisp(int dstream);
         void minion(int stream);
+        void search(int sstream);
 };
 
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr) : batchsize(bs),
@@ -153,8 +99,8 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
                                                                 nthreads(256),
                                                                 mainbuffer(bs)
 {
-
-    avt = min(streamno,thread::hardware_concurrency());
+    // streamno for filterbank and additional 2 for dedispersion and single pulse search
+    avt = min(streamno + 2,thread::hardware_concurrency());
     bufsize = fftsize * batchsize * timesamp;
     bufmem = bufsize * sizeof(cufftComplex);
     totsize = bufsize * avt;
@@ -173,17 +119,25 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     cudaMalloc((void**)&d_in, totsize * sizeof(cufftComplex));
     cudaMalloc((void**)&d_out, totsize * avt / 2 * sizeof(float));
 
-    for (int ii = 0; ii < avt; ii++) {
+    // here only launch threads that will take care of filterbank
+    for (int ii = 0; ii < avt - 2; ii++) {
         cudaStreamCreate(&mystreams[ii]);
         cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftsize, NULL, 1, fftsize, CUFFT_C2C, batchsize);
         cufftSetStream(myplans[ii], mystreams[ii]);
         // need to meet requirements for INVOKE(f, t1, t2, ... tn)
         // (t1.*f)(t2, ... tn) when f is a pointer to a member function of class T
         // and t1 is an object of type T or a reference to an object of type T
+        // this is t1 and &Pool::minion is a pointer to a member function of class T
         // or a reference to an object of a type derived from T (C++14 §20.9.2)
         mythreads.push_back(thread(&Pool::minion, this, ii));
-
     }
+
+    // dedisp thread
+    cudaStreamCreate(&mystreams[avt-2]);
+    mythreads.push_back(thread(&Pool::dedisp, this, avt-2));
+    // single pulse thread
+    cudaStreamCreate(&mystreams[avt-1]);
+    mythreads.push_back(thread(&Pool::search, this, avt-1));
 }
 
 Pool::~Pool(void)
@@ -215,6 +169,7 @@ void Pool::minion(int stream)
         // need to protect if with mutex
         // current mutex implementation is a big ugly, but just need a dirty hack
         // will write a new, thread-safe queue implementation
+        unsigned int index{0};       // index will be used to distinguish between time samples
         datamutex.lock();
         if(!mydata.empty()) {
             std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
@@ -233,12 +188,28 @@ void Pool::minion(int stream)
 		        cout << "DtH copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
 		        cout.flush();
 	        }
+            mainbuffer.write(d_out, index, bufsize / 2, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
 	        datamutex.unlock();
             std::this_thread::yield();
         }
     }
+}
+
+void Pool::dedisp(int dstream)
+{
+    int ready = mainbuffer.ready();
+    if (ready) {
+        dedisp.execute();
+    } else {
+        std::this_thread::yield();
+    }
+}
+
+void Pool::search(int sstream)
+{
+    std::this_thread::yield();
 }
 
 __global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
@@ -286,6 +257,7 @@ int main(int argc, char *argv[])
             if (std::string(argv[ii]) == "--config") {      // configuration file
                 ii++;
                 config_file = std::string(argv[ii]);
+                read_config(config_file);
                 break;      // configuration file should have everything included
             }
             if (std::string(argv[ii]) == "-c") {      // the number of chunks to process

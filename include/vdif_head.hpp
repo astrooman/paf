@@ -1,3 +1,6 @@
+#ifndef _H_PAFRB_VDIF
+#define _H_PAFRB_VDIF
+
 #include <fstream>
 #include <iostream>
 
@@ -79,3 +82,5 @@ void get_header(unsigned char* packet, header_s &head)
     cout << "Sample intervals per period: " << head.sipp << endl;
 
 }
+
+#endif
