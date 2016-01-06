@@ -33,7 +33,7 @@ using std::vector;
 #define PORT "45003"
 #define SINGLE_GULP 131027      // number of time samples per single-pulse detection data chunk
 
-__global__ void poweradd(cufftComplex *in, float *out, unsigned int jump);
+__global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump);
 
 void *get_addr(sockaddr *sadr)
 {
@@ -48,7 +48,8 @@ class Pool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
-        Buffer<float> mainbuffer;
+        Buffer<unsigned char> mainbuffer;
+        DedispPlan dedisp;
 
         bool working;
         // const to be safe
@@ -58,14 +59,16 @@ class Pool
         const unsigned int streamno;
         const unsigned int freqavg;
         // one buffer
-        unsigned int bufsize;
+        unsigned int filsize;
         unsigned int bufmem;
         // buffer for all streams together
         unsigned int totsize;
         unsigned int totmem;
         // GPU and thread stuff
+        unsigned char *d_dedisp;
+        unsigned char *d_search;
         cufftComplex *h_in, *d_in;
-        float *h_out, *d_out;
+        unsigned char *h_out, *d_out;
         int sizes[1];
         int avt;
         cudaStream_t *mystreams;
@@ -78,35 +81,59 @@ class Pool
         // use queue as FIFO needed
         queue<vector<cufftComplex>> mydata;
         vector<thread> mythreads;
+        unsigned int buffno;
+        size_t totsamples;
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr);
+        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config);
         ~Pool(void);
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
-        void dedisp(int dstream);
+        void dedisp_thread(int dstream);
         void minion(int stream);
-        void search(int sstream);
+        void search_thread(int sstream);
 };
 
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr) : batchsize(bs),
+Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config) : batchsize(bs),
                                                                 fftsize(fs),
                                                                 timesamp(ts),
                                                                 working(true),
                                                                 streamno(sn),
                                                                 freqavg(fr),
                                                                 nthreads(256),
-                                                                mainbuffer(bs)
+                                                                mainbuffer(),
+                                                                dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
 {
     // streamno for filterbank and additional 2 for dedispersion and single pulse search
     avt = min(streamno + 2,thread::hardware_concurrency());
-    bufsize = fftsize * batchsize * timesamp;
-    bufmem = bufsize * sizeof(cufftComplex);
-    totsize = bufsize * avt;
+
+    if(config.verbose)
+        cout << "Will create " << avt << " CUDA streams\n";
+
+    // width is the expected pulse width in microseconds
+    // tol is the smearing tolerance factor between two DM trials
+    dedisp.generate_dm_list(config.dstart, config.dend, (float)64.0, (float)1.10);
+    if (config.verbose) {
+        cout << "Will try " << dedisp.get_dm_count() << " DM trials:\n";
+        for (int ii = 0; ii < dedisp.get_dm_count(); ii++)
+            cout << *(dedisp.get_dm_list() + ii) << endl;
+    }
+
+    totsamples = (size_t)config.gulp + dedisp.get_max_delay();
+    buffno = (totsamples - 1) / config.gulp + 1;
+    size_t buffsize = buffno * config.gulp + dedisp.get_max_delay();
+    mainbuffer.allocate(buffno, dedisp.get_max_delay(), config.gulp, buffsize);
+    //if (false)       // switch off for now
+    //    dedisp.set_killmask(killmask);
+    // everything should be ready for dedispersion after this point
+
+    filsize = fftsize * batchsize * timesamp;
+    bufmem = filsize * sizeof(cufftComplex);
+    totsize = filsize * avt;
     totmem = bufmem * avt;
     // / 2 as interested in time averaged output
-    nblocks = (bufsize / 2 - 1 ) / nthreads + 1;
+    nblocks = (filsize / 2 - 1 ) / nthreads + 1;
 
     sizes[0] = (int)fftsize;
     // want as many streams and plans as there will be threads
@@ -117,8 +144,10 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     cudaHostAlloc((void**)&h_in, totsize * sizeof(cufftComplex), cudaHostAllocDefault);
     cudaHostAlloc((void**)&h_out, totsize / 2 * sizeof(float), cudaHostAllocDefault);
     cudaMalloc((void**)&d_in, totsize * sizeof(cufftComplex));
-    cudaMalloc((void**)&d_out, totsize * avt / 2 * sizeof(float));
-
+    cudaMalloc((void**)&d_out, totsize * avt / 2 * sizeof(unsigned char));
+    // change this later to deal with any input type;
+    cudaMalloc((void**)&d_dedisp, totsamples * sizeof(unsigned char));
+    cudaMalloc((void**)&d_search, config.gulp * dedisp.get_dm_count() * sizeof(unsigned char));
     // here only launch threads that will take care of filterbank
     for (int ii = 0; ii < avt - 2; ii++) {
         cudaStreamCreate(&mystreams[ii]);
@@ -134,10 +163,10 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
 
     // dedisp thread
     cudaStreamCreate(&mystreams[avt-2]);
-    mythreads.push_back(thread(&Pool::dedisp, this, avt-2));
+    mythreads.push_back(thread(&Pool::dedisp_thread, this, avt-2));
     // single pulse thread
     cudaStreamCreate(&mystreams[avt-1]);
-    mythreads.push_back(thread(&Pool::search, this, avt-1));
+    mythreads.push_back(thread(&Pool::search_thread, this, avt-1));
 }
 
 Pool::~Pool(void)
@@ -152,7 +181,7 @@ void Pool::add_data(cufftComplex *buffer)
 {
     std::lock_guard<mutex> addguard(datamutex);
     // that has to have a mutex
-    mydata.push(vector<cufftComplex>(buffer, buffer + bufsize));
+    mydata.push(vector<cufftComplex>(buffer, buffer + filsize));
     //cout << "Data added\n";
     //cout.flush();
 }
@@ -162,8 +191,8 @@ void Pool::minion(int stream)
     cout << "Starting thread associated with stream " << stream << endl << endl;
     cout.flush();
 
-    unsigned int skip = stream * bufsize;
-    unsigned int outmem = bufsize / 2 * sizeof(float);
+    unsigned int skip = stream * filsize;
+    unsigned int outmem = filsize / 2 * sizeof(float);
 
     while(working) {
         // need to protect if with mutex
@@ -188,7 +217,7 @@ void Pool::minion(int stream)
 		        cout << "DtH copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
 		        cout.flush();
 	        }
-            mainbuffer.write(d_out, index, bufsize / 2, mystreams[stream]);
+            mainbuffer.write(d_out, index, filsize / 2, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
 	        datamutex.unlock();
@@ -197,22 +226,23 @@ void Pool::minion(int stream)
     }
 }
 
-void Pool::dedisp(int dstream)
+void Pool::dedisp_thread(int dstream)
 {
     int ready = mainbuffer.ready();
     if (ready) {
-        dedisp.execute();
+        mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
+        dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
     } else {
         std::this_thread::yield();
     }
 }
 
-void Pool::search(int sstream)
+void Pool::search_thread(int sstream)
 {
     std::this_thread::yield();
 }
 
-__global__ void poweradd(cufftComplex *in, float *out, unsigned int jump)
+__global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump)
 {
     int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
 	// offset introduced - can cause some slowing down
@@ -251,34 +281,37 @@ int main(int argc, char *argv[])
 
     int *killmask = new int[filchans];
 
+    config_s config;
+    default_config(config);
+
     // too many parameters to load as arguments - use config file
     if (argc >= 2) {
         for (int ii = 0; ii < argc; ii++) {
             if (std::string(argv[ii]) == "--config") {      // configuration file
                 ii++;
                 config_file = std::string(argv[ii]);
-                read_config(config_file);
+                read_config(config_file, config);
                 break;      // configuration file should have everything included
             }
             if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
                 ii++;
-                chunks = atoi(argv[ii]);
+                config.chunks = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-s") {     // the number of streams to use
                 ii++;
-                streamno = atoi(argv[ii]);
+                config.streamno = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // the number of beams to accept the data from
                 ii++;
-                beamno = atoi(argv[ii]);
+                config.beamno = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-t") {     // the number of time sample to average
                 ii++;
-                times = atoi(argv[ii]);
+                config.times = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
-                freq = atoi(argv[ii]);
+                config.freq = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
-                test = true;
+                config.test = true;
             } else if (std::string(argv[ii]) == "-v") {
-                verbose = true;
+                config.verbose = true;
             } else if (std::string(argv[ii]) == "-h") {
                 cout << "Options:\n"
                         << "\t -v - use verbose mode\n"
@@ -313,15 +346,15 @@ int main(int argc, char *argv[])
     }
     if (false)       // switch off for now
         dedisp.set_killmask(killmask);
-    // everything should be ready for dedispersion after this point
+
 
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{beamno * nchans};      // # beams * 192 channels
+    unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
-    Pool mypool(batchs, ffts, times, streamno, freq);
+    Pool mypool(batchs, ffts, config.times, config.streamno, config.freq, config);
 
     // networking stuff
     int sfd, numbytes, rv;

@@ -29,28 +29,29 @@
 class DedispPlan {
 	// Private members
 	dedisp_plan m_plan;
-	
+
 	// No copying or assignment
 	DedispPlan(const DedispPlan& other);
 	DedispPlan& operator=(const DedispPlan& other);
 public:
 	// Public types
+	// is this really necessary?
 	typedef dedisp_size  size_type;
 	typedef dedisp_byte  byte_type;
 	typedef dedisp_float float_type;
 	typedef dedisp_bool  bool_type;
-	
+
 	// Constructor
 	DedispPlan(size_type  nchans,
 	           float_type dt,
 	           float_type f0,
 	           float_type df);
-	
+
 	// Destructor
 	~DedispPlan();
-	
+
 	static void set_device(int device_idx);
-	
+
 	// Public interface
 	void set_gulp_size(size_type gulp_size);
 	void set_killmask(const bool_type* killmask);
@@ -119,7 +120,7 @@ DedispPlan::DedispPlan(size_type  nchans,
 DedispPlan::~DedispPlan() {
 	dedisp_destroy_plan(m_plan);
 }
-	
+
 // Public interface
 void DedispPlan::set_device(int device_idx) {
 	check_error( dedisp_set_device(device_idx), "dedisp_set_device" );
@@ -213,5 +214,3 @@ void DedispPlan::execute_guru(size_type        nsamps,
 	                                 flags),
 	             "dedisp_execute_guru" );
 }
-
-

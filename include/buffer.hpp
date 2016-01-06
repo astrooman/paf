@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <mutex>
 
-#define SINGLE_GULP 131027
-
 using std::mutex;
 
 // make a template to support dfferent dedisp input types
@@ -14,32 +12,46 @@ class Buffer
 {
     private:
         bool ready0, ready1, ready2;
-        const size_t size;
-        const int gulps;
+        size_t size;            // total size of the data chunk: gulp + extra
+        size_t gulp;            // size of the single gulp
+        size_t extra;           // number of extra time samples required to process the full gulp
+        int gulpno;             // number of gulps required in the buffer
         mutex buffermutex;
         size_t start;
         size_t end;
         T *d_buf;
-        unsigned int *sample_state;
+        unsigned int *sample_state;     // 0 for no data, 1 for data
     protected:
 
     public:
-        Buffer(size_t size);
+        Buffer();
+        Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         ~Buffer(void);
 
+        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         int ready();
-        void send();
+        void send(unsigned char *out, int idx, cudaStream_t &stream);
         void write(T *d_data, unsigned int index, unsigned int amount, cudaStream_t stream);
         // add deleted copy, move, etc constructors
 };
 
 template<class T>
-Buffer<T>::Buffer(size_t size) : size(size)
+Buffer<T>::Buffer()
+{
+    start = 0;
+    end = 0;
+}
+
+template<class T>
+Buffer<T>::Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u) : extra(extra_u),
+                                                                                gulp(gulp_u),
+                                                                                gulpno(gulpno_u),
+                                                                                size(size_u)
 {
     start = 0;
     end = 0;
     cudaMalloc((void**)&d_buf, size * sizeof(T));
-    sample_state = new int[size];
+    sample_state = new unsigned int[(int)size];
     std::fill(sample_state, sample_state + size, 0);
 }
 
@@ -51,23 +63,33 @@ Buffer<T>::~Buffer()
 }
 
 template<class T>
+void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u)
+{
+    extra = extra_u;
+    gulp = gulp_u;
+    gulpno = gulpno_u;
+    size = size_u;
+    cudaMalloc((void**)&d_buf, size * sizeof(T));
+    sample_state = new unsigned int[(int)size];
+    std::fill(sample_state, sample_state + size, 0);
+}
+
+template<class T>
 int Buffer<T>::ready()
 {
-    if(sample_state[] == 1){
-        return 1;
-    } else if (sample_state[] == 1) {
-        return 2;
-    } else if (sample_state[] == 1){
-        return 3;
-    } else
-        return 0;
+    // for now check only the last position for the gulp
+    for (int ii = 0; ii < gulpno; ii++) {
+        if (sample_state[(ii + 1) * gulp + extra - 1] == 1)
+            return (ii + 1);
+    }
+    return 0;
 }
 
 template<class T>
 // will return the pointer to the start of the data sent to dedispersion
-void Buffer<T>::send()
+void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream)
 {
-
+    cudaMemcpyAsync(out, d_buf + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream);
     std::fill(sample_state, sample_state + size, 0);
 }
 
@@ -81,13 +103,14 @@ void Buffer<T>::write(T *d_data, unsigned int index, unsigned int amount, cudaSt
     std::lock_guard<mutex> addguard(buffermutex);
     index = index % size;
     if (end == size)    // reached the end of the buffer
-        end = end - gulps * SINGLE_GULP;    // go back to the start
+        end = end - gulpno * gulp;    // go back to the start
     cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
     sample_state[index] = 1;
     // need to save in two places in the buffer
-    if (index >= gulps * SINGLE_GULP) {
-        cudaMemcpyAsync(d_buf + index - (gulps * SINGLE_GULP) * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
-        sample_state[index - (gulps * SINGLE_GULP)] = 1;
+    if (index >= gulpno * gulp) {
+        // simplify the index algebra here
+        cudaMemcpyAsync(d_buf + index - (gulpno * gulp) * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+        sample_state[index - (gulpno * gulp)] = 1;
     }
     end = end + amount;
 }
