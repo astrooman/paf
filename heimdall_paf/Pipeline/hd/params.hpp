@@ -49,20 +49,20 @@ struct hd_params {
   // Single pulse search parameters
   hd_size  boxcar_max;     // Max boxcar width to convolve with
   hd_float detect_thresh;  // Detection threshold (units of std. dev.)
-  
+
   hd_size  cand_sep_time;   // Min separation between candidates (in samples)
   hd_size  cand_sep_filter; // Min separation between candidates (in filters)
   hd_size  cand_sep_dm;     // Min separation between candidates (in DM trials)
   hd_size  cand_rfi_dm_cut; // Minimum DM for valid candidate
   //hd_size  cand_min_members; // Minimum members for valid candidate
-  
+
   hd_float max_giant_rate; // Maximum allowed number of giants per minute
   hd_size  min_tscrunch_width; // Filter width at which to begin tscrunching
 
   // coincidencer socket mode
   const char * coincidencer_host;   // host for coincidence reporting
   int          coincidencer_port;   // port for coincidence reporting
- 
+
   // channel zapping
   unsigned int num_channel_zaps;
   hd_range_t * channel_zaps;
@@ -72,6 +72,6 @@ struct hd_params {
   hd_size beam_count;
   int gpu_id;
   time_t utc_start;             // UTC time of first sample
-  hd_size spectra_per_second;   
+  hd_size spectra_per_second;
   const char * output_dir;
 };

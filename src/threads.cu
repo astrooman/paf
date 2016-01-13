@@ -14,6 +14,9 @@
 #include <DedispPlan.hpp>
 #include <vdif_head.hpp>
 
+// Heimdall headers - including might be a bit messy
+#include <params.hpp>
+
 #include <errno.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -50,6 +53,7 @@ class Pool
         // that can be anything, depending on how many output bits we decide to use
         Buffer<unsigned char> mainbuffer;
         DedispPlan dedisp;
+        hd_params params;
 
         bool working;
         // const to be safe
@@ -127,6 +131,9 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     //if (false)       // switch off for now
     //    dedisp.set_killmask(killmask);
     // everything should be ready for dedispersion after this point
+
+    set_search_params(&params, config);
+    // everything should be ready for single pulse search after this point
 
     filsize = fftsize * batchsize * timesamp;
     bufmem = filsize * sizeof(cufftComplex);
@@ -231,6 +238,8 @@ void Pool::dedisp_thread(int dstream)
     int ready = mainbuffer.ready();
     if (ready) {
         mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
+        // TO DO: include data member with the number of gulps already dedispersed
+        cout << "Dedispersing gulp " << endl;
         dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
     } else {
         std::this_thread::yield();
@@ -239,7 +248,12 @@ void Pool::dedisp_thread(int dstream)
 
 void Pool::search_thread(int sstream)
 {
-    std::this_thread::yield();
+    if () {
+        // TO DO: same as with the dedispersed gulps
+        cout << "Searching in the gulp " << endl;
+  } else {
+        std::this_thread::yield();
+  }
 }
 
 __global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump)
@@ -414,7 +428,7 @@ int main(int argc, char *argv[])
     header_s head;
 
     while(chunkno < chunks) {
-
+        // will probaby receive 48 channels in one packet - need to stitch the data
         for (unsigned int packetno  = 0; packetno < packets; packetno++) {
             if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
                 cout << "error recvfrom" << endl;

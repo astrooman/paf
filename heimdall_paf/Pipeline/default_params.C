@@ -43,7 +43,7 @@ void hd_set_default_params(hd_params* params) {
 	params->cand_sep_dm     = 200; // Note: trials, not actual DM
 	params->cand_rfi_dm_cut = 1.5;
 	//params->cand_min_members = 3;
-  
+
   // TODO: This still needs tuning!
   params->max_giant_rate  = 0;      // Max allowed giants per minute, 0 == no limit
 
@@ -54,7 +54,7 @@ void hd_set_default_params(hd_params* params) {
 
   params->coincidencer_host = NULL;
   params->coincidencer_port = -1;
-	
+
 	// TESTING
 	//params->first_beam = 0;
 	params->beam_count = 13;
