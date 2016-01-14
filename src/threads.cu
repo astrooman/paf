@@ -12,7 +12,7 @@
 #include <cufft.h>
 #include <dedisp.h>
 #include <DedispPlan.hpp>
-#include <vdif_head.hpp>
+#include <vdif.hpp>
 
 // Heimdall headers - including might be a bit messy
 #include <params.hpp>
