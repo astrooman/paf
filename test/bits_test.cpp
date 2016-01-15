@@ -29,6 +29,50 @@ int main(int argc, char *argv[]) {
     cout << std::bitset<16>(header[1]) << endl;
     cout << sipp << " -> " << std::bitset<64>(sipp) << endl;
 
+    unsigned int real;
+    unsigned int imag;
+
+    real = header[0] | (header[1] << 8);
+    imag = header[2] | (header[3] << 6);
+
+    cout << "Real part: " << real << " -> " << std::bitset<32>(real) << endl;
+    cout << "Imaginary part: " << imag << " -> " << std::bitset<32>(imag) << endl;
+
+    float freal = (float)real;
+    float fimag = (float)imag;
+
+    union {
+        float input;
+        int output;
+    } ureal;
+
+    ureal.input = freal;
+
+    cout << endl;
+    cout << "Cast into float:\n";
+    cout << "Real part: " << freal << " -> " << std::bitset<32>(freal) << endl;
+    cout << "Imaginary part: " << fimag << " -> " << std::bitset<32>(fimag) << endl;
+
+    cout << endl;
+    cout << "Real part: " << freal << " -> " << std::bitset<32>(ureal.output) << endl;
+
+    float pi = 3.1415926;
+
+    union {
+        float input;
+        int output;
+    } data;
+
+    data.input = pi;
+
+    cout << endl;
+    cout << pi << " -> " << std::bitset<32>(pi) << endl;
+
+    cout << endl;
+    cout << pi << " -> " << std::bitset<32>(data.output) << endl;
+
+    cout << sizeof(int);
+    cout << sizeof(float);
     cout << sizeof(long);
     return 0;
 }

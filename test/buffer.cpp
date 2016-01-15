@@ -72,21 +72,28 @@ int main(int argc, char *argv[])
     cout << "Waiting for recvfrom..." << endl;
 
     header_s head;
-    int band;
-    cufftComplex *data = new cufftComplex[896];
-    while(true)
+    int band{0};
+    cufftComplex *poladata = new cufftComplex[896];
+    cufftComplex *polbdata = new cufftComplex[896];
+
+    cufftComplex *polafull = new cufftComplex[128 * 336];
+    cufftComplex *polbfull = new cufftComplex[128 * 336];
+
+    while(band < 48)
     {
         if ((numbytes = recvfrom(sfd, frame, MAXBUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1) {
             cout << "Error on recvfrom\n";
         }
 
-        get_header(frame, head);
-        get_data(frame, data)
-        band = head.frame_no % 48;
-
-
         if (!numbytes)  // break on 0 bytes received for now - later process until the last frame reached
             break;
+
+        get_header(frame, head);
+        get_data(frame, poladata, polbdata)
+        //band = head.frame_no % 48;
+        std::copy(poladata, poladata + 896, polafull + band * 896);
+        std::copy(polbdata, polbdata + 896, polbfull + band * 896);
+        band++;
 
         inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
 
