@@ -55,13 +55,13 @@ void get_header(unsigned char* packet, header_s &head)
 {
 
     head.ref_s = (int)(packet[0] | (packet[1] << 8) | (packet[2] << 16) | ((packet[3] << 24) & 0x3f000000));
-    head.comp = (bool)((packet[3] & 0x40) >> 6);
-    head.invalid = (bool)((packet[3] & 0x80) >> 7);
+//    head.comp = (bool)((packet[3] & 0x40) >> 6);
+//    head.invalid = (bool)((packet[3] & 0x80) >> 7);
     head.frame_no = (int)(packet[4] | (packet[5] << 8) | (packet[6] << 16) | (packet[7] << 24));
     head.arr_len = (int)(packet[8] | (packet[9] << 8) | (packet[10] << 16));
     head.in_bits = (int)(packet[11] & 0x1f);         // 0x1f -> 00011111
-    head.version = (int)((packet[11] & 0xe0) >> 5);         // 0xe0 -> 11100000
-    head.station = (int)(packet[12] | (packet[13] << 16));
+//    head.version = (int)((packet[11] & 0xe0) >> 5);         // 0xe0 -> 11100000
+//    head.station = (int)(packet[12] | (packet[13] << 16));
     head.rep = (int)((packet[14] >> 6 ) | ((packet[15] & 0x3) << 2));      // 0x3 -> 00000011
     head.epoch = (int)((packet[15] & 0xfc) >> 2);     // 0xfc -> 11111100
     head.nchans = (int)(packet[16] | (packet[17] << 8));
@@ -69,30 +69,31 @@ void get_header(unsigned char* packet, header_s &head)
     head.group = (int)(packet[20] | (packet[21] << 8));
     head.thread = (int)(packet[22] | (packet[23] << 8));
     head.period = (int)(packet[24] | (packet[25] << 8));
-    head.synch = (int)(packet[40] | (packet[41] << 8) | (packet[42] << 16) | (packet[43] << 24));
+//    head.synch = (int)(packet[40] | (packet[41] << 8) | (packet[42] << 16) | (packet[43] << 24));
 
     // cast to long, just in case compiler is a bit daft
     long tsipp = (long)(packet[32] | (packet[33] << 8) | (packet[34] << 16) | (packet[35] << 24)
                     | ((long)packet[36] << 32) | ((long)packet[37] << 40) | ((long)packet[38] << 48) | ((long)packet[39] << 56));
     head.sipp = tsipp;
 
+/*
     cout << "VDIF version " << head.version + 1 << endl;
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;
     cout << "Period: " << head.period << endl;
     cout << "Number of channels: " << head.nchans + 1 << endl;
     cout << "Data frame within the current period: " << head.frame_no << endl;
     cout << "Sample intervals per period: " << head.sipp << endl;
-
+*/
 }
 
-void get_data(unsigned char *frame, cufftComplex *pola, cufftComplex *polb) {
+void get_data(unsigned char *frame, cufftComplex *pola, cufftComplex *polb, int band) {
 
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
     for (int chan = 0; chan < 7; chan++) {
         for (int sample = 0; sample < 128; sample++) {
-            idx = chan * 128 + sample;
+            idx = chan * 128 + sample + band * 896;
             idx2 = sample * 7 + chan;
             pola[idx].x = (float)(frame[HEADER + idx2 + 0] | (frame[HEADER + idx2 + 1] << 8));
             pola[idx].y = (float)(frame[HEADER + idx2 + 2] | (frame[HEADER + idx2 + 3] << 8));

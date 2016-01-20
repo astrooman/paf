@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define PORT "5000"
+#define PORT "45002"
 #define DATA 8908
 #define BUFLEN 8908 + 64   // 8908 bytes for sample block and 64  bytes for header
 
@@ -45,11 +45,14 @@ int main(int argc, char *argv[])
     std::chrono::duration<double> recelapsed;
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
 
-    getaddrinfo(NULL, PORT, &hints, &servinfo);
+    if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+	cout << "getaddrinfo error " << gai_strerror(rv) << endl;
+	exit(EXIT_FAILURE);
+    }
 
     for (p = servinfo; p != NULL; p = p->ai_next) {
 
@@ -85,33 +88,34 @@ int main(int argc, char *argv[])
 
     recstart = std::chrono::system_clock::now();
 
-    for (int times = 0; times < 20; times++) {
+    int repeat = 1<<10;
+
+    for (int times = 0; times < repeat; times++) {
 
         while(band < 48) {
             if ((numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
                 cout << "Error on recvfrom\n";
             }
 
-            if (!numbytes)  // break on 0 bytes received for now - later process until the last frame reached
+            if (!numbytes) { // break on 0 bytes received for now - later process until the last frame reached
+                cout << "Not received anything\n";
                 break;
+            }
 
-            get_header(reinterpret_cast<unsigned char*>(frame), head);
-            get_data(reinterpret_cast<unsigned char*>(frame), poladata, polbdata);
             //band = head.frame_no % 48;
-            std::copy(poladata, poladata + 896, polafull + band * 896);
-            std::copy(polbdata, polbdata + 896, polbfull + band * 896);
+            get_header(reinterpret_cast<unsigned char*>(frame), head);
+            get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, band);
             band++;
 
-            inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
-
         }
-
+        band = 0;
     }
 
     recend = std::chrono::system_clock::now();
     recelapsed = recend - recstart;
 
-    cout << "It took " << recelapsed.count() / (double)20.0 << "s to fill one buffer\n";
+    cout << "Total time spent filling " << repeat << " buffers was " << recelapsed.count() << "s\n";
+    cout << "It took " << recelapsed.count() / (double)repeat << "s to fill one buffer\n";
 
     return 0;
 }
