@@ -16,7 +16,7 @@
 
 /*
   This file contains the boring boiler-plate code to manage the library.
-  
+
   TODO: Test on 32-bit integer input
         Consider accepting 32-bit floats instead of 32-bit ints
 */
@@ -77,7 +77,7 @@ typedef unsigned int dedisp_word;
 
 // Define plan structure
 struct dedisp_plan_struct {
-  // Multi-GPU parameters 
+  // Multi-GPU parameters
   dedisp_size  device_count;
   // Size parameters
   dedisp_size  dm_count;
@@ -93,7 +93,7 @@ struct dedisp_plan_struct {
   std::vector<dedisp_float> delay_table;  // size = nchans
   std::vector<dedisp_bool>  killmask;     // size = nchans
   std::vector<dedisp_size>  scrunch_list; // size = dm_count
-  // Device arrays //NEW: one for each GPU 
+  // Device arrays //NEW: one for each GPU
   std::vector< thrust::device_vector<dedisp_float> > d_dm_list;
   std::vector< thrust::device_vector<dedisp_float> > d_delay_table;
   std::vector< thrust::device_vector<dedisp_bool> >  d_killmask;
@@ -150,12 +150,12 @@ dedisp_error throw_error(dedisp_error error) {
 }
 */
 
-dedisp_error update_scrunch_list(dedisp_plan plan) 
+dedisp_error update_scrunch_list(dedisp_plan plan)
 {
   if( cudaGetLastError() != cudaSuccess ) {
     throw_error(DEDISP_PRIOR_GPU_ERROR);
   }
-  
+
   if( !plan->scrunching_enabled || 0 == plan->dm_count ) {
     plan->scrunch_list.resize(0);
     // Fill with 1's by default for safety
@@ -176,7 +176,7 @@ dedisp_error update_scrunch_list(dedisp_plan plan)
   if( error != DEDISP_NO_ERROR ) {
     return error;
   }
-  
+
   //NEW: Allocate on and copy to all devices
   for (int ii = 0; ii < plan->device_count; ii++)
     {
@@ -209,7 +209,7 @@ dedisp_error set_requested_devices(dedisp_plan plan)
   if (plan->device_count > (dedisp_size) device_count)
     plan->device_count = (dedisp_size) device_count;
   //NEW: Not sure if any error checking is required here
-  
+
   return DEDISP_NO_ERROR;
 }
 
@@ -229,11 +229,11 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 
   /// Initialise to NULL for safety
   *plan_ = 0;
-	
+
   if( cudaGetLastError() != cudaSuccess ) {
     throw_error(DEDISP_PRIOR_GPU_ERROR);
   }
-	
+
 	//int device_idx; //NEW
 	//cudaGetDevice(&device_idx);
 
@@ -241,16 +241,16 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	if( nchans > DEDISP_MAX_NCHANS ) {
 		throw_error(DEDISP_NCHANS_EXCEEDS_LIMIT);
 	}
-	
+
 	// Force the df parameter to be negative such that
 	//   freq[chan] = f0 + chan * df.
 	df = -abs(df);
-	
+
 	dedisp_plan plan = new dedisp_plan_struct();
 	if( !plan ) {
 	  throw_error(DEDISP_MEM_ALLOC_FAILED);
 	}
-	
+
 	plan->device_count  = ngpus;
 	plan->dm_count      = 0;
 	plan->nchans        = nchans;
@@ -261,14 +261,14 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	plan->df            = df;
 	//plan->stream        = 0;
 
-	//NEW: Check number of requested devices 
+	//NEW: Check number of requested devices
 	//Currently always returns DEDISP_NO_ERROR
 	err = set_requested_devices(plan);
 	if( err != DEDISP_NO_ERROR ) {
 	  dedisp_destroy_plan(plan);
 	  return err;
         }
-	
+
 	//NEW: resize containers for cuda device vectors
 	plan->d_delay_table.resize(plan->device_count);
 	plan->d_dm_list.resize(plan->device_count);
@@ -279,21 +279,21 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	// Note: The DM factor is left out and applied during dedispersion
 	plan->delay_table.resize(plan->nchans);
 	generate_delay_table(&plan->delay_table[0], plan->nchans, dt, f0, df);
-	
+
 
 	//NEW: moved this statement to keep a single loop below
 	plan->killmask.resize(plan->nchans, (dedisp_bool)true);
-	
+
 	//NEW: resize the device vectors for each device
-	for (int ii = 0; ii < plan->device_count; ii++) 
+	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
 	    err = dedisp_set_device(ii);
-	    if (err != DEDISP_NO_ERROR) 
+	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);
 		return err;
 	      }
-	  
+
 	    try {
 	      plan->d_delay_table[ii].resize(plan->nchans);
 	    }
@@ -358,16 +358,16 @@ dedisp_error dedisp_set_dm_list(dedisp_plan plan,
 	if( cudaGetLastError() != cudaSuccess ) {
 		throw_error(DEDISP_PRIOR_GPU_ERROR);
 	}
-	
+
 	plan->dm_count = count;
 	plan->dm_list.assign(dm_list, dm_list+count);
-	
+
 	// Copy to the device
 	//NEW: copy to all devices
-	for (int ii = 0; ii < plan->device_count; ii++) 
+	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
 	    err = dedisp_set_device(ii);
-	    if (err != DEDISP_NO_ERROR) 
+	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);
 		return err;
@@ -384,12 +384,12 @@ dedisp_error dedisp_set_dm_list(dedisp_plan plan,
 	// Calculate the maximum delay and store it in the plan
 	plan->max_delay = dedisp_size(plan->dm_list[plan->dm_count-1] *
 				      plan->delay_table[plan->nchans-1] + 0.5);
-	
+
 	err = update_scrunch_list(plan);
 	if( err != DEDISP_NO_ERROR ) {
 	  return err;
 	}
-	
+
 	return DEDISP_NO_ERROR;
 }
 
@@ -398,13 +398,13 @@ dedisp_error dedisp_generate_dm_list(dedisp_plan plan,
                                      dedisp_float ti, dedisp_float tol)
 {
         dedisp_error err;
-        if( !plan ) { 
-	  throw_error(DEDISP_INVALID_PLAN); 
+        if( !plan ) {
+	  throw_error(DEDISP_INVALID_PLAN);
 	}
 	if( cudaGetLastError() != cudaSuccess ) {
 	  throw_error(DEDISP_PRIOR_GPU_ERROR);
 	}
-	
+
 	// Generate the DM list (on the host)
 	plan->dm_list.clear();
 	generate_dm_list(plan->dm_list,
@@ -431,16 +431,16 @@ dedisp_error dedisp_generate_dm_list(dedisp_plan plan,
 	    }
 	    catch(...) { throw_error(DEDISP_MEM_COPY_FAILED); }
 	  }
-	
+
 	// Calculate the maximum delay and store it in the plan
 	plan->max_delay = dedisp_size(plan->dm_list[plan->dm_count-1] *
 				      plan->delay_table[plan->nchans-1] + 0.5);
-	
+
 	err = update_scrunch_list(plan);
 	if( err != DEDISP_NO_ERROR ) {
 	  return err;
 	}
-	
+
 	return DEDISP_NO_ERROR;
 }
 
@@ -448,7 +448,7 @@ dedisp_error dedisp_set_device(int device_idx) {
 	if( cudaGetLastError() != cudaSuccess ) {
 	  throw_error(DEDISP_PRIOR_GPU_ERROR);
 	}
-	
+
 	cudaError_t error = cudaSetDevice(device_idx);
 	// Note: cudaErrorInvalidValue isn't a documented return value, but
 	//         it still gets returned :/
@@ -466,7 +466,7 @@ dedisp_error dedisp_set_device(int device_idx) {
 dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
 {
   //NEW: Added loops to copy to all devices
-  dedisp_error err; 
+  dedisp_error err;
   int ii;
   if( !plan ) { throw_error(DEDISP_INVALID_PLAN); }
   if( cudaGetLastError() != cudaSuccess ) {
@@ -474,13 +474,13 @@ dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
   }
   if( 0 != killmask ) {
     // Copy killmask to plan (both host and device)
-    
+
     plan->killmask.assign(killmask, killmask + plan->nchans);
-		
+
     for (ii = 0; ii < plan->device_count; ii++)
       {
 	err = dedisp_set_device(ii);
-	if (err != DEDISP_NO_ERROR) 
+	if (err != DEDISP_NO_ERROR)
 	  {
 	    dedisp_destroy_plan(plan);
 	    return err;
@@ -495,10 +495,10 @@ dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
   else {
     // Set the killmask to all true
     std::fill(plan->killmask.begin(), plan->killmask.end(), (dedisp_bool)true);
-    for (ii = 0; ii < plan->device_count; ii++) 
+    for (ii = 0; ii < plan->device_count; ii++)
       {
 	err = dedisp_set_device(ii);
-	if (err != DEDISP_NO_ERROR) 
+	if (err != DEDISP_NO_ERROR)
 	  {
 	    dedisp_destroy_plan(plan);
 	    return err;
@@ -567,18 +567,18 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
                                  dedisp_size        dm_count,
 				 unsigned           flags)
 {
-  
+
         int device_idx;
-        cudaGetDevice(&device_idx); 
+        cudaGetDevice(&device_idx);
 
 	enum {
 		BITS_PER_BYTE  = 8,
 		BYTES_PER_WORD = sizeof(dedisp_word) / sizeof(dedisp_byte)
 	};
-	
+
 	dedisp_size out_bytes_per_sample = out_nbits / (sizeof(dedisp_byte) *
 	                                                BITS_PER_BYTE);
-	
+
 	if( 0 == in || 0 == out ) {
 		throw_error(DEDISP_INVALID_POINTER);
 	}
@@ -593,12 +593,12 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	if( nsamps < plan->max_delay ) {
 		throw_error(DEDISP_TOO_FEW_NSAMPS);
 	}
-	
+
 	// Check for valid synchronisation flags
 	if( flags & DEDISP_ASYNC && flags & DEDISP_WAIT ) {
 		throw_error(DEDISP_INVALID_FLAG_COMBINATION);
 	}
-	
+
 	// Check for valid nbits values
 	if( in_nbits  != 1 &&
 	    in_nbits  != 2 &&
@@ -613,7 +613,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	    out_nbits != 32 ) {
 		throw_error(DEDISP_UNSUPPORTED_OUT_NBITS);
 	}
-	
+
 	bool using_host_memory;
 	if( flags & DEDISP_HOST_POINTERS && flags & DEDISP_DEVICE_POINTERS ) {
 		throw_error(DEDISP_INVALID_FLAG_COMBINATION);
@@ -621,7 +621,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	else {
 		using_host_memory = !(flags & DEDISP_DEVICE_POINTERS);
 	}
-	
+
 	// Copy the lookup tables to constant memory on the device
 	// TODO: This was much tidier, but thanks to CUDA's insistence on
 	//         breaking its API in v5.0 I had to mess it up like this.
@@ -644,46 +644,32 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	if( error != cudaSuccess ) {
 		throw_error(DEDISP_MEM_COPY_FAILED);
 	}
-	
+
 	// Compute the problem decomposition
 	dedisp_size nsamps_computed = nsamps - plan->max_delay;
 	// Specify the maximum gulp size
 	dedisp_size nsamps_computed_gulp_max;
-	if( using_host_memory ) {
-		nsamps_computed_gulp_max = min(plan->gulp_size, nsamps_computed);
-	}
-	else {
-		// Just do it in one gulp if given device pointers
-		nsamps_computed_gulp_max = nsamps_computed;
-	}
-	
-	// Just to be sure
-	// TODO: This seems quite wrong. Why was it here?
-	/*
-	if( nsamps_computed_gulp_max < plan->max_delay ) {
-		throw_error(DEDISP_TOO_FEW_NSAMPS);
-	}
-	*/
-	
+	nsamps_computed_gulp_max = nsamps_computed;
+
 	// Compute derived counts for maximum gulp size
-	dedisp_size nsamps_gulp_max = nsamps_computed_gulp_max + plan->max_delay;
 	dedisp_size chans_per_word  = sizeof(dedisp_word)*BITS_PER_BYTE / in_nbits;
 	dedisp_size nchan_words     = plan->nchans / chans_per_word;
-	
+
 	// We use words for processing but allow arbitrary byte strides, which are
 	//   not necessarily friendly.
+    // Our stride is friendly like a fluffy bunny
 	bool friendly_in_stride = (0 == in_stride % BYTES_PER_WORD);
-	
+
 	// Note: If desired, this could be rounded up, e.g., to a power of 2
 	dedisp_size in_buf_stride_words      = nchan_words;
-	dedisp_size in_count_gulp_max        = nsamps_gulp_max * in_buf_stride_words;
-	
+	dedisp_size in_count_gulp_max        = nsamps * in_buf_stride_words;
+
 	dedisp_size nsamps_padded_gulp_max   = div_round_up(nsamps_computed_gulp_max,
 	                                                    DEDISP_SAMPS_PER_THREAD)
 		* DEDISP_SAMPS_PER_THREAD + plan->max_delay;
-	dedisp_size in_count_padded_gulp_max = 
+	dedisp_size in_count_padded_gulp_max =
 		nsamps_padded_gulp_max * in_buf_stride_words;
-	
+
 	// TODO: Make this a parameter?
 	dedisp_size min_in_nbits = 0;
 	if( plan->scrunching_enabled ) {
@@ -698,12 +684,12 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	dedisp_size unpacked_buf_stride_words = unpacked_nchan_words;
 	dedisp_size unpacked_count_padded_gulp_max =
 		nsamps_padded_gulp_max * unpacked_buf_stride_words;
-	
+
 	dedisp_size out_stride_gulp_samples  = nsamps_computed_gulp_max;
-	dedisp_size out_stride_gulp_bytes    = 
+	dedisp_size out_stride_gulp_bytes    =
 		out_stride_gulp_samples * out_bytes_per_sample;
 	dedisp_size out_count_gulp_max       = out_stride_gulp_bytes * dm_count;
-	
+
 	// Organise device memory pointers
 	// -------------------------------
 	const dedisp_word* d_in = 0;
@@ -714,78 +700,65 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	thrust::device_vector<dedisp_word> d_transposed_buf;
 	thrust::device_vector<dedisp_word> d_unpacked_buf;
 	thrust::device_vector<dedisp_byte> d_out_buf;
-	// Allocate temporary buffers on the device where necessary
-	if( using_host_memory || !friendly_in_stride ) {
-		try { d_in_buf.resize(in_count_gulp_max); }
-		catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
-		d_in = thrust::raw_pointer_cast(&d_in_buf[0]);
-	}
-	else {
-		d_in = (dedisp_word*)in;
-	}
-	if( using_host_memory ) {
-		try { d_out_buf.resize(out_count_gulp_max); }
-		catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
-		d_out = thrust::raw_pointer_cast(&d_out_buf[0]);
-	}
-	else {
-		d_out = out;
-	}
+
+	d_in = (dedisp_word*)in;
+	d_out = out;
+
 	//// Note: * 2 here is for the time-scrunched copies of the data
 	try { d_transposed_buf.resize(in_count_padded_gulp_max/* * 2 */); }
 	catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
 	d_transposed = thrust::raw_pointer_cast(&d_transposed_buf[0]);
-	
+
 	// Note: * 2 here is for the time-scrunched copies of the data
 	try { d_unpacked_buf.resize(unpacked_count_padded_gulp_max * 2); }
 	catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
 	d_unpacked = thrust::raw_pointer_cast(&d_unpacked_buf[0]);
 	// -------------------------------
-	
+
 	// The stride (in words) between differently-scrunched copies of the
 	//   unpacked data.
 	dedisp_size scrunch_stride = unpacked_count_padded_gulp_max;
-	
+
 #ifdef USE_SUBBAND_ALGORITHM
-	
+
 	dedisp_size sb_size           = DEDISP_DEFAULT_SUBBAND_SIZE;
 	// Note: Setting these two parameters equal should balance the two steps of
 	//         the sub-band algorithm.
 	dedisp_size dm_size           = sb_size; // Ndm'
-	
+
 	dedisp_size sb_count          = plan->nchans / sb_size;
 	dedisp_size nom_dm_count      = dm_count / dm_size;
-	
+
 	thrust::device_vector<dedisp_word> d_intermediate_buf;
 	try { d_intermediate_buf.resize(nsamps_padded_gulp_max * sb_count
 	                                * nom_dm_count); }
 	catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
 	dedisp_word* d_intermediate = thrust::raw_pointer_cast(&d_intermediate_buf[0]);
-	
+
 #endif //  USE_SUBBAND_ALGORITHM
-	
+
 	// TODO: Eventually re-implement streams
 	cudaStream_t stream = 0;//(cudaStream_t)plan->stream;
-	
+
 #ifdef DEDISP_BENCHMARK
 	Stopwatch copy_to_timer;
 	Stopwatch copy_from_timer;
 	Stopwatch transpose_timer;
 	Stopwatch kernel_timer;
 #endif
-	
+
 	// Gulp loop
-	for( dedisp_size gulp_samp_idx=0; 
-	     gulp_samp_idx<nsamps_computed; 
+	for( dedisp_size gulp_samp_idx=0;
+	     gulp_samp_idx<nsamps_computed;
 	     gulp_samp_idx+=nsamps_computed_gulp_max ) {
-		
+
 		dedisp_size nsamps_computed_gulp = min(nsamps_computed_gulp_max,
 		                                       nsamps_computed-gulp_samp_idx);
 		dedisp_size nsamps_gulp          = nsamps_computed_gulp + plan->max_delay;
 		dedisp_size nsamps_padded_gulp   = div_round_up(nsamps_computed_gulp,
 		                                                DEDISP_SAMPS_PER_THREAD)
 			* DEDISP_SAMPS_PER_THREAD + plan->max_delay;
-		
+
 #ifdef DEDISP_BENCHMARK
 		copy_to_timer.start();
 #endif
@@ -826,15 +799,15 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 #ifdef DEDISP_BENCHMARK
 		cudaThreadSynchronize();
 		transpose_timer.stop();
-		
+
 		kernel_timer.start();
 #endif
-		
+
 		// Unpack the transposed data
 		unpack(d_transposed, nsamps_padded_gulp, nchan_words,
 		       d_unpacked,
 		       in_nbits, unpacked_in_nbits);
-		
+
 		// Compute time-scrunched copies of the data
 		if( plan->scrunching_enabled ) {
 			dedisp_size max_scrunch = plan->scrunch_list[plan->dm_count-1];
@@ -853,10 +826,10 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 				scrunch_out_offset += scrunch_stride / s;
 			}
 		}
-		
+
 #ifdef USE_SUBBAND_ALGORITHM
 		// TODO: This has not been updated to use d_unpacked!
-		
+
 		dedisp_size chan_stride       = 1;
 		dedisp_size dm_stride         = dm_size;
 		dedisp_size ostride           = nsamps_padded_gulp * sb_count;
@@ -865,7 +838,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		dedisp_size batch_dm_stride   = 0;
 		dedisp_size batch_chan_stride = sb_size;
 		dedisp_size batch_out_stride  = nsamps_padded_gulp;
-		
+
 		/* // Consistency checks
 		   if( (nom_dm_count-1)*dm_stride + (batch_size-1)*batch_dm_stride >= dm_count ) {
 		   throw std::runtime_error("DM STRIDES ARE INCONSISTENT");
@@ -874,7 +847,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		   throw std::runtime_error("CHAN STRIDES ARE INCONSISTENT");
 		   }
 		*/
-		
+
 		// Both steps
 		if( !dedisperse(d_transposed,
 		                nsamps_padded_gulp,
@@ -895,7 +868,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		                batch_out_stride) ) {
 			throw_error(DEDISP_INTERNAL_GPU_ERROR);
 		}
-		
+
 		batch_size = nom_dm_count;
 		chan_stride       = sb_size;
 		dm_stride         = 1;
@@ -904,7 +877,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		batch_dm_stride   = 0;
 		batch_chan_stride = 0;
 		batch_out_stride  = out_stride_gulp_samples * dm_size;
-		
+
 		/* // Consistency checks
 		   if( (dm_size-1)*dm_stride + (batch_size-1)*batch_dm_stride >= dm_count ) {
 		   throw std::runtime_error("DM STRIDES ARE INCONSISTENT");
@@ -913,7 +886,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		   throw std::runtime_error("CHAN STRIDES ARE INCONSISTENT");
 		   }
 		*/
-		
+
 		if( !dedisperse(d_intermediate,
 		                nsamps_padded_gulp,
 		                nsamps_computed_gulp,
@@ -934,13 +907,13 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 			throw_error(DEDISP_INTERNAL_GPU_ERROR);
 		}
 #else // Use direct algorithm
-		
+
 		if( plan->scrunching_enabled ) {
-			
+
 			// TODO: THIS WILL NOT WORK IF dm_count < plan->dm_count !
 			//         Need to avoid assumption that scrunch starts at 1
 			//         Must start the scrunch at the first *requested* DM
-			
+
 			thrust::device_vector<dedisp_float> d_scrunched_dm_list(dm_count);
 			dedisp_size scrunch_start = 0;
 			dedisp_size scrunch_offset = 0;
@@ -951,7 +924,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 					//dedisp_size next_scrunch = plan->scrunch_list[s];
 					//if( next_scrunch != cur_scrunch ) {
 					dedisp_size scrunch_count = s+1 - scrunch_start;
-					
+
 					// Make a copy of the dm list divided by the scrunch factor
 					// Note: This has the effect of increasing dt in the delay eqn
 					dedisp_size dm_offset = first_dm_idx + scrunch_start;
@@ -962,7 +935,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 					                  thrust::divides<dedisp_float>());
 					dedisp_float* d_scrunched_dm_list_ptr =
 						thrust::raw_pointer_cast(&d_scrunched_dm_list[0]);
-					
+
 					// TODO: Is this how the nsamps vars need to change?
 					if( !dedisperse(//&d_transposed[scrunch_offset],
 					                &d_unpacked[scrunch_offset],
@@ -1025,7 +998,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 					// Look for segment boundaries
 					if( s+1 == dm_count || plan->scrunch_list[s+1] != cur_scrunch ) {
 						dedisp_size scrunch_count = s+1 - scrunch_start;
-						
+
 						dedisp_size  src_stride = out_stride_gulp_bytes;
 						dedisp_byte* src = d_out + scrunch_start * src_stride;
 						dedisp_byte* dst = (out + scrunch_start * out_stride
@@ -1055,9 +1028,9 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 			copy_from_timer.stop();
 #endif
 		}
-		
+
 	} // End of gulp loop
-	
+
 #ifdef DEDISP_BENCHMARK
 	cout << "Copy to time:   " << copy_to_timer.getTime() << endl;
 	cout << "Copy from time: " << copy_from_timer.getTime() << endl;
@@ -1065,7 +1038,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	cout << "Kernel time:    " << kernel_timer.getTime() << endl;
 	float total_time = copy_to_timer.getTime() + copy_from_timer.getTime() + transpose_timer.getTime() + kernel_timer.getTime();
 	cout << "Total time:     " << total_time << endl;
-	
+
 	// Append the timing results to a log file
 	std::ofstream perf_file("perf.log", std::ios::app);
 	perf_file << copy_to_timer.getTime() << "\t"
@@ -1075,11 +1048,11 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	          << total_time << endl;
 	perf_file.close();
 #endif
-	
+
 	if( !(flags & DEDISP_ASYNC) ) {
 		cudaStreamSynchronize(stream);
 	}
-	
+
 	// Phew!
 	return DEDISP_NO_ERROR;
 }
@@ -1103,30 +1076,6 @@ dedisp_error dedisp_execute_adv(const dedisp_plan  plan,
 	                           flags);
 }
 
-//NEW: This function provides an interface for guru or adv calls 
-//from a pthreads instance
-void *dedisp_execute_thread(void *args)
-{
-  struct dedisp_thread_args *params = (struct dedisp_thread_args*) args;
-  
-  dedisp_error err = dedisp_set_device(params->device_idx);
-  if (err != DEDISP_NO_ERROR) {
-    dedisp_destroy_plan(params->plan);
-    return (void*) err;
-  }
-  err = dedisp_execute_adv(params->plan,
-                           params->nsamps,
-                           params->in,
-                           params->in_nbits,
-                           params->in_stride,
-                           params->out,
-                           params->out_nbits,
-                           params->out_stride,
-                           params->flags);
-  return (void *)err;
-}
-
-// TODO: Consider having the user specify nsamps_computed instead of nsamps
 dedisp_error dedisp_execute(const dedisp_plan  plan,
                             dedisp_size        nsamps,
                             const dedisp_byte* in,
@@ -1135,78 +1084,25 @@ dedisp_error dedisp_execute(const dedisp_plan  plan,
                             dedisp_size        out_nbits,
                             unsigned           flags)
 {
-	
+
 	enum {
 		BITS_PER_BYTE = 8
 	};
-	
-	//cout << "DEDISP: Dedispersing on "<<plan->device_count<<" GPUs" << endl;
 
-	//NEW: define threads for multi GPU execution
-	//NEW: Each thread relates to a single cuda device
-	int ii;
 	dedisp_error retval;
-	std::vector<pthread_t> threads;
-	threads.resize(plan->device_count);
-		
+
        	// Note: The default out_stride is nsamps - plan->max_delay
 	dedisp_size out_bytes_per_sample =
 	  out_nbits / (sizeof(dedisp_byte) * BITS_PER_BYTE);
-	
+
 	// Note: Must be careful with integer division
 	dedisp_size in_stride =
 	  plan->nchans * in_nbits / (sizeof(dedisp_byte) * BITS_PER_BYTE);
 	dedisp_size out_stride = (nsamps - plan->max_delay) * out_bytes_per_sample;
 
-	//NEW: Break up data by block rather than DM for efficiency
-	dedisp_size samp_counter = 0;
-	dedisp_size base_nsamps = nsamps / plan->device_count + 1;
+    dedisp_execute_adv(plan, nsamps, in, in_nbits, in_stride,
+                        out, out_nbits, out_stride, flags);
 
-	//NEW: These values change for each thread
-	dedisp_size current_nsamps;
-	dedisp_byte* current_in;
-	dedisp_byte* current_out;
-	
-
-	for (ii = 0; ii < plan->device_count; ii++) 
-	  {
-	    //NEW: increment pointers to point at start of thread block
-	    current_in = (dedisp_byte *) in + samp_counter * in_stride;
-	    current_out = (dedisp_byte *) out + samp_counter * out_bytes_per_sample;
-	    
-	    //NEW: Compute number of samples to be dedispersed by current thread
-	    //Here we take into account overlaps
-	    current_nsamps = base_nsamps + plan->max_delay;
-	    if (samp_counter + current_nsamps > nsamps)
-	      current_nsamps = nsamps - samp_counter;
-	    else
-	      samp_counter += base_nsamps;
-
-	    dedisp_thread_args* args = new dedisp_thread_args();
-            args->plan       = plan;
-            args->nsamps     = current_nsamps;
-            args->in         = current_in;
-            args->in_nbits   = in_nbits;
-            args->in_stride  = in_stride;
-            args->out        = current_out;
-            args->out_nbits  = out_nbits;
-            args->out_stride = out_stride;
-            args->flags      = flags;
-            args->device_idx = ii;
-
-	    //NEW: Spawn a thread by calling interface function 
-	    pthread_create(&threads[ii], NULL, dedisp_execute_thread, (void *) args);
-	  }
-	
-	//NEW: Join each thread, wait for exit and check for errors
-	for (ii = 0; ii < plan->device_count; ii++)
-	  {
-	    pthread_join( threads[ii], (void**) &retval);
-	    if (retval != DEDISP_NO_ERROR) {
-	      dedisp_destroy_plan(plan);
-	      return retval;
-	    }
-	  }
 	return DEDISP_NO_ERROR;
 }
 

@@ -86,36 +86,18 @@ int main(int argc, char *argv[])
     cufftComplex *polafull = new cufftComplex[128 * 336];
     cufftComplex *polbfull = new cufftComplex[128 * 336];
 
+    int n = 0;
     recstart = std::chrono::system_clock::now();
 
-    int repeat = 1<<10;
-
-    for (int times = 0; times < repeat; times++) {
-
-        while(band < 48) {
-            if ((numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-                cout << "Error on recvfrom\n";
-            }
-
-            if (!numbytes) { // break on 0 bytes received for now - later process until the last frame reached
-                cout << "Not received anything\n";
-                break;
-            }
-
-            //band = head.frame_no % 48;
-            get_header(reinterpret_cast<unsigned char*>(frame), head);
-            get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, band);
-            band++;
-
-        }
-        band = 0;
+    while(n < 1000) {
+        numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len));
+        n++;
     }
 
     recend = std::chrono::system_clock::now();
     recelapsed = recend - recstart;
 
-    cout << "Total time spent filling " << repeat << " buffers was " << recelapsed.count() << "s\n";
-    cout << "It took " << recelapsed.count() / (double)repeat << "s to fill one buffer\n";
+    cout << "Took " << recelapsed << " seconds to receive " << n << " packets " << endl;
 
     return 0;
 }
