@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 
 #include <boost/array.hpp>
@@ -13,7 +14,7 @@ using boost::asio::ip::udp;
 int main(int argc, char *argv[])
 {
     try {
-        std::chrono::time_point,std::chrono::system_clock> send_begin, send_end;
+        std::chrono::time_point<std::chrono::system_clock> send_begin, send_end;
         std::chrono::duration<double> send_elapsed;
 
         boost::asio::socket_base::reuse_address option(true);
@@ -33,7 +34,7 @@ int main(int argc, char *argv[])
         int n = 0;
         send_begin = std::chrono::system_clock::now();
 
-        whine(n < 1000) {
+        while(n < 48 * 1000) {
             len = socket.receive_from(boost::asio::buffer(recv_buff), sender_endpoint);
             n++;
         }
@@ -41,7 +42,7 @@ int main(int argc, char *argv[])
         send_end = std::chrono::system_clock::now();
         send_elapsed = send_end - send_begin;
 
-        cout << "Took " << send_elapsed << " seconds to receive " << n << " packets " << endl;
+        cout << "Took " << send_elapsed.count() << " seconds to receive " << 1000 << " buffers " << endl;
 
     } catch (std::exception &e) {
         cout << "Something bad happened: " << e.what() << endl;

@@ -89,15 +89,15 @@ int main(int argc, char *argv[])
     int n = 0;
     recstart = std::chrono::system_clock::now();
 
-    while(n < 1000) {
-        numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len));
+    while(n < 48 * 10000) {
+        if((numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1);
         n++;
     }
 
     recend = std::chrono::system_clock::now();
     recelapsed = recend - recstart;
 
-    cout << "Took " << recelapsed << " seconds to receive " << n << " packets " << endl;
+    cout << "Took " << recelapsed.count() << " seconds to receive " << 10000 << " buffers " << endl;
 
     return 0;
 }
