@@ -614,18 +614,13 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		throw_error(DEDISP_UNSUPPORTED_OUT_NBITS);
 	}
 
-	bool using_host_memory;
-	if( flags & DEDISP_HOST_POINTERS && flags & DEDISP_DEVICE_POINTERS ) {
-		throw_error(DEDISP_INVALID_FLAG_COMBINATION);
-	}
-	else {
-		using_host_memory = !(flags & DEDISP_DEVICE_POINTERS);
-	}
-
+    // will never use the host memory
+    bool using_host_memory = false;
 	// Copy the lookup tables to constant memory on the device
 	// TODO: This was much tidier, but thanks to CUDA's insistence on
 	//         breaking its API in v5.0 I had to mess it up like this.
 	// NEW: dereferenced d_delay_table to point to pointers on current device
+    // Code below will be moved to the DedispPlan.hpp, so that this data is copied only once
 	cudaMemcpyToSymbolAsync(c_delay_table,
 	                        thrust::raw_pointer_cast(&plan->d_delay_table[device_idx][0]),
 							plan->nchans * sizeof(dedisp_float),
@@ -1100,10 +1095,14 @@ dedisp_error dedisp_execute(const dedisp_plan  plan,
 	  plan->nchans * in_nbits / (sizeof(dedisp_byte) * BITS_PER_BYTE);
 	dedisp_size out_stride = (nsamps - plan->max_delay) * out_bytes_per_sample;
 
-    dedisp_execute_adv(plan, nsamps, in, in_nbits, in_stride,
-                        out, out_nbits, out_stride, flags);
+    dedisp_size first_dm_idx = 0;
+    dedisp_size dm_count = plan->dm_count;
 
-	return DEDISP_NO_ERROR;
+    return dedisp_execute_guru(plan, nsamps,
+	                           in, in_nbits, in_stride,
+	                           out, out_nbits, out_stride,
+	                           first_dm_idx, dm_count,
+	                           flags);
 }
 
 

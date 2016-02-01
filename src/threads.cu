@@ -428,7 +428,8 @@ int main(int argc, char *argv[])
     header_s head;
 
     while(chunkno < chunks) {
-        // will probaby receive 48 channels in one packet - need to stitch the data
+        // will only receive 6 or 7 channels in one packet
+        // will have to stitch them together
         for (unsigned int packetno  = 0; packetno < packets; packetno++) {
             if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
                 cout << "error recvfrom" << endl;
