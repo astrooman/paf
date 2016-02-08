@@ -81,7 +81,7 @@ void set_search_params(hd_params &params, config_s config)
     params->dm_tol          = 1.25;
     params->dm_pulse_width  = 40;//e-6; // TODO: Check why this was here
     params->dm_nbits        = 32;//8;
-    params->use_scrunching  = true;
+    params->use_scrunching  = false;
     params->scrunch_tol     = 1.15;
     params->rfi_tol         = 5.0;//1e-6;//1e-9; TODO: Should this be a probability instead?
     params->rfi_min_beams   = 8;
@@ -108,7 +108,7 @@ void set_search_params(hd_params &params, config_s config)
 
     // TESTING
     //params->first_beam = 0;
-    params->beam_count = 13;
+    params->beam_count = 1
     params->gpu_id = 0;
     params->utc_start = 0;
     params->spectra_per_second = 0;

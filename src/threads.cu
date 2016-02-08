@@ -16,6 +16,7 @@
 
 // Heimdall headers - including might be a bit messy
 #include <params.hpp>
+#include <pipeline.hpp>
 
 #include <errno.h>
 #include <netdb.h>
@@ -53,6 +54,7 @@ class Pool
         // that can be anything, depending on how many output bits we decide to use
         Buffer<unsigned char> mainbuffer;
         DedispPlan dedisp;
+        hd_pipeline pipeline;
         hd_params params;
 
         bool working;
@@ -115,6 +117,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     if(config.verbose)
         cout << "Will create " << avt << " CUDA streams\n";
 
+    // gemerate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
     dedisp.generate_dm_list(config.dstart, config.dend, (float)64.0, (float)1.10);
@@ -133,6 +136,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     // everything should be ready for dedispersion after this point
 
     set_search_params(&params, config);
+    hd_create_pipeline(&pipeline, params)
     // everything should be ready for single pulse search after this point
 
     filsize = fftsize * batchsize * timesamp;
@@ -248,9 +252,12 @@ void Pool::dedisp_thread(int dstream)
 
 void Pool::search_thread(int sstream)
 {
-    if () {
-        // TO DO: same as with the dedispersed gulps
+    // include check of some for here
+    bool ready{true};
+    if (ready) {
+        // this need access to config - make config a data member
         cout << "Searching in the gulp " << endl;
+        hd_execute(pipeline, d_dedisp, config.gulp, 8)
   } else {
         std::this_thread::yield();
   }
@@ -426,6 +433,20 @@ int main(int argc, char *argv[])
     int chunkno{0};
 
     header_s head;
+
+    // proper data receiving
+    while(true) {
+
+        numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen);
+
+        if(!numbytes)
+            break;
+
+        get_header(inbuf, head);
+        get_data()
+        get_data
+
+    }
 
     while(chunkno < chunks) {
         // will only receive 6 or 7 channels in one packet

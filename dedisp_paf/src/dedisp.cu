@@ -667,12 +667,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 
 	// TODO: Make this a parameter?
 	dedisp_size min_in_nbits = 0;
-	if( plan->scrunching_enabled ) {
-		// TODO: This produces corrupt output when equal to 32 !
-		//         Also check whether the unpacker is broken when in_nbits=32 !
-		min_in_nbits = 16; //32;
-	}
-	dedisp_size unpacked_in_nbits = max((int)in_nbits, (int)min_in_nbits);
+	dedisp_size unpacked_in_nbits = in_nbits;
 	dedisp_size unpacked_chans_per_word =
 		sizeof(dedisp_word)*BITS_PER_BYTE / unpacked_in_nbits;
 	dedisp_size unpacked_nchan_words = plan->nchans / unpacked_chans_per_word;
@@ -714,33 +709,7 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 	//   unpacked data.
 	dedisp_size scrunch_stride = unpacked_count_padded_gulp_max;
 
-#ifdef USE_SUBBAND_ALGORITHM
-
-	dedisp_size sb_size           = DEDISP_DEFAULT_SUBBAND_SIZE;
-	// Note: Setting these two parameters equal should balance the two steps of
-	//         the sub-band algorithm.
-	dedisp_size dm_size           = sb_size; // Ndm'
-
-	dedisp_size sb_count          = plan->nchans / sb_size;
-	dedisp_size nom_dm_count      = dm_count / dm_size;
-
-	thrust::device_vector<dedisp_word> d_intermediate_buf;
-	try { d_intermediate_buf.resize(nsamps_padded_gulp_max * sb_count
-	                                * nom_dm_count); }
-	catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
-	dedisp_word* d_intermediate = thrust::raw_pointer_cast(&d_intermediate_buf[0]);
-
-#endif //  USE_SUBBAND_ALGORITHM
-
-	// TODO: Eventually re-implement streams
-	cudaStream_t stream = 0;//(cudaStream_t)plan->stream;
-
-#ifdef DEDISP_BENCHMARK
-	Stopwatch copy_to_timer;
-	Stopwatch copy_from_timer;
-	Stopwatch transpose_timer;
-	Stopwatch kernel_timer;
-#endif
+	cudaStream_t stream = plan->stream;
 
 	// Gulp loop
 	for( dedisp_size gulp_samp_idx=0;
@@ -754,295 +723,36 @@ dedisp_error dedisp_execute_guru(const dedisp_plan  plan,
 		                                                DEDISP_SAMPS_PER_THREAD)
 			* DEDISP_SAMPS_PER_THREAD + plan->max_delay;
 
-#ifdef DEDISP_BENCHMARK
-		copy_to_timer.start();
-#endif
-		// Copy the input data from host to device if necessary
-		if( using_host_memory ) {
-			// Allowing arbitrary byte strides means we must do a strided copy
-			if( !copy_host_to_device_2d((dedisp_byte*)d_in,
-			                            in_buf_stride_words * BYTES_PER_WORD,
-			                            in + gulp_samp_idx*in_stride,
-			                            in_stride,
-			                            nchan_words * BYTES_PER_WORD,
-			                            nsamps_gulp) ) {
-				throw_error(DEDISP_MEM_COPY_FAILED);
-			}
-		}
-		else if( !friendly_in_stride ) {
-			// Device pointers with unfriendly stride
-			if( !copy_device_to_device_2d((dedisp_byte*)d_in,
-			                              in_buf_stride_words * BYTES_PER_WORD,
-			                              in + gulp_samp_idx*in_stride,
-			                              in_stride,
-			                              nchan_words * BYTES_PER_WORD,
-			                              nsamps_gulp) ) {
-				throw_error(DEDISP_MEM_COPY_FAILED);
-			}
-		}
-#ifdef DEDISP_BENCHMARK
-		cudaThreadSynchronize();
-		copy_to_timer.stop();
-		transpose_timer.start();
-#endif
 		// Transpose the words in the input
 		Transpose<dedisp_word> transpose;
 		transpose.transpose(d_in,
 		                    nchan_words, nsamps_gulp,
 		                    in_buf_stride_words, nsamps_padded_gulp,
 		                    d_transposed);
-#ifdef DEDISP_BENCHMARK
-		cudaThreadSynchronize();
-		transpose_timer.stop();
-
-		kernel_timer.start();
-#endif
 
 		// Unpack the transposed data
 		unpack(d_transposed, nsamps_padded_gulp, nchan_words,
 		       d_unpacked,
 		       in_nbits, unpacked_in_nbits);
 
-		// Compute time-scrunched copies of the data
-		if( plan->scrunching_enabled ) {
-			dedisp_size max_scrunch = plan->scrunch_list[plan->dm_count-1];
-			dedisp_size scrunch_in_offset  = 0;
-			dedisp_size scrunch_out_offset = scrunch_stride;
-			for( dedisp_size s=2; s<=max_scrunch; s*=2 ) {
-				// TODO: Need to pass in stride and count? I.e., nsamps_padded/computed_gulp
-				//scrunch_x2(&d_transposed[scrunch_in_offset],
-				//           nsamps_padded_gulp/(s/2), nchan_words, in_nbits,
-				//           &d_transposed[scrunch_out_offset]);
-				scrunch_x2(&d_unpacked[scrunch_in_offset],
-				           nsamps_padded_gulp/(s/2),
-				           unpacked_nchan_words, unpacked_in_nbits,
-				           &d_unpacked[scrunch_out_offset]);
-				scrunch_in_offset = scrunch_out_offset;
-				scrunch_out_offset += scrunch_stride / s;
-			}
-		}
-
-#ifdef USE_SUBBAND_ALGORITHM
-		// TODO: This has not been updated to use d_unpacked!
-
-		dedisp_size chan_stride       = 1;
-		dedisp_size dm_stride         = dm_size;
-		dedisp_size ostride           = nsamps_padded_gulp * sb_count;
-		dedisp_size batch_size        = sb_count;
-		dedisp_size batch_in_stride   = nsamps_padded_gulp * sb_size / chans_per_word;
-		dedisp_size batch_dm_stride   = 0;
-		dedisp_size batch_chan_stride = sb_size;
-		dedisp_size batch_out_stride  = nsamps_padded_gulp;
-
-		/* // Consistency checks
-		   if( (nom_dm_count-1)*dm_stride + (batch_size-1)*batch_dm_stride >= dm_count ) {
-		   throw std::runtime_error("DM STRIDES ARE INCONSISTENT");
-		   }
-		   if( (sb_size-1)*chan_stride + (batch_size-1)*batch_chan_stride >= plan->nchans ) {
-		   throw std::runtime_error("CHAN STRIDES ARE INCONSISTENT");
-		   }
-		*/
-
-		// Both steps
-		if( !dedisperse(d_transposed,
+		if( !dedisperse(//d_transposed,
+		                d_unpacked,
 		                nsamps_padded_gulp,
 		                nsamps_computed_gulp,
-		                in_nbits,
-		                sb_size,
-		                chan_stride,
+		                unpacked_in_nbits, //in_nbits,
+		                plan->nchans,
+		                1,
 		                thrust::raw_pointer_cast(&plan->d_dm_list[device_idx][first_dm_idx]),
-		                nom_dm_count,
-		                dm_stride,
-		                (dedisp_byte*)d_intermediate,
-		                ostride,
-		                32,//out_nbits,
-		                batch_size,
-		                batch_in_stride,
-		                batch_dm_stride,
-		                batch_chan_stride,
-		                batch_out_stride) ) {
-			throw_error(DEDISP_INTERNAL_GPU_ERROR);
-		}
-
-		batch_size = nom_dm_count;
-		chan_stride       = sb_size;
-		dm_stride         = 1;
-		ostride           = out_stride_gulp_samples;
-		batch_in_stride   = nsamps_padded_gulp * sb_count;
-		batch_dm_stride   = 0;
-		batch_chan_stride = 0;
-		batch_out_stride  = out_stride_gulp_samples * dm_size;
-
-		/* // Consistency checks
-		   if( (dm_size-1)*dm_stride + (batch_size-1)*batch_dm_stride >= dm_count ) {
-		   throw std::runtime_error("DM STRIDES ARE INCONSISTENT");
-		   }
-		   if( (sb_count-1)*chan_stride + (batch_size-1)*batch_chan_stride >= plan->nchans ) {
-		   throw std::runtime_error("CHAN STRIDES ARE INCONSISTENT");
-		   }
-		*/
-
-		if( !dedisperse(d_intermediate,
-		                nsamps_padded_gulp,
-		                nsamps_computed_gulp,
-		                32,//in_nbits,
-		                sb_count,
-		                chan_stride,
-		                thrust::raw_pointer_cast(&plan->d_dm_list[device_idx][first_dm_idx]),
-		                dm_size,
-		                dm_stride,
+		                dm_count,
+		                1,
 		                d_out,
-		                ostride,
+		                out_stride_gulp_samples,
 		                out_nbits,
-		                batch_size,
-		                batch_in_stride,
-		                batch_dm_stride,
-		                batch_chan_stride,
-		                batch_out_stride) ) {
+		                1, 0, 0, 0, 0) ) {
 			throw_error(DEDISP_INTERNAL_GPU_ERROR);
-		}
-#else // Use direct algorithm
-
-		if( plan->scrunching_enabled ) {
-
-			// TODO: THIS WILL NOT WORK IF dm_count < plan->dm_count !
-			//         Need to avoid assumption that scrunch starts at 1
-			//         Must start the scrunch at the first *requested* DM
-
-			thrust::device_vector<dedisp_float> d_scrunched_dm_list(dm_count);
-			dedisp_size scrunch_start = 0;
-			dedisp_size scrunch_offset = 0;
-			for( dedisp_size s=0; s<dm_count; ++s ) {
-				dedisp_size cur_scrunch = plan->scrunch_list[s];
-				// Look for segment boundaries
-				if( s+1 == dm_count || plan->scrunch_list[s+1] != cur_scrunch ) {
-					//dedisp_size next_scrunch = plan->scrunch_list[s];
-					//if( next_scrunch != cur_scrunch ) {
-					dedisp_size scrunch_count = s+1 - scrunch_start;
-
-					// Make a copy of the dm list divided by the scrunch factor
-					// Note: This has the effect of increasing dt in the delay eqn
-					dedisp_size dm_offset = first_dm_idx + scrunch_start;
-					thrust::transform(plan->d_dm_list[device_idx].begin() + dm_offset,
-					                  plan->d_dm_list[device_idx].begin() + dm_offset + scrunch_count,
-					                  thrust::make_constant_iterator(cur_scrunch),
-					                  d_scrunched_dm_list.begin(),
-					                  thrust::divides<dedisp_float>());
-					dedisp_float* d_scrunched_dm_list_ptr =
-						thrust::raw_pointer_cast(&d_scrunched_dm_list[0]);
-
-					// TODO: Is this how the nsamps vars need to change?
-					if( !dedisperse(//&d_transposed[scrunch_offset],
-					                &d_unpacked[scrunch_offset],
-					                nsamps_padded_gulp / cur_scrunch,
-					                nsamps_computed_gulp / cur_scrunch,
-					                unpacked_in_nbits, //in_nbits,
-					                plan->nchans,
-					                1,
-					                d_scrunched_dm_list_ptr,
-					                scrunch_count, // dm_count
-					                1,
-					                d_out + scrunch_start*out_stride_gulp_bytes,
-					                out_stride_gulp_samples,
-					                out_nbits,
-					                1, 0, 0, 0, 0) ) {
-						throw_error(DEDISP_INTERNAL_GPU_ERROR);
-					}
-					scrunch_offset += scrunch_stride / cur_scrunch;
-					scrunch_start += scrunch_count;
-				}
-			}
-		}
-		else {
-			// Perform direct dedispersion without scrunching
-			if( !dedisperse(//d_transposed,
-			                d_unpacked,
-			                nsamps_padded_gulp,
-			                nsamps_computed_gulp,
-			                unpacked_in_nbits, //in_nbits,
-			                plan->nchans,
-			                1,
-			                thrust::raw_pointer_cast(&plan->d_dm_list[device_idx][first_dm_idx]),
-			                dm_count,
-			                1,
-			                d_out,
-			                out_stride_gulp_samples,
-			                out_nbits,
-			                1, 0, 0, 0, 0) ) {
-				throw_error(DEDISP_INTERNAL_GPU_ERROR);
-			}
-		}
-#endif // SB/direct algorithm
-
-#ifdef DEDISP_BENCHMARK
-		cudaThreadSynchronize();
-		kernel_timer.stop();
-#endif
-		// Copy output back to host memory if necessary
-		if( using_host_memory ) {
-			dedisp_size gulp_samp_byte_idx = gulp_samp_idx * out_bytes_per_sample;
-			dedisp_size nsamp_bytes_computed_gulp = nsamps_computed_gulp * out_bytes_per_sample;
-#ifdef DEDISP_BENCHMARK
-			copy_from_timer.start();
-#endif
-			if( plan->scrunching_enabled ) {
-				// TODO: This for-loop isn't a very elegant solution
-				dedisp_size scrunch_start = 0;
-				for( dedisp_size s=0; s<dm_count; ++s ) {
-					dedisp_size cur_scrunch = plan->scrunch_list[s];
-					// Look for segment boundaries
-					if( s+1 == dm_count || plan->scrunch_list[s+1] != cur_scrunch ) {
-						dedisp_size scrunch_count = s+1 - scrunch_start;
-
-						dedisp_size  src_stride = out_stride_gulp_bytes;
-						dedisp_byte* src = d_out + scrunch_start * src_stride;
-						dedisp_byte* dst = (out + scrunch_start * out_stride
-						                    + gulp_samp_byte_idx / cur_scrunch);
-						dedisp_size  width = nsamp_bytes_computed_gulp / cur_scrunch;
-						dedisp_size  height = scrunch_count;
-						copy_device_to_host_2d(dst,                       // dst
-						                       out_stride,                // dst stride
-						                       src,                       // src
-						                       src_stride,                // src stride
-						                       width,                     // width bytes
-						                       height);                   // height
-						scrunch_start += scrunch_count;
-					}
-				}
-			}
-			else {
-				copy_device_to_host_2d(out + gulp_samp_byte_idx,  // dst
-				                       out_stride,                // dst stride
-				                       d_out,                     // src
-				                       out_stride_gulp_bytes,     // src stride
-				                       nsamp_bytes_computed_gulp, // width bytes
-				                       dm_count);                 // height
-			}
-#ifdef DEDISP_BENCHMARK
-			cudaThreadSynchronize();
-			copy_from_timer.stop();
-#endif
 		}
 
 	} // End of gulp loop
-
-#ifdef DEDISP_BENCHMARK
-	cout << "Copy to time:   " << copy_to_timer.getTime() << endl;
-	cout << "Copy from time: " << copy_from_timer.getTime() << endl;
-	cout << "Transpose time: " << transpose_timer.getTime() << endl;
-	cout << "Kernel time:    " << kernel_timer.getTime() << endl;
-	float total_time = copy_to_timer.getTime() + copy_from_timer.getTime() + transpose_timer.getTime() + kernel_timer.getTime();
-	cout << "Total time:     " << total_time << endl;
-
-	// Append the timing results to a log file
-	std::ofstream perf_file("perf.log", std::ios::app);
-	perf_file << copy_to_timer.getTime() << "\t"
-	          << copy_from_timer.getTime() << "\t"
-	          << transpose_timer.getTime() << "\t"
-	          << kernel_timer.getTime() << "\t"
-	          << total_time << endl;
-	perf_file.close();
-#endif
 
 	if( !(flags & DEDISP_ASYNC) ) {
 		cudaStreamSynchronize(stream);

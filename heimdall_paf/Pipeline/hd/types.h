@@ -1,4 +1,4 @@
-/***************************************************************************
+ /***************************************************************************
  *
  *   Copyright (C) 2012 by Ben Barsdell and Andrew Jameson
  *   Licensed under the Academic Free License version 2.1
@@ -46,4 +46,3 @@ typedef struct hd_range {
   hd_size start;
   hd_size end;
 } hd_range_t;
-

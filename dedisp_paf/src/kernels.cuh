@@ -60,7 +60,7 @@ void generate_dm_list(std::vector<dedisp_float>& dm_table,
 {
 	// Note: This algorithm originates from Lina Levin
 	// Note: Computation done in double precision to match MB's code
-	
+
 	dt *= 1e6;
 	double f    = (f0 + ((nchans/2) - 0.5) * df) * 1e-3;
 	double tol2 = tol*tol;
@@ -68,7 +68,7 @@ void generate_dm_list(std::vector<dedisp_float>& dm_table,
 	double a2   = a*a;
 	double b2   = a2 * (double)(nchans*nchans / 16.0);
 	double c    = (dt*dt + ti*ti) * (tol2 - 1.0);
-	
+
 	dm_table.push_back(dm_start);
 	while( dm_table.back() < dm_end ) {
 		double prev     = dm_table.back();
@@ -88,7 +88,7 @@ T scale_output(SumType sum, dedisp_size nchans) {
 	//return (dedisp_word)(((unsigned int)sum >> 4) - 128 - 128);
 	// HACK
 	//return (T)(sum / 16 - 128 - 128);
-	
+
 	// This uses the full range of the output bits
 	//return (T)((double)sum / ((double)nchans * max_value<IN_NBITS>::value)
 	//		   * max_value<sizeof(T)*BITS_PER_BYTE>::value );
@@ -98,10 +98,10 @@ T scale_output(SumType sum, dedisp_size nchans) {
 	double in_range  = max_value<IN_NBITS>::value;
 	double mean      = 0.5 *      (double)nchans  * in_range;
 	double max_val   = 0.5 * sqrt((double)nchans) * in_range;
-	
+
 	// TODO: There are problems with the output scaling when in_nbits is small
 	//         (e.g., in_nbits < 8). Not sure what to do about it at this stage.
-	
+
 	// TESTING This fixes 1-bit
 	// TODO: See test_quantised_rms.py for further exploration of this
 	//double max       = 0.5 * sqrt((double)nchans) * in_range * 2*4.545454; // HACK
@@ -121,7 +121,7 @@ T scale_output(SumType sum, dedisp_size nchans) {
 	//float scaled = (float)sum / in_range / sqrt((float)nchans) * out_range;
 	//float scaled = (float)sum / (in_range * nchans) * out_range;
 	//float scaled = sum * ((float)out_range / in_range / 85.f) / 16.f;
-	
+
 	// Note: This emulates what dedisperse_all does for 2-bit HTRU data --> 8-bit
 	//         (and will adapt linearly to changes in in/out_nbits or nchans)
 	float factor = (3.f * 1024.f) / 255.f / 16.f;
@@ -183,56 +183,56 @@ void dedisperse_kernel(const dedisp_word*  d_in,
 		BITS_PER_BYTE  = 8,
 		CHANS_PER_WORD = sizeof(dedisp_word) * BITS_PER_BYTE / IN_NBITS
 	};
-	
+
 	// Compute the thread decomposition
 	dedisp_size samp_block    = blockIdx.x;
 	dedisp_size dm_block      = blockIdx.y % ndm_blocks;
 	dedisp_size batch_block   = blockIdx.y / ndm_blocks;
-	
+
 	dedisp_size samp_idx      = samp_block   * BLOCK_DIM_X + threadIdx.x;
 	dedisp_size dm_idx        = dm_block     * BLOCK_DIM_Y + threadIdx.y;
 	dedisp_size batch_idx     = batch_block;
 	dedisp_size nsamp_threads = nsamp_blocks * BLOCK_DIM_X;
-	
+
 	dedisp_size ndm_threads   = ndm_blocks * BLOCK_DIM_Y;
-	
+
 	// Iterate over grids of DMs
 	for( ; dm_idx < dm_count; dm_idx += ndm_threads ) {
-	
+
 	// Look up the dispersion measure
 	// Note: The dm_stride and batch_dm_stride params are only used for the
 	//         sub-band method.
 	dedisp_float dm = d_dm_list[dm_idx*dm_stride + batch_idx*batch_dm_stride];
-	
+
 	// Loop over samples
 	for( ; samp_idx < nsamps_reduced; samp_idx += nsamp_threads ) {
 		typedef typename SumType<IN_NBITS>::type sum_type;
 		sum_type sum[SAMPS_PER_THREAD];
-		
+
         #pragma unroll
 		for( dedisp_size s=0; s<SAMPS_PER_THREAD; ++s ) {
 			sum[s] = 0;
 		}
-		
+
 		// Loop over channel words
 		for( dedisp_size chan_word=0; chan_word<nchans;
 		     chan_word+=CHANS_PER_WORD ) {
 			// Pre-compute the memory offset
-			dedisp_size offset = 
+			dedisp_size offset =
 				samp_idx*SAMPS_PER_THREAD
 				+ chan_word/CHANS_PER_WORD * stride
 				+ batch_idx * batch_in_stride;
-			
+
 			// Loop over channel subwords
 			for( dedisp_size chan_sub=0; chan_sub<CHANS_PER_WORD; ++chan_sub ) {
 				dedisp_size chan_idx = (chan_word + chan_sub)*chan_stride
 					+ batch_idx*batch_chan_stride;
-				
+
 				// Look up the fractional delay
 				dedisp_float frac_delay = c_delay_table[chan_idx];
 				// Compute the integer delay
 				dedisp_size delay = __float2uint_rn(dm * frac_delay);
-				
+
 				if( USE_TEXTURE_MEM ) { // Pre-Fermi path
 					// Loop over samples per thread
 					// Note: Unrolled to ensure the sum[] array is stored in regs
@@ -240,7 +240,7 @@ void dedisperse_kernel(const dedisp_word*  d_in,
 					for( dedisp_size s=0; s<SAMPS_PER_THREAD; ++s ) {
 						// Grab the word containing the sample from texture mem
 						dedisp_word sample = tex1Dfetch(t_in, offset+s + delay);
-						
+
 						// Extract the desired subword and accumulate
 						sum[s] +=
 							// TODO: Pre-Fermi cards are faster with 24-bit mul
@@ -254,7 +254,7 @@ void dedisperse_kernel(const dedisp_word*  d_in,
 					for( dedisp_size s=0; s<SAMPS_PER_THREAD; ++s ) {
 						// Grab the word containing the sample from global mem
 						dedisp_word sample = d_in[offset + s + delay];
-						
+
 						// Extract the desired subword and accumulate
 						sum[s] +=
 							c_killmask[chan_idx] *
@@ -263,7 +263,7 @@ void dedisperse_kernel(const dedisp_word*  d_in,
 				}
 			}
 		}
-		
+
 		// Write sums to global mem
 		// Note: This is ugly, but easy, and doesn't hurt performance
 		dedisp_size out_idx = ( samp_idx*SAMPS_PER_THREAD +
@@ -298,9 +298,9 @@ void dedisperse_kernel(const dedisp_word*  d_in,
 				// Error
 				break;
 		}
-		
+
 	} // End of sample loop
-	
+
 	} // End of DM loop
 }
 
@@ -341,7 +341,7 @@ bool dedisperse(const dedisp_word*  d_in,
 		MAX_CUDA_GRID_SIZE_Y     = 65535,
 		MAX_CUDA_1D_TEXTURE_SIZE = (1<<27)
 	};
-	
+
 	// Initialise texture memory if necessary
 	// --------------------------------------
 	// Determine whether we should use texture memory
@@ -350,7 +350,7 @@ bool dedisperse(const dedisp_word*  d_in,
 		dedisp_size chans_per_word = sizeof(dedisp_word)*BITS_PER_BYTE / in_nbits;
 		dedisp_size nchan_words    = nchans / chans_per_word;
 		dedisp_size input_words    = in_stride * nchan_words;
-		
+
 		// Check the texture size limit
 		if( input_words > MAX_CUDA_1D_TEXTURE_SIZE ) {
 			return false;
@@ -367,19 +367,19 @@ bool dedisperse(const dedisp_word*  d_in,
 #endif // DEDISP_DEBUG
 	}
 	// --------------------------------------
-	
+
 	// Define thread decomposition
 	// Note: Block dimensions x and y represent time samples and DMs respectively
 	dim3 block(BLOCK_DIM_X,
 			   BLOCK_DIM_Y);
 	// Note: Grid dimension x represents time samples. Dimension y represents
 	//         DMs and batch jobs flattened together.
-	
+
 	// Divide and round up
-	dedisp_size nsamp_blocks = (nsamps - 1)   
+	dedisp_size nsamp_blocks = (nsamps - 1)
 		/ ((dedisp_size)DEDISP_SAMPS_PER_THREAD*block.x) + 1;
 	dedisp_size ndm_blocks   = (dm_count - 1) / (dedisp_size)block.y + 1;
-	
+
 	// Constrain the grid size to the maximum allowed
 	// TODO: Consider cropping the batch size dimension instead and looping over it
 	//         inside the kernel
@@ -390,16 +390,16 @@ bool dedisperse(const dedisp_word*  d_in,
 	cudaGetDevice(&cdevice);
 	printf("DEDISP: Device %d:  block: %ix%i, grid: %ix%i\n",cdevice, block.x, block.y, grid.x, grid.y);
 	*/
-	
+
 	// Note: We combine the DM and batch dimensions into one
 	dim3 grid(nsamp_blocks,
 			  ndm_blocks * batch_size);
-	
+
 	// Divide and round up
 	dedisp_size nsamps_reduced = (nsamps - 1) / DEDISP_SAMPS_PER_THREAD + 1;
-	
+
 	cudaStream_t stream = 0;
-	
+
 	// Execute the kernel
 #define DEDISP_CALL_KERNEL(NBITS, USE_TEXTURE_MEM)						\
 	dedisperse_kernel<NBITS,DEDISP_SAMPS_PER_THREAD,BLOCK_DIM_X,        \
@@ -446,7 +446,7 @@ bool dedisperse(const dedisp_word*  d_in,
 		}
 	}
 #undef DEDISP_CALL_KERNEL
-		
+
 	// Check for kernel errors
 #ifdef DEDISP_DEBUG
 	//cudaStreamSynchronize(stream);
@@ -456,7 +456,7 @@ bool dedisperse(const dedisp_word*  d_in,
 		return false;
 	}
 #endif // DEDISP_DEBUG
-	
+
 	return true;
 }
 
@@ -480,7 +480,7 @@ struct scrunch_x2_functor
 		unsigned int in_t1 = out_t * 2 + 1;
 		unsigned int in_i0 = c * in_nsamps + in_t0;
 		unsigned int in_i1 = c * in_nsamps + in_t1;
-		
+
 		dedisp_word in0 = in[in_i0];
 		dedisp_word in1 = in[in_i1];
 		dedisp_word out = 0;
@@ -502,17 +502,17 @@ dedisp_error scrunch_x2(const dedisp_word* d_in,
                         dedisp_word* d_out)
 {
 	thrust::device_ptr<dedisp_word> d_out_begin(d_out);
-	
+
 	dedisp_size out_nsamps = nsamps / 2;
 	dedisp_size out_count  = out_nsamps * nchan_words;
-	
+
 	using thrust::make_counting_iterator;
-	
+
 	thrust::transform(make_counting_iterator<unsigned int>(0),
 	                  make_counting_iterator<unsigned int>(out_count),
 	                  d_out_begin,
 	                  scrunch_x2_functor<dedisp_word>(d_in, nbits, nsamps));
-	
+
 	return DEDISP_NO_ERROR;
 }
 
@@ -542,12 +542,12 @@ dedisp_error generate_scrunch_list(dedisp_size* scrunch_list,
 	// TODO: To improve this it would be nice to allow scrunch_list[0] > 1.
 	//         This would probably require changing the output nsamps
 	//           according to the mininum scrunch.
-	
+
 	scrunch_list[0] = 1;
 	for( dedisp_size d=1; d<dm_count; ++d ) {
 		dedisp_float dm = dm_list[d];
 		dedisp_float delta_dm = dm - dm_list[d-1];
-		
+
 		dedisp_float smearing = get_smearing(scrunch_list[d-1] * dt0,
 		                                     pulse_width*1e-6,
 		                                     f0, nchans, df,
@@ -563,7 +563,7 @@ dedisp_error generate_scrunch_list(dedisp_size* scrunch_list,
 			scrunch_list[d] = scrunch_list[d-1];
 		}
 	}
-	
+
 	return DEDISP_NO_ERROR;
 }
 
@@ -578,43 +578,43 @@ struct unpack_functor
 		: in(in_), nsamps(nsamps_), in_nbits(in_nbits_), out_nbits(out_nbits_) {}
 	inline __host__ __device__
 	WordType operator()(unsigned int i) const {
+		// these things are constant between runs
+		// why are they not just normal data members?
 		int out_chans_per_word = sizeof(WordType)*8 / out_nbits;
 		int in_chans_per_word = sizeof(WordType)*8 / in_nbits;
 		//int expansion = out_nbits / in_nbits;
+
 		int norm = ((1<<out_nbits)-1) / ((1<<in_nbits)-1);
 		WordType in_mask  = (1<<in_nbits)-1;
 		WordType out_mask = (1<<out_nbits)-1;
-		
+
 		/*
 		  cw\k 0123 0123
 		  0    0123|0123
 		  1    4567|4567
-		  
+
 		  cw\k 0 1
 		  0    0 1 | 0 1
 		  1    2 3 | 2 3
 		  2    4 5 | 4 5
 		  3    6 7 | 6 7
-		  
-		  
+
+
 		 */
-		
+
 		unsigned int t      = i % nsamps;
 		// Find the channel word indices
 		unsigned int out_cw = i / nsamps;
-		//unsigned int in_cw  = out_cw / expansion;
-		//unsigned int in_i   = in_cw * nsamps + t;
-		//WordType word = in[in_i];
-		
+
 		WordType result = 0;
 		for( int k=0; k<sizeof(WordType)*8; k+=out_nbits ) {
-			
+
 			int c = out_cw * out_chans_per_word + k/out_nbits;
 			int in_cw = c / in_chans_per_word;
 			int in_k  = c % in_chans_per_word * in_nbits;
 			int in_i  = in_cw * nsamps + t;
 			WordType word = in[in_i];
-			
+
 			WordType val = (word >> in_k) & in_mask;
 			result |= ((val * norm) & out_mask) << k;
 		}
@@ -628,18 +628,18 @@ dedisp_error unpack(const dedisp_word* d_transposed,
                     dedisp_size in_nbits, dedisp_size out_nbits)
 {
 	thrust::device_ptr<dedisp_word> d_unpacked_begin(d_unpacked);
-	
+
 	dedisp_size expansion = out_nbits / in_nbits;
 	dedisp_size in_count  = nsamps * nchan_words;
 	dedisp_size out_count = in_count * expansion;
-	
+
 	using thrust::make_counting_iterator;
-	
+
 	thrust::transform(make_counting_iterator<unsigned int>(0),
 	                  make_counting_iterator<unsigned int>(out_count),
 	                  d_unpacked_begin,
 	                  unpack_functor<dedisp_word>(d_transposed, nsamps,
 	                                              in_nbits, out_nbits));
-	
+
 	return DEDISP_NO_ERROR;
 }
