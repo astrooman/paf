@@ -12,6 +12,7 @@
 #include <cufft.h>
 #include <dedisp.h>
 #include <DedispPlan.hpp>
+#include <pool.hpp>
 #include <vdif.hpp>
 
 // Heimdall headers - including might be a bit messy
@@ -35,7 +36,8 @@ using std::thread;
 using std::vector;
 
 #define PORT "45003"
-#define SINGLE_GULP 131027      // number of time samples per single-pulse detection data chunk
+#define DATA 7168          // 128 time samples, 7 channels per time sample, 64-bit words
+#define BUFLEN 7168 + 64   // 8908 bytes for sample block and 64  bytes for header
 
 __global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump);
 
@@ -46,221 +48,6 @@ void *get_addr(sockaddr *sadr)
     }
 
     return &(((sockaddr_in6*)sadr)->sin6_addr);
-}
-
-class Pool
-{
-    private:
-        // that can be anything, depending on how many output bits we decide to use
-        Buffer<unsigned char> mainbuffer;
-        DedispPlan dedisp;
-        hd_pipeline pipeline;
-        hd_params params;
-
-        bool working;
-        // const to be safe
-        const unsigned int batchsize;
-        const unsigned int fftsize;
-        const unsigned int timesamp;
-        const unsigned int streamno;
-        const unsigned int freqavg;
-        // one buffer
-        unsigned int filsize;
-        unsigned int bufmem;
-        // buffer for all streams together
-        unsigned int totsize;
-        unsigned int totmem;
-        // GPU and thread stuff
-        unsigned char *d_dedisp;
-        unsigned char *d_search;
-        cufftComplex *h_in, *d_in;
-        unsigned char *h_out, *d_out;
-        int sizes[1];
-        int avt;
-        cudaStream_t *mystreams;
-        cufftHandle *myplans;
-        mutex datamutex;
-        mutex workmutex;
-        unsigned int nthreads;
-        unsigned int nblocks;
-        // containers
-        // use queue as FIFO needed
-        queue<vector<cufftComplex>> mydata;
-        vector<thread> mythreads;
-        unsigned int buffno;
-        size_t totsamples;
-    protected:
-
-    public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config);
-        ~Pool(void);
-        // add deleted copy, move, etc constructors
-        void add_data(cufftComplex *buffer);
-        void dedisp_thread(int dstream);
-        void minion(int stream);
-        void search_thread(int sstream);
-};
-
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config) : batchsize(bs),
-                                                                fftsize(fs),
-                                                                timesamp(ts),
-                                                                working(true),
-                                                                streamno(sn),
-                                                                freqavg(fr),
-                                                                nthreads(256),
-                                                                mainbuffer(),
-                                                                dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
-{
-    // streamno for filterbank and additional 2 for dedispersion and single pulse search
-    avt = min(streamno + 2,thread::hardware_concurrency());
-
-    if(config.verbose)
-        cout << "Will create " << avt << " CUDA streams\n";
-
-    // gemerate_dm_list(dm_start, dm_end, width, tol)
-    // width is the expected pulse width in microseconds
-    // tol is the smearing tolerance factor between two DM trials
-    dedisp.generate_dm_list(config.dstart, config.dend, (float)64.0, (float)1.10);
-    if (config.verbose) {
-        cout << "Will try " << dedisp.get_dm_count() << " DM trials:\n";
-        for (int ii = 0; ii < dedisp.get_dm_count(); ii++)
-            cout << *(dedisp.get_dm_list() + ii) << endl;
-    }
-
-    totsamples = (size_t)config.gulp + dedisp.get_max_delay();
-    buffno = (totsamples - 1) / config.gulp + 1;
-    size_t buffsize = buffno * config.gulp + dedisp.get_max_delay();
-    mainbuffer.allocate(buffno, dedisp.get_max_delay(), config.gulp, buffsize);
-    //if (false)       // switch off for now
-    //    dedisp.set_killmask(killmask);
-    // everything should be ready for dedispersion after this point
-
-    set_search_params(&params, config);
-    hd_create_pipeline(&pipeline, params)
-    // everything should be ready for single pulse search after this point
-
-    filsize = fftsize * batchsize * timesamp;
-    bufmem = filsize * sizeof(cufftComplex);
-    totsize = filsize * avt;
-    totmem = bufmem * avt;
-    // / 2 as interested in time averaged output
-    nblocks = (filsize / 2 - 1 ) / nthreads + 1;
-
-    sizes[0] = (int)fftsize;
-    // want as many streams and plans as there will be threads
-    // every thread will be associated with its own stream
-    mystreams = new cudaStream_t[avt];
-    myplans = new cufftHandle[avt];
-
-    cudaHostAlloc((void**)&h_in, totsize * sizeof(cufftComplex), cudaHostAllocDefault);
-    cudaHostAlloc((void**)&h_out, totsize / 2 * sizeof(float), cudaHostAllocDefault);
-    cudaMalloc((void**)&d_in, totsize * sizeof(cufftComplex));
-    cudaMalloc((void**)&d_out, totsize * avt / 2 * sizeof(unsigned char));
-    // change this later to deal with any input type;
-    cudaMalloc((void**)&d_dedisp, totsamples * sizeof(unsigned char));
-    cudaMalloc((void**)&d_search, config.gulp * dedisp.get_dm_count() * sizeof(unsigned char));
-    // here only launch threads that will take care of filterbank
-    for (int ii = 0; ii < avt - 2; ii++) {
-        cudaStreamCreate(&mystreams[ii]);
-        cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftsize, NULL, 1, fftsize, CUFFT_C2C, batchsize);
-        cufftSetStream(myplans[ii], mystreams[ii]);
-        // need to meet requirements for INVOKE(f, t1, t2, ... tn)
-        // (t1.*f)(t2, ... tn) when f is a pointer to a member function of class T
-        // and t1 is an object of type T or a reference to an object of type T
-        // this is t1 and &Pool::minion is a pointer to a member function of class T
-        // or a reference to an object of a type derived from T (C++14 §20.9.2)
-        mythreads.push_back(thread(&Pool::minion, this, ii));
-    }
-
-    // dedisp thread
-    cudaStreamCreate(&mystreams[avt-2]);
-    mythreads.push_back(thread(&Pool::dedisp_thread, this, avt-2));
-    // single pulse thread
-    cudaStreamCreate(&mystreams[avt-1]);
-    mythreads.push_back(thread(&Pool::search_thread, this, avt-1));
-}
-
-Pool::~Pool(void)
-{
-    working = false;
-    // join the threads so main() thread will wait until all 4 last pieces are processed
-    for (int ii = 0; ii < avt; ii++)
-        mythreads[ii].join();
-}
-
-void Pool::add_data(cufftComplex *buffer)
-{
-    std::lock_guard<mutex> addguard(datamutex);
-    // that has to have a mutex
-    mydata.push(vector<cufftComplex>(buffer, buffer + filsize));
-    //cout << "Data added\n";
-    //cout.flush();
-}
-
-void Pool::minion(int stream)
-{
-    cout << "Starting thread associated with stream " << stream << endl << endl;
-    cout.flush();
-
-    unsigned int skip = stream * filsize;
-    unsigned int outmem = filsize / 2 * sizeof(float);
-
-    while(working) {
-        // need to protect if with mutex
-        // current mutex implementation is a big ugly, but just need a dirty hack
-        // will write a new, thread-safe queue implementation
-        unsigned int index{0};       // index will be used to distinguish between time samples
-        datamutex.lock();
-        if(!mydata.empty()) {
-            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
-            mydata.pop();
-            datamutex.unlock();
-	        //cout << "Stream " << stream << " got the data\n";
-	        //cout.flush();
-            if(cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
-		        cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
-		        cout.flush();
-	        }
-            if(cufftExecC2C(myplans[stream], d_in + skip, d_in + skip, CUFFT_FORWARD) != CUFFT_SUCCESS)
-		          cout << "Error in FFT execution\n";
-            poweradd<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_in + skip, d_out + skip / 2, fftsize * batchsize);
-            if(cudaMemcpyAsync(h_out + skip / 2, d_out + skip / 2, outmem, cudaMemcpyDeviceToHost, mystreams[stream]) != cudaSuccess) {
-		        cout << "DtH copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
-		        cout.flush();
-	        }
-            mainbuffer.write(d_out, index, filsize / 2, mystreams[stream]);
-            cudaThreadSynchronize();
-        } else {
-	        datamutex.unlock();
-            std::this_thread::yield();
-        }
-    }
-}
-
-void Pool::dedisp_thread(int dstream)
-{
-    int ready = mainbuffer.ready();
-    if (ready) {
-        mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
-        // TO DO: include data member with the number of gulps already dedispersed
-        cout << "Dedispersing gulp " << endl;
-        dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
-    } else {
-        std::this_thread::yield();
-    }
-}
-
-void Pool::search_thread(int sstream)
-{
-    // include check of some for here
-    bool ready{true};
-    if (ready) {
-        // this need access to config - make config a data member
-        cout << "Searching in the gulp " << endl;
-        hd_execute(pipeline, d_dedisp, config.gulp, 8)
-  } else {
-        std::this_thread::yield();
-  }
 }
 
 __global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump)
@@ -285,10 +72,10 @@ int main(int argc, char *argv[])
     unsigned int chunks{32};    // 32 chunks by default - this is just for testing purposes
     unsigned int streamno{4};   // 4 streams by default
     unsigned int beamno{3};     // 3 beams by default
-    unsigned int times{4};      // 2 time samples by default
-    unsigned int freq{8};       // no frequency averaging by default, at least 8, possibly 16
+    unsigned int times{4};      // 4 time samples by default
+    unsigned int freq{16};       // no frequency averaging by default, at least 8, possibly 16
     // might be 336 / 168 or 384 / 192
-    unsigned int nchans{192};   // number of 1MHz channels - might change
+    unsigned int nchans{336};   // number of 1MHz channels - might change
 
     // dedispersion parameters
     double band = 1.185;         // sampling rate for each band in MHz
@@ -385,15 +172,15 @@ int main(int argc, char *argv[])
                                     //protocol-specific address structures
     char s[INET6_ADDRSTRLEN];       // length of the string form for IPv6
     cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
-    unsigned int mempacket = 6144;   // how many bytes per packet to read
+    //unsigned int mempacket = 6144;   // how many bytes per packet to read
     size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
-    const unsigned int packets = memsize / mempacket;   // const to avoid accidental changes
+    //const unsigned int packets = memsize / mempacket;   // const to avoid accidental changes
                                                         // number of packets require to receive
                                                         // one data 'chunk', i.e. the amount of
                                                         // data required to performed filterbanking
                                                         // with averaging for all necessary beams and channels
-    unsigned int packetel = mempacket / sizeof(cufftComplex);
-    unsigned char *inbuf = new unsigned char[packetel];
+    // unsigned int packetel = mempacket / sizeof(cufftComplex);
+    unsigned char *inbuf = new unsigned char[BUFLEN];
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -434,18 +221,28 @@ int main(int argc, char *argv[])
 
     header_s head;
 
+    int polsize = nchans * times * 32;
+
+    cufftComplex *pola = new cufftComplex[polsize];
+    cufftComplex *polb = new cufftComplex[polsize];
+
     // proper data receiving
     while(true) {
 
-        numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen);
+        numbytes = recvfrom(sfd, inbuf, BUFLEN, 0, (struct sockaddr*)&their_addr, &addrlen);
 
+        // assume last packet will have 0 bytes
         if(!numbytes)
             break;
 
         get_header(inbuf, head);
-        get_data()
-        get_data
+        get_data(inbuf, pola, polb, head.frame_no);
 
+        // current "ring" buffer implementation assumes the packet with the last frame is not dropped
+        if(d_begin == polsize) {
+            my_pool.add_data();
+            begin = 0;
+        }
     }
 
     while(chunkno < chunks) {
