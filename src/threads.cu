@@ -39,8 +39,6 @@ using std::vector;
 #define DATA 7168          // 128 time samples, 7 channels per time sample, 64-bit words
 #define BUFLEN 7168 + 64   // 8908 bytes for sample block and 64  bytes for header
 
-__global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump);
-
 void *get_addr(sockaddr *sadr)
 {
     if (sadr->sa_family == AF_INET) {
@@ -50,18 +48,6 @@ void *get_addr(sockaddr *sadr)
     return &(((sockaddr_in6*)sadr)->sin6_addr);
 }
 
-__global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump)
-{
-    int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
-	// offset introduced - can cause some slowing down
-	int idx2 = blockIdx.x * blockDim.x + threadIdx.x + jump;
-
-    if (idx1 < jump) {      // half of the input data
-        float power1 = in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y;
-        float power2 = in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y;
-        out[idx1] = (power1 + power2) / 2.0;
-    }
-}
 
 int main(int argc, char *argv[])
 {
@@ -226,6 +212,8 @@ int main(int argc, char *argv[])
     cufftComplex *pola = new cufftComplex[polsize];
     cufftComplex *polb = new cufftComplex[polsize];
 
+    int previous_frame  = -1;
+
     // proper data receiving
     while(true) {
 
@@ -234,71 +222,64 @@ int main(int argc, char *argv[])
         // assume last packet will have 0 bytes
         if(!numbytes)
             break;
-
         get_header(inbuf, head);
-        get_data(inbuf, pola, polb, head.frame_no);
-
-        // current "ring" buffer implementation assumes the packet with the last frame is not dropped
-        if(d_begin == polsize) {
-            my_pool.add_data();
-            begin = 0;
-        }
+        my_pool.get_data(inbuf, head.frame_no);
     }
 
-    while(chunkno < chunks) {
-        // will only receive 6 or 7 channels in one packet
-        // will have to stitch them together
-        for (unsigned int packetno  = 0; packetno < packets; packetno++) {
-            if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
-                cout << "error recvfrom" << endl;
-                exit(EXIT_FAILURE);
-            }
-            // get the vdif header and strip it off the data
-            get_header(inbuf, head);
-            //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
-            //cout.flush();
-            // I am not happy with the amount of copying done here and below
-            // COMMENTED OUT FOR COMPILATION - READING VDIF FILES WILL BE SORTED OUT
-            //std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
-        }
-
-        mypool.add_data(chunkbuf);
-        //cout << "Received chunk " << chunkno << endl;
-        //cout.flush();
-        chunkno++;
-        // will send 0 bytes as a last packet to end the loop
-        if(!numbytes)
-            break;
-        inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
-    }
-
-    if(test) {
-
-        cout << "Test buffer\n";
-        cout.flush();
-        // sleep just in case processing is slow
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-
-        cufftComplex *testbuf = new cufftComplex[batchs * ffts * times * chunks];
-
-        unsigned int seed = std::chrono::system_clock::now().time_since_epoch().count();
-        std::mt19937_64 bufeng{seed};
-        std::normal_distribution<float> bufdis(0.0, 1.0);
-
-        cout << "Filling the test array...\n";
-
-        for (int ii = 0; ii < batchs * ffts * times * chunks; ii++) {
-            testbuf[ii].x = bufdis(bufeng);
-            testbuf[ii].y = bufdis(bufeng);
-        }
-
-        chunkno = 0;
-        while(chunkno < chunks) {
-            mypool.add_data(testbuf + chunkno * batchs * ffts * times);
-            chunkno++;
-        }
-
-    }
+    // while(chunkno < chunks) {
+    //     // will only receive 6 or 7 channels in one packet
+    //     // will have to stitch them together
+    //     for (unsigned int packetno  = 0; packetno < packets; packetno++) {
+    //         if((numbytes = recvfrom(sfd, inbuf, mempacket, 0, (struct sockaddr*)&their_addr, &addrlen)) == -1 ) {
+    //             cout << "error recvfrom" << endl;
+    //             exit(EXIT_FAILURE);
+    //         }
+    //         // get the vdif header and strip it off the data
+    //         get_header(inbuf, head);
+    //         //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
+    //         //cout.flush();
+    //         // I am not happy with the amount of copying done here and below
+    //         // COMMENTED OUT FOR COMPILATION - READING VDIF FILES WILL BE SORTED OUT
+    //         //std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
+    //     }
+    //
+    //     mypool.add_data(chunkbuf);
+    //     //cout << "Received chunk " << chunkno << endl;
+    //     //cout.flush();
+    //     chunkno++;
+    //     // will send 0 bytes as a last packet to end the loop
+    //     if(!numbytes)
+    //         break;
+    //     inet_ntop(their_addr.ss_family, get_addr((sockaddr*)&their_addr), s, sizeof(s));
+    // }
+    //
+    // if(test) {
+    //
+    //     cout << "Test buffer\n";
+    //     cout.flush();
+    //     // sleep just in case processing is slow
+    //     std::this_thread::sleep_for(std::chrono::seconds(1));
+    //
+    //     cufftComplex *testbuf = new cufftComplex[batchs * ffts * times * chunks];
+    //
+    //     unsigned int seed = std::chrono::system_clock::now().time_since_epoch().count();
+    //     std::mt19937_64 bufeng{seed};
+    //     std::normal_distribution<float> bufdis(0.0, 1.0);
+    //
+    //     cout << "Filling the test array...\n";
+    //
+    //     for (int ii = 0; ii < batchs * ffts * times * chunks; ii++) {
+    //         testbuf[ii].x = bufdis(bufeng);
+    //         testbuf[ii].y = bufdis(bufeng);
+    //     }
+    //
+    //     chunkno = 0;
+    //     while(chunkno < chunks) {
+    //         mypool.add_data(testbuf + chunkno * batchs * ffts * times);
+    //         chunkno++;
+    //     }
+    //
+    // }
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
 

@@ -39,6 +39,9 @@ class Pool
         // buffer for all streams together
         unsigned int totsize;
         unsigned int totmem;
+        // polarisations buffer
+        unsigned char *h_pol;
+        int pol_begin;
         // GPU and thread stuff
         unsigned char *d_dedisp;
         unsigned char *d_search;
@@ -66,7 +69,9 @@ class Pool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
         void dedisp_thread(int dstream);
+        void get_data(unsigned char* data);
         void minion(int stream);
+        void receive_thread()
         void search_thread(int sstream);
 };
 

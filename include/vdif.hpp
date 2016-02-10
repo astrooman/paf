@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include <cufft.h>
+#include <pool.hpp>
 
 #define HEADER 64   // header is 64 bytes long
 #define BYTES_PER_WORD 8
@@ -93,6 +94,13 @@ void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
+    if((frame - previous_frame) > 1) {
+        // count words only as one word provides one full time sample per polarisation
+        d_begin += (frame - previous_frame) * 7 * 128;
+    } else {
+        d_begin += 7 * 128;
+    }
+
     int fpga_id = frame % 48;
     #pragma unroll
     for (int chan = 0; chan < 7; chan++) {
@@ -107,12 +115,6 @@ void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &
     }
 
     previous_frame = frame;
-
-    if((frame - previous_frame) > 1) {
-        d_begin += (frame - previous_frame) * 7 * 128;
-    } else {
-        d_begin += 7 * 128;
-    }
 
 }
 

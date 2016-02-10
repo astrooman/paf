@@ -19,6 +19,7 @@ using std::vector;
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config) : batchsize(bs),
                                                                 fftsize(fs),
                                                                 timesamp(ts),
+                                                                pol_begin(0),
                                                                 working(true),
                                                                 streamno(sn),
                                                                 freqavg(fr),
@@ -26,6 +27,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
                                                                 mainbuffer(),
                                                                 dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
 {
+
     // streamno for filterbank and additional 2 for dedispersion and single pulse search
     avt = min(streamno + 2,thread::hardware_concurrency());
 
@@ -64,6 +66,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     sizes[0] = (int)fftsize;
     // want as many streams and plans as there will be threads
     // every thread will be associated with its own stream
+    h_pol = new cufftComplex[filsize * 2];      // * 2 to deal with 2 polarisations
     mystreams = new cudaStream_t[avt];
     myplans = new cufftHandle[avt];
 
@@ -108,8 +111,19 @@ void Pool::add_data(cufftComplex *buffer)
     std::lock_guard<mutex> addguard(datamutex);
     // that has to have a mutex
     mydata.push(vector<cufftComplex>(buffer, buffer + filsize));
-    //cout << "Data added\n";
-    //cout.flush();
+}
+
+void Pool::dedisp_thread(int dstream)
+{
+    int ready = mainbuffer.ready();
+    if (ready) {
+        mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
+        // TO DO: include data member with the number of gulps already dedispersed
+        cout << "Dedispersing gulp " << endl;
+        dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
+    } else {
+        std::this_thread::yield();
+    }
 }
 
 void Pool::minion(int stream)
@@ -152,17 +166,37 @@ void Pool::minion(int stream)
     }
 }
 
-void Pool::dedisp_thread(int dstream)
+void Pool::get_data(unsigned char* data, int frame)
 {
-    int ready = mainbuffer.ready();
-    if (ready) {
-        mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
-        // TO DO: include data member with the number of gulps already dedispersed
-        cout << "Dedispersing gulp " << endl;
-        dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
+    unsigned int idx = 0;
+    unsigned int idx2 = 0;
+
+    if((frame - previous_frame) > 1) {
+        // count words only as one word provides one full time sample per polarisation
+        pol_begin += (frame - previous_frame) * 7 * 128;
     } else {
-        std::this_thread::yield();
+        pol_begin += 7 * 128;
     }
+
+    if(pol_bein >= filsize) {
+        add_data(h_pol);
+        pol_begin = 0;
+    }
+
+    int fpga_id = frame % 48;
+    #pragma unroll
+    for (int chan = 0; chan < 7; chan++) {
+        for (int sample = 0; sample < 128; sample++) {
+            idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
+            idx2 = chan * 128 + sample + fpga_id * WORDS_PER_PACKET;        // get the position in the buffer
+            h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+            h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+            h_pol[idx2 + filsize].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+            h_pol[idx2 + filsize].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+        }
+    }
+
+    previous_frame = frame;
 }
 
 void Pool::search_thread(int sstream)
