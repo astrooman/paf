@@ -16,6 +16,9 @@ using std::queue;
 using std::thread;
 using std::vector;
 
+#define BYTES_PER_WORD 8
+#define WORDS_PER_PACKET 896
+
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config) : batchsize(bs),
                                                                 fftsize(fs),
                                                                 timesamp(ts),

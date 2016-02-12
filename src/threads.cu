@@ -124,23 +124,6 @@ int main(int argc, char *argv[])
     }
     // should not take more than 5 seconds
     cout << "Starting up. This may take few seconds..." << endl;
-    // tsamp in seconds, ftop and foff in MHz
-    DedispPlan dedisp(filchans, tsamp, ftop, foff);
-    // width is the expected pulse width in microseconds
-    // tol is the smearing tolerance factor between two DM trials
-    dedisp.generate_dm_list(dstart, dend, (float)64.0, (float)1.10);
-    size_t totsamples = (size_t)gulp + dedisp.get_max_delay();
-    unsigned int buffno = (totsamples - 1) / gulp + 1;
-    size_t buffsize = buffno * gulp + dedisp.get_max_delay();
-    cout << "Will try " << dedisp.get_dm_count() << " DM trials" << endl;
-    if (verbose) {
-        cout << "Will try " << dedisp.get_dm_count() << " DM trials:\n";
-        for (int ii = 0; ii < dedisp.get_dm_count(); ii++)
-            cout << *(dedisp.get_dm_list() + ii) << endl;
-    }
-    if (false)       // switch off for now
-        dedisp.set_killmask(killmask);
-
 
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
