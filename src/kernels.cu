@@ -11,4 +11,4 @@ __global__ void poweradd(cufftComplex *in, unsigned char *out, unsigned int jump
         float power2 = in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y;
         out[idx1] = (power1 + power2) / 2.0;
     }
-}
+}0

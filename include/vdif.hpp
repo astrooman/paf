@@ -8,8 +8,7 @@
 #include <pool.hpp>
 
 #define HEADER 64   // header is 64 bytes long
-#define BYTES_PER_WORD 8
-#define WORDS_PER_PACKET 896
+
 
 using std::cout;
 using std::endl;
@@ -89,33 +88,33 @@ void get_header(unsigned char* packet, header_s &head)
 */
 }
 
-void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &d_begin, int frame, int &previous_frame) {
-
-    unsigned int idx = 0;
-    unsigned int idx2 = 0;
-
-    if((frame - previous_frame) > 1) {
-        // count words only as one word provides one full time sample per polarisation
-        d_begin += (frame - previous_frame) * 7 * 128;
-    } else {
-        d_begin += 7 * 128;
-    }
-
-    int fpga_id = frame % 48;
-    #pragma unroll
-    for (int chan = 0; chan < 7; chan++) {
-        for (int sample = 0; sample < 128; sample++) {
-            idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-            idx2 = chan * 128 + sample + fpga_id * WORDS_PER_PACKET;        // get the position in the buffer
-            pola[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-            pola[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-            polb[idx2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-            polb[idx2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-        }
-    }
-
-    previous_frame = frame;
-
-}
+// void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &d_begin, int frame, int &previous_frame, ) {
+//
+//     unsigned int idx = 0;
+//     unsigned int idx2 = 0;
+//
+//     if((frame - previous_frame) > 1) {
+//         // count words only as one word provides one full time sample per polarisation
+//         d_begin += (frame - previous_frame) * 7 * 128;
+//     } else {
+//         d_begin += 7 * 128;
+//     }
+//
+//     int fpga_id = frame % 48;
+//     #pragma unroll
+//     for (int chan = 0; chan < 7; chan++) {
+//         for (int sample = 0; sample < 128; sample++) {
+//             idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
+//             idx2 = chan * 128 + sample + fpga_id * WORDS_PER_PACKET;        // get the position in the buffer
+//             pola[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+//             pola[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+//             polb[idx2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+//             polb[idx2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+//         }
+//     }
+//
+//     previous_frame = frame;
+//
+// }
 
 #endif
