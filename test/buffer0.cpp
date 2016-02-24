@@ -5,8 +5,9 @@
 #include <vector>
 
 #include <cufft.h>
-#include <vdif.hpp>
+#include <test_vdif.hpp>
 
+#include <inttypes.h>
 #include <errno.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -88,11 +89,11 @@ int main(int argc, char *argv[])
 
     recstart = std::chrono::system_clock::now();
 
-    int repeat = 1<<10;
+    int repeat = 1;
 
     for (int times = 0; times < repeat; times++) {
 
-        while(band < 48) {
+        while(band < 1) {
             if ((numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
                 cout << "Error on recvfrom\n";
             }
@@ -104,7 +105,7 @@ int main(int argc, char *argv[])
 
             //band = head.frame_no % 48;
             get_header(reinterpret_cast<unsigned char*>(frame), head);
-            get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, band);
+            //get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, band);
             band++;
 
         }
