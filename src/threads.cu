@@ -19,6 +19,7 @@
 #include <params.hpp>
 #include <pipeline.hpp>
 
+#include <boost/asio.hpp>
 #include <errno.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -27,6 +28,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+using boost::asio::ip::udp;
 using std::cout;
 using std::endl;
 using std::mutex;
@@ -134,34 +136,18 @@ int main(int argc, char *argv[])
     Pool mypool(batchs, ffts, config.times, config.streamno, config.freq, config);
 
     // networking stuff
+    // standard approach
     int sfd, numbytes, rv;
     socklen_t addrlen;              // socklen_t has length of at least 32 bits
     addrinfo hints, *servinfo, *p;
     sockaddr_storage their_addr;    // sockaddr_storage is large enough accommodate all supported
                                     //protocol-specific address structures
     char s[INET6_ADDRSTRLEN];       // length of the string form for IPv6
-    cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
-    //unsigned int mempacket = 6144;   // how many bytes per packet to read
-    size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
-    //const unsigned int packets = memsize / mempacket;   // const to avoid accidental changes
-                                                        // number of packets require to receive
-                                                        // one data 'chunk', i.e. the amount of
-                                                        // data required to performed filterbanking
-                                                        // with averaging for all necessary beams and channels
-    // unsigned int packetel = mempacket / sizeof(cufftComplex);
     unsigned char *inbuf = new unsigned char[BUFLEN];
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;    // allows to use NULL in getaddrinfo
-
-    cout << "Will process " << memsize / 1024.0 << "KB chunks\n"
-		<< "Divided into " << packets << " 6144B packets\n";
-
-    if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
-        cout << "getaddrinfo error " << gai_strerror(rv) << endl;
-        exit(EXIT_FAILURE);
-    }
 
     // loop through the linked list and try binding to the first possible socket
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -183,7 +169,41 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+        cout << "getaddrinfo error " << gai_strerror(rv) << endl;
+        exit(EXIT_FAILURE);
+    }
+
     freeaddrinfo(servinfo);     // no longer need it
+
+    // Boost ASIO approach
+
+    boost::asio::io_service io_service;
+    udp::endpoint sender_endpoint;
+
+    udp::socket socket(io_service, udp::v4());
+    boost::asio::socket_base::reuse_address option(true);
+    boost::asio::socket_base::receive_buffer_size option2(9000);
+    socket.set_option(option);
+    socket.set_option(option2);
+    socket.bind(udp::endpoint(udp::v4(), config.port));
+
+    cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
+
+
+
+    //unsigned int mempacket = 6144;   // how many bytes per packet to read
+    size_t memsize = batchs * ffts * times * sizeof(cufftComplex);
+    //const unsigned int packets = memsize / mempacket;   // const to avoid accidental changes
+                                                        // number of packets require to receive
+                                                        // one data 'chunk', i.e. the amount of
+                                                        // data required to performed filterbanking
+                                                        // with averaging for all necessary beams and channels
+    // unsigned int packetel = mempacket / sizeof(cufftComplex);
+
+
+
+
     cout << "Waiting to receive from the server...\n";
 
     int chunkno{0};
@@ -206,7 +226,7 @@ int main(int argc, char *argv[])
         if(!numbytes)
             break;
         get_header(inbuf, head);
-        my_pool.get_data(inbuf, head.frame_no);
+        my_pool.get_data(inbuf, head.frame_no, previous_frame);
     }
 
     // while(chunkno < chunks) {

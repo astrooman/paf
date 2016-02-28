@@ -7,6 +7,7 @@
 
 #include <cufft.h>
 
+
 #define HEADER 64   // header is 64 bytes long
 #define BYTES_PER_WORD 8
 #define WORDS_PER_PACKET 896
@@ -98,7 +99,7 @@ void get_header(unsigned char* packet, header_s &head)
 
     cout << "VDIF version " << head.version + 1 << endl;
     cout << "Invalid data: " << head.invalid << endl;
-    cout << "Complex data: " << head.complex << endl;
+    cout << "Complex data: " << head.comp << endl;
     cout << "In bits: " << head.in_bits << endl;
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;
     cout << "Period: " << head.period << endl;

@@ -169,7 +169,7 @@ void Pool::minion(int stream)
     }
 }
 
-void Pool::get_data(unsigned char* data, int frame)
+void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
 {
     unsigned int idx = 0;
     unsigned int idx2 = 0;
