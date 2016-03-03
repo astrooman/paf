@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 #include <cufft.h>
@@ -18,9 +19,9 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define PORT "45002"
-#define DATA 8908
-#define BUFLEN 8908 + 64   // 8908 bytes for sample block and 64  bytes for header
+#define PORT "25000"
+#define DATA 8096
+#define BUFLEN 7232   // 8908 bytes for sample block and 64  bytes for header
 
 using std::cout;
 using std::endl;
@@ -72,7 +73,7 @@ int main(int argc, char *argv[])
     }
 
     if (p == NULL) {
-        cout << "Faile to bind the socket\n";
+        cout << "Failed to bind the socket\n";
         exit(EXIT_FAILURE);
     }
 
@@ -89,27 +90,33 @@ int main(int argc, char *argv[])
 
     recstart = std::chrono::system_clock::now();
 
-    int repeat = 1;
+    int repeat = 5;
+
+    int d_begin = 0;
+    int previous_frame = -1;
 
     for (int times = 0; times < repeat; times++) {
 
-        while(band < 1) {
-            if ((numbytes = recvfrom(sfd, frame, BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-                cout << "Error on recvfrom\n";
-            }
-
-            if (!numbytes) { // break on 0 bytes received for now - later process until the last frame reached
-                cout << "Not received anything\n";
-                break;
-            }
-
-            //band = head.frame_no % 48;
-            get_header(reinterpret_cast<unsigned char*>(frame), head);
-            //get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, band);
-            band++;
-
+	numbytes = 0;
+	memset(&head, 0, sizeof(head));
+	memset(frame, '\0', BUFLEN);
+        if ((numbytes = recvfrom(sfd, frame, BUFLEN-1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
+            cout << "Error on recvfrom\n";
         }
-        band = 0;
+
+	frame[BUFLEN] = '\0';
+	cout << "Received " << numbytes << " bytes\n";
+	cout << frame[0] << " " << frame[32] << endl;
+        if (!numbytes) { // break on 0 bytes received for now - later process until the last frame reached
+            cout << "Not received anything\n";
+            break;
+        }
+
+        get_header(reinterpret_cast<unsigned char*>(frame), head);
+	cout << head.frame_no << endl;
+	cout << previous_frame << endl;
+//        get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, d_begin, head.frame_no, previous_frame);
+
     }
 
     recend = std::chrono::system_clock::now();
@@ -117,6 +124,8 @@ int main(int argc, char *argv[])
 
     cout << "Total time spent filling " << repeat << " buffers was " << recelapsed.count() << "s\n";
     cout << "It took " << recelapsed.count() / (double)repeat << "s to fill one buffer\n";
+
+    close(sfd);
 
     return 0;
 }

@@ -56,6 +56,11 @@ int main(int argc, char *argv[]) {
     cout << endl;
     cout << "Real part: " << freal << " -> " << std::bitset<32>(ureal.output) << endl;
 
+    int *weird_cast = reinterpret_cast<int*>(&freal);
+
+    cout << endl;
+    cout << "Weird reinterpret cast: " << *weird_cast << endl;
+
     float pi = 3.1415926;
 
     union {
