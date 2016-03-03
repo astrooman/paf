@@ -28,11 +28,15 @@ class Pool
 
         bool working;
         // const to be safe
-        const unsigned int batchsize;
-        const unsigned int fftsize;
-        const unsigned int timesamp;
-        const unsigned int streamno;
-        const unsigned int freqavg;
+        const unsigned int d_fft_size;              // size of single fft * # 1MHz channels * # time samples to average * # polarisations
+        const unsigned int d_power_size;            // d_fft_size / # polarisations
+        const unsigned int d_time_scrunch_size;     // (size of single fft - 5) * # 1MHz channels  / # time samples to average
+        const unsigned int d_freq_scrunch_size;     // d_time_scrunch_size / # frequency channels to average
+        const unsigned int batchsize;               // the number of FFTs to process at one
+        const unsigned int fftpoint;                // size of the single FFT
+        const unsigned int timeavg;                 // # time samples to average
+        const unsigned int streamno;                // # CUDA streams
+        const unsigned int freqavg;                 // # frequency channels to average
         // one buffer
         unsigned int filsize;
         unsigned int bufmem;
@@ -43,10 +47,27 @@ class Pool
         unsigned char *h_pol;
         int pol_begin;
         // GPU and thread stuff
-        unsigned char *d_dedisp;
-        unsigned char *d_search;
+        // raw voltage buffers
+        // d_in is a cufftExecC2C() input
         cufftComplex *h_in, *d_in;
-        unsigned char *h_out, *d_out;
+        // the ffted signal buffer
+        // cufftExecC2C() output
+        // powerscale() kernel input
+        cufftComplex *d_fft;
+        // the detected signal buffer
+        // powerscale() kernel output
+        // addtime() kernel input
+        float *d_power;
+        // the time scrunched signal buffer
+        // addtime() kernel output
+        // addchannel() kernel input
+        float *d_time_scrunch;
+        // the frequency schruned signal buffer
+        // addchannel() kernel output
+        float *d_freq_scrunch;          // the frequency scrunched signal buffer
+        unsigned char *d_dedisp;        // dedispersion buffer - aggregated frequency scrunched buffer
+        unsigned char *d_search;        // single pulse search buffer - dedispersion output
+
         int sizes[1];
         int avt;
         cudaStream_t *mystreams;

@@ -12,6 +12,7 @@
 #include <inttypes.h>
 #include <cufft.h>
 
+
 #define HEADER 64   // header is 64 bytes long
 #define BYTES_PER_WORD 8
 #define WORDS_PER_PACKET 896
