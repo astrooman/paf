@@ -28,6 +28,8 @@ class Pool
 
         bool working;
         // const to be safe
+        // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
+        const unsigned int d_in_size;                // size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_fft_size;              // size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_power_size;            // d_fft_size / # polarisations
         const unsigned int d_time_scrunch_size;     // (size of single fft - 5) * # 1MHz channels  / # time samples to average
@@ -80,13 +82,15 @@ class Pool
         // use queue as FIFO needed
         queue<vector<cufftComplex>> mydata;
         vector<thread> mythreads;
-        unsigned int buffno;
-        size_t totsamples;
+        unsigned int dedisp_buffno;
+        size_t dedisp_buffsize;
+        size_t dedisp_totsamples;
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config);
+        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, config_s config);
         ~Pool(void);
+        Pool(Pool&) = delete;
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
         void dedisp_thread(int dstream);

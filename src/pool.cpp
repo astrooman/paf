@@ -19,17 +19,18 @@ using std::vector;
 #define BYTES_PER_WORD 8
 #define WORDS_PER_PACKET 896
 
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, unsigned int fr, config_s config) : batchsize(bs),
+Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, config_s config) : batchsize(bs),
+                                                                fftpoint(fs),
+                                                                timeavg(ts),
+                                                                freqavg(fr),
+                                                                nostreams(sn),
+                                                                d_in_size(bs * fs * ts * pol),
                                                                 d_fft_size(bs * fs * ts * pol),
                                                                 d_power_size(bs * fs * ts),
                                                                 d_time_scrunch_size((bs - 5) * bs),
                                                                 d_freq_scrunch_size((bs - 5) * bs / fr),
-                                                                fftpoint(fs),
                                                                 pol_begin(0),
                                                                 working(true),
-                                                                streamno(sn),
-                                                                timeavg(ts),
-                                                                freqavg(fr),
                                                                 nthreads(256),
                                                                 mainbuffer(),
                                                                 dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
@@ -51,10 +52,10 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
             cout << *(dedisp.get_dm_list() + ii) << endl;
     }
 
-    totsamples = (size_t)config.gulp + dedisp.get_max_delay();
-    buffno = (totsamples - 1) / config.gulp + 1;
-    size_t buffsize = buffno * config.gulp + dedisp.get_max_delay();
-    mainbuffer.allocate(buffno, dedisp.get_max_delay(), config.gulp, buffsize);
+    dedisp_totsamples = (size_t)config.gulp + dedisp.get_max_delay();
+    dedisp_buffno = (dedisp_totsamples - 1) / config.gulp + 1;
+    dedisp_buffsize = dedisp_buffno * config.gulp + dedisp.get_max_delay();
+    mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), config.gulp, dedisp_buffsize);
     //if (false)       // switch off for now
     //    dedisp.set_killmask(killmask);
     // everything should be ready for dedispersion after this point
@@ -63,7 +64,8 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     hd_create_pipeline(&pipeline, params)
     // everything should be ready for single pulse search after this point
 
-    filsize = fftpoint * batchsize * timesamp;
+    // filsize is now the same as d_fft_size
+    // filsize = fftpoint * batchsize * timesamp;
     bufmem = filsize * sizeof(cufftComplex);
     totsize = filsize * avt;
     totmem = bufmem * avt;
@@ -77,15 +79,14 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int sn, u
     mystreams = new cudaStream_t[avt];
     myplans = new cufftHandle[avt];
 
-    cudaHostAlloc((void**)&h_in, totsize * sizeof(cufftComplex), cudaHostAllocDefault);
-    cudaHostAlloc((void**)&h_out, totsize / 2 * sizeof(float), cudaHostAllocDefault);
-    cudaMalloc((void**)&d_in, totsize * sizeof(cufftComplex));
+    cudaHostAlloc((void**)&h_in, d_in_size * avt * sizeof(cufftComplex), cudaHostAllocDefault);
+    cudaMalloc((void**)&d_in, d_in_size * avt * sizeof(cufftComplex));
     cudaMalloc((void**)&d_fft, d_fft_size * avt * sizeof(cufftComplex));
     cudaMalloc((void**)&d_power, d_power_size * avt * sizeof(float));
     cudaMalloc((void**)&d_time_scrunch, d_time_scrunch_size * sizeof(float));
     cudaMalloc((void**)&d_freq_scrunch, d_freq_scrunch_size * sizeof(float));
     // change this later to deal with any input type;
-    cudaMalloc((void**)&d_dedisp, totsamples * sizeof(unsigned char));
+    cudaMalloc((void**)&d_dedisp, dedisp_totsamples * sizeof(unsigned char));
     cudaMalloc((void**)&d_search, config.gulp * dedisp.get_dm_count() * sizeof(unsigned char));
     // here only launch threads that will take care of filterbank
     for (int ii = 0; ii < avt - 2; ii++) {
@@ -125,14 +126,16 @@ void Pool::add_data(cufftComplex *buffer)
 
 void Pool::dedisp_thread(int dstream)
 {
-    int ready = mainbuffer.ready();
-    if (ready) {
-        mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
-        // TO DO: include data member with the number of gulps already dedispersed
-        cout << "Dedispersing gulp " << endl;
-        dedisp.execute(totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
-    } else {
-        std::this_thread::yield();
+    while(working) {
+        int ready = mainbuffer.ready();
+        if (ready) {
+            mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
+            // TO DO: include data member with the number of gulps already dedispersed
+            cout << "Dedispersing gulp " << endl;
+            dedisp.execute(dedisp_totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
+        } else {
+            std::this_thread::yield();
+        }
     }
 }
 
@@ -141,8 +144,7 @@ void Pool::minion(int stream)
     cout << "Starting thread associated with stream " << stream << endl << endl;
     cout.flush();
 
-    unsigned int skip = stream * filsize;
-    unsigned int outmem = filsize / 2 * sizeof(float);
+    unsigned int skip = stream * d_in_size;
 
     while(working) {
         // need to protect if with mutex
@@ -164,12 +166,8 @@ void Pool::minion(int stream)
 		          cout << "Error in FFT execution\n";
             powerscale<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_in + skip, d_out + skip / 2, fftpoint * batchsize);
             addtime<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_power, d_time_scrunch);
-            addchannel<<<nblocks, nthreada, 0, mystreams[stream]>>>(d_time_scrunch, d_freq_scrunch);
-            if(cudaMemcpyAsync(h_out + skip / 2, d_out + skip / 2, outmem, cudaMemcpyDeviceToHost, mystreams[stream]) != cudaSuccess) {
-		        cout << "DtH copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
-		        cout.flush();
-	        }
-            mainbuffer.write(d_out, index, filsize / 2, mystreams[stream]);
+            addchannel<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_time_scrunch, d_freq_scrunch);
+            mainbuffer.write(d_freq_scrunch, index, filsize / 2, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
 	        datamutex.unlock();
@@ -213,13 +211,14 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
 
 void Pool::search_thread(int sstream)
 {
-    // include check of some for here
-    bool ready{true};
-    if (ready) {
-        // this need access to config - make config a data member
-        cout << "Searching in the gulp " << endl;
-        hd_execute(pipeline, d_dedisp, config.gulp, 8)
-  } else {
-        std::this_thread::yield();
+    while(working) {
+        bool ready{true};
+        if (ready) {
+            // this need access to config - make config a data member
+            cout << "Searching in the gulp " << endl;
+            hd_execute(pipeline, d_dedisp, config.gulp, 8)
+        } else {
+            std::this_thread::yield();
+        }
   }
 }
