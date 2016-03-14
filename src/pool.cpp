@@ -19,19 +19,19 @@ using std::vector;
 #define BYTES_PER_WORD 8
 #define WORDS_PER_PACKET 896
 
-Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, config_s config) : batchsize(bs),
+Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config) : batchsize(bs),
                                                                 fftpoint(fs),
                                                                 timeavg(ts),
                                                                 freqavg(fr),
                                                                 nostreams(sn),
-                                                                d_in_size(bs * fs * ts * pol),
-                                                                d_fft_size(bs * fs * ts * pol),
+                                                                npol(np),
+                                                                d_in_size(bs * fs * ts * np),
+                                                                d_fft_size(bs * fs * ts * np),
                                                                 d_power_size(bs * fs * ts),
                                                                 d_time_scrunch_size((bs - 5) * bs),
                                                                 d_freq_scrunch_size((bs - 5) * bs / fr),
                                                                 pol_begin(0),
                                                                 working(true),
-                                                                nthreads(256),
                                                                 mainbuffer(),
                                                                 dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
 {
@@ -64,27 +64,32 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     hd_create_pipeline(&pipeline, params)
     // everything should be ready for single pulse search after this point
 
-    // filsize is now the same as d_fft_size
-    // filsize = fftpoint * batchsize * timesamp;
-    bufmem = filsize * sizeof(cufftComplex);
-    totsize = filsize * avt;
-    totmem = bufmem * avt;
-    // / 2 as interested in time averaged output
-    nblocks = (filsize / 2 - 1 ) / nthreads + 1;
-
     sizes[0] = (int)fftpoint;
     // want as many streams and plans as there will be threads
     // every thread will be associated with its own stream
-    h_pol = new cufftComplex[filsize * 2];      // * 2 to deal with 2 polarisations
+    h_pol = new cufftComplex[d_in_size];
     mystreams = new cudaStream_t[avt];
     myplans = new cufftHandle[avt];
 
-    cudaHostAlloc((void**)&h_in, d_in_size * avt * sizeof(cufftComplex), cudaHostAllocDefault);
-    cudaMalloc((void**)&d_in, d_in_size * avt * sizeof(cufftComplex));
-    cudaMalloc((void**)&d_fft, d_fft_size * avt * sizeof(cufftComplex));
-    cudaMalloc((void**)&d_power, d_power_size * avt * sizeof(float));
-    cudaMalloc((void**)&d_time_scrunch, d_time_scrunch_size * sizeof(float));
-    cudaMalloc((void**)&d_freq_scrunch, d_freq_scrunch_size * sizeof(float));
+    int nkernels = 3;
+    nthreads = new unsigned int[nkernels];
+    // nthreads[0] - powerscale() kernel; nthreads[1] - addtime() kernel; nthreads[2] - addchannel() kernel
+    nblocks = new unsigned int[nkernels];
+    // nblocks[0] - powerscale() kernel; nblocks[1] - addtime() kernel; nblocks[2] - addchannel() kernel
+    // very simple approach for now
+    nthreads[0] = fftpoint * timeavg * nchans;
+    nthreads[1] = nchans;
+    nthreads[2] = nchans * (fftpoint - 5) / freqavg;
+    nblocks[0] = 1;
+    nblocks[1] = 1;
+    nblocks[2] = 1;
+
+    cudaHostAlloc((void**)&h_in, d_in_size * streamno * sizeof(cufftComplex), cudaHostAllocDefault);
+    cudaMalloc((void**)&d_in, d_in_size * streamno * sizeof(cufftComplex));
+    cudaMalloc((void**)&d_fft, d_fft_size * streamno * sizeof(cufftComplex));
+    cudaMalloc((void**)&d_power, d_power_size * streamno * sizeof(float));
+    cudaMalloc((void**)&d_time_scrunch, d_time_scrunch_size * streamno * sizeof(float));
+    cudaMalloc((void**)&d_freq_scrunch, d_freq_scrunch_size * streamno * sizeof(float));
     // change this later to deal with any input type;
     cudaMalloc((void**)&d_dedisp, dedisp_totsamples * sizeof(unsigned char));
     cudaMalloc((void**)&d_search, config.gulp * dedisp.get_dm_count() * sizeof(unsigned char));
@@ -124,6 +129,45 @@ void Pool::add_data(cufftComplex *buffer)
     mydata.push(vector<cufftComplex>(buffer, buffer + filsize));
 }
 
+
+
+void Pool::minion(int stream)
+{
+    cout << "Starting thread associated with stream " << stream << endl << endl;
+    cout.flush();
+
+    unsigned int skip = stream * d_in_size / 2;
+
+    while(working) {
+        // need to protect if with mutex
+        // current mutex implementation is a big ugly, but just need a dirty hack
+        // will write a new, thread-safe queue implementation
+        unsigned int index{0};       // index will be used to distinguish between time samples
+        datamutex.lock();
+        if(!mydata.empty()) {
+            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
+            mydata.pop();
+            datamutex.unlock();
+	        //cout << "Stream " << stream << " got the data\n";
+	        //cout.flush();
+            if(cudaMemcpyAsync(d_in + skip * npol, h_in + skip * npol, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
+		        cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
+		        cout.flush();
+	        }
+            if(cufftExecC2C(myplans[stream], d_in + skip * npol, d_fft + skip * npol, CUFFT_FORWARD) != CUFFT_SUCCESS)
+		          cout << "Error in FFT execution\n";
+            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip * npol, d_power + skip, d_in_size / npol);
+            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip, d_time_scrunch + skip);
+            addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + skip, d_freq_scrunch + skip);
+            mainbuffer.write(d_freq_scrunch + skip, index, d_freq_scrunch_size, mystreams[stream]);
+            cudaThreadSynchronize();
+        } else {
+	        datamutex.unlock();
+            std::this_thread::yield();
+        }
+    }
+}
+
 void Pool::dedisp_thread(int dstream)
 {
     while(working) {
@@ -139,41 +183,18 @@ void Pool::dedisp_thread(int dstream)
     }
 }
 
-void Pool::minion(int stream)
+void Pool::search_thread(int sstream)
 {
-    cout << "Starting thread associated with stream " << stream << endl << endl;
-    cout.flush();
-
-    unsigned int skip = stream * d_in_size;
-
     while(working) {
-        // need to protect if with mutex
-        // current mutex implementation is a big ugly, but just need a dirty hack
-        // will write a new, thread-safe queue implementation
-        unsigned int index{0};       // index will be used to distinguish between time samples
-        datamutex.lock();
-        if(!mydata.empty()) {
-            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
-            mydata.pop();
-            datamutex.unlock();
-	        //cout << "Stream " << stream << " got the data\n";
-	        //cout.flush();
-            if(cudaMemcpyAsync(d_in + skip, h_in + skip, bufmem, cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
-		        cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
-		        cout.flush();
-	        }
-            if(cufftExecC2C(myplans[stream], d_in + skip, d_in + skip, CUFFT_FORWARD) != CUFFT_SUCCESS)
-		          cout << "Error in FFT execution\n";
-            powerscale<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_in + skip, d_out + skip / 2, fftpoint * batchsize);
-            addtime<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_power, d_time_scrunch);
-            addchannel<<<nblocks, nthreads, 0, mystreams[stream]>>>(d_time_scrunch, d_freq_scrunch);
-            mainbuffer.write(d_freq_scrunch, index, filsize / 2, mystreams[stream]);
-            cudaThreadSynchronize();
+        bool ready{true};
+        if (ready) {
+            // this need access to config - make config a data member
+            cout << "Searching in the gulp " << endl;
+            hd_execute(pipeline, d_dedisp, config.gulp, 8)
         } else {
-	        datamutex.unlock();
             std::this_thread::yield();
         }
-    }
+  }
 }
 
 void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
@@ -188,7 +209,8 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
         pol_begin += 7 * 128;
     }
 
-    if(pol_bein >= filsize) {
+    // send the data to the data queue
+    if(pol_bein >= d_in_size / 2) {
         add_data(h_pol);
         pol_begin = 0;
     }
@@ -207,18 +229,4 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
     }
 
     previous_frame = frame;
-}
-
-void Pool::search_thread(int sstream)
-{
-    while(working) {
-        bool ready{true};
-        if (ready) {
-            // this need access to config - make config a data member
-            cout << "Searching in the gulp " << endl;
-            hd_execute(pipeline, d_dedisp, config.gulp, 8)
-        } else {
-            std::this_thread::yield();
-        }
-  }
 }

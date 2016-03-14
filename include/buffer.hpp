@@ -6,13 +6,12 @@
 
 using std::mutex;
 
-// make a template to support dfferent dedisp input types
 template <class T>
 class Buffer
 {
     private:
         bool ready0, ready1, ready2;
-        size_t size;            // total size of the data chunk: gulp + extra
+        size_t size;            // total size of the data: #gulps * gulp size + extra samples for dedispersion
         size_t gulp;            // size of the single gulp
         size_t extra;           // number of extra time samples required to process the full gulp
         int gulpno;             // number of gulps required in the buffer
@@ -27,6 +26,7 @@ class Buffer
         Buffer();
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         ~Buffer(void);
+
 
         void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         int ready();
@@ -86,7 +86,6 @@ int Buffer<T>::ready()
 }
 
 template<class T>
-// will return the pointer to the start of the data sent to dedispersion
 void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream)
 {
     cudaMemcpyAsync(out, d_buf + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream);

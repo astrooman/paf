@@ -226,6 +226,7 @@ int main(int argc, char *argv[])
         if(!numbytes)
             break;
         get_header(inbuf, head);
+        // adding the data is already included in the get_data() method
         my_pool.get_data(inbuf, head.frame_no, previous_frame);
     }
 

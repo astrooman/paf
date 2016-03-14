@@ -39,12 +39,9 @@ class Pool
         const unsigned int timeavg;                 // # time samples to average
         const unsigned int streamno;                // # CUDA streams
         const unsigned int freqavg;                 // # frequency channels to average
+        const unsigned int npol;                    // number of polarisations in the input data
         // one buffer
         unsigned int filsize;
-        unsigned int bufmem;
-        // buffer for all streams together
-        unsigned int totsize;
-        unsigned int totmem;
         // polarisations buffer
         unsigned char *h_pol;
         int pol_begin;
@@ -76,8 +73,8 @@ class Pool
         cufftHandle *myplans;
         mutex datamutex;
         mutex workmutex;
-        unsigned int nthreads;
-        unsigned int nblocks;
+        unsigned int *nthreads;
+        unsigned int *nblocks;
         // containers
         // use queue as FIFO needed
         queue<vector<cufftComplex>> mydata;
@@ -88,7 +85,7 @@ class Pool
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, config_s config);
+        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config);
         ~Pool(void);
         Pool(Pool&) = delete;
         // add deleted copy, move, etc constructors
