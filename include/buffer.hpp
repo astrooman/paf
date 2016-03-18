@@ -6,6 +6,13 @@
 
 using std::mutex;
 
+struct obs_time {
+
+    int start_epoch;            // refernece epoch at the start of the observation
+    int start_second;           // seconds from the reference epoch at the start of the observation
+
+}
+
 template <class T>
 class Buffer
 {

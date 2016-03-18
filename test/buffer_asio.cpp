@@ -4,7 +4,7 @@
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
 //#include <cufft.h>
-//#include <vdif.hpp>
+//#include <pdif.hpp>
 
 using std::cout;
 using std::endl;

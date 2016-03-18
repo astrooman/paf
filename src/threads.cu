@@ -12,8 +12,8 @@
 #include <cufft.h>
 #include <dedisp.h>
 #include <DedispPlan.hpp>
+#include <pdif.hpp>
 #include <pool.hpp>
-#include <vdif.hpp>
 
 // Heimdall headers - including might be a bit messy
 #include <params.hpp>
@@ -49,7 +49,6 @@ void *get_addr(sockaddr *sadr)
 
     return &(((sockaddr_in6*)sadr)->sin6_addr);
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -226,8 +225,9 @@ int main(int argc, char *argv[])
         if(!numbytes)
             break;
         get_header(inbuf, head);
+        static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
-        my_pool.get_data(inbuf, head.frame_no, previous_frame);
+        my_pool.get_data(inbuf, head.frame_no, previous_frame, start_time);
     }
 
     // while(chunkno < chunks) {
@@ -238,12 +238,12 @@ int main(int argc, char *argv[])
     //             cout << "error recvfrom" << endl;
     //             exit(EXIT_FAILURE);
     //         }
-    //         // get the vdif header and strip it off the data
+    //         // get the pdif header and strip it off the data
     //         get_header(inbuf, head);
     //         //cout << "Received packet " << packetno << " with " << numbytes << " bytes\n";
     //         //cout.flush();
     //         // I am not happy with the amount of copying done here and below
-    //         // COMMENTED OUT FOR COMPILATION - READING VDIF FILES WILL BE SORTED OUT
+    //         // COMMENTED OUT FOR COMPILATION - READING PDIF FILES WILL BE SORTED OUT
     //         //std::copy(inbuf, inbuf + packetel, chunkbuf + packetno * packetel);
     //     }
     //

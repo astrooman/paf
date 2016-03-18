@@ -67,6 +67,7 @@ class Pool
         unsigned char *d_dedisp;        // dedispersion buffer - aggregated frequency scrunched buffer
         unsigned char *d_search;        // single pulse search buffer - dedispersion output
 
+        unsigned int gulps_processed;
         int sizes[1];
         int avt;
         cudaStream_t *mystreams;
@@ -91,7 +92,7 @@ class Pool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer);
         void dedisp_thread(int dstream);
-        void get_data(unsigned char* data);
+        void get_data(unsigned char* data, int frame, int &previous_frame, obs_time start_time);
         void minion(int stream);
         void receive_thread()
         void search_thread(int sstream);

@@ -31,6 +31,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
                                                                 d_time_scrunch_size((bs - 5) * bs),
                                                                 d_freq_scrunch_size((bs - 5) * bs / fr),
                                                                 pol_begin(0),
+                                                                gulps_processed(0),
                                                                 working(true),
                                                                 mainbuffer(),
                                                                 dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
@@ -190,14 +191,15 @@ void Pool::search_thread(int sstream)
         if (ready) {
             // this need access to config - make config a data member
             cout << "Searching in the gulp " << endl;
-            hd_execute(pipeline, d_dedisp, config.gulp, 8)
+            hd_execute(pipeline, d_dedisp, config.gulp, 8, gulps_processed);
+            gulps_processed++;
         } else {
             std::this_thread::yield();
         }
   }
 }
 
-void Pool::get_data(unsigned char* data, int frame, int &previous_frame)
+void Pool::get_data(unsigned char* data, int frame, int &previous_frame, obs_time start_time)
 {
     unsigned int idx = 0;
     unsigned int idx2 = 0;
