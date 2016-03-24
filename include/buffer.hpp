@@ -3,6 +3,10 @@
 
 #include <algorithm>
 #include <mutex>
+#include <vector>
+
+#include <thrust/host_vector.h>
+#include <thrsust/device_vector.h>
 
 using std::mutex;
 
@@ -17,11 +21,14 @@ template <class T>
 class Buffer
 {
     private:
+        float *pfilterbank;
+        vector<thrust::device_vector<float>> filterbank;
         bool ready0, ready1, ready2;
         size_t size;            // total size of the data: #gulps * gulp size + extra samples for dedispersion
         size_t gulp;            // size of the single gulp
         size_t extra;           // number of extra time samples required to process the full gulp
         int gulpno;             // number of gulps required in the buffer
+        int stokes;             // number of Stokes parameters to keep in the buffer
         mutex buffermutex;
         size_t start;
         size_t end;
@@ -70,13 +77,19 @@ Buffer<T>::~Buffer()
 }
 
 template<class T>
-void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u)
+void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int stokes_u)
 {
     extra = extra_u;
     gulp = gulp_u;
     gulpno = gulpno_u;
+    // size is the size of the buffer for the single Stokes parameter
     size = size_u;
-    cudaMalloc((void**)&d_buf, size * sizeof(T));
+    stokes = stokes_u;
+    filterbank.resize(stokes);
+    for (int ii = 0; ii < stokes; ii++)
+        filterbank[ii].resize(size);
+    pfilterbank = thrust::raw_pointer_cast(filterbank.data());
+    cudaMalloc((void**)&d_buf, size * stokes * sizeof(T));
     sample_state = new unsigned int[(int)size];
     std::fill(sample_state, sample_state + size, 0);
 }

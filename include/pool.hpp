@@ -12,6 +12,8 @@
 #include <cufft.h>
 #include <DedispPlan.h>
 
+#include <thrust/device_vector.h>
+
 using std::mutex;
 using std::queue;
 using std::thread;
@@ -26,13 +28,21 @@ class Pool
         hd_pipeline pipeline;
         hd_params params;
 
+        vector<thrust::device_vector<float>> dv_power;
+        vector<thrust::device_vector<float>> dv_time_scrunch;
+        vector<thrust::device_vector<float>> dv_freq_scrunch;
+
+        float *pdv_power;
+        float *pdv_time_scrunch;
+        float *pdv_freq_scrunch;
+
         bool working;
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
         const unsigned int d_in_size;                // size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_fft_size;              // size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_power_size;            // d_fft_size / # polarisations
-        const unsigned int d_time_scrunch_size;     // (size of single fft - 5) * # 1MHz channels  / # time samples to average
+        const unsigned int d_time_scrunch_size;     // (size of single fft - 5) * # 1MHz channels
         const unsigned int d_freq_scrunch_size;     // d_time_scrunch_size / # frequency channels to average
         const unsigned int batchsize;               // the number of FFTs to process at one
         const unsigned int fftpoint;                // size of the single FFT

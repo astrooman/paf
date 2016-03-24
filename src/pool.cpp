@@ -56,7 +56,8 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     dedisp_totsamples = (size_t)config.gulp + dedisp.get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / config.gulp + 1;
     dedisp_buffsize = dedisp_buffno * config.gulp + dedisp.get_max_delay();
-    mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), config.gulp, dedisp_buffsize);
+    int stokes = 4; // make it a parameter later
+    mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), config.gulp, dedisp_buffsize, stokes);
     //if (false)       // switch off for now
     //    dedisp.set_killmask(killmask);
     // everything should be ready for dedispersion after this point
@@ -85,6 +86,22 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     nblocks[1] = 1;
     nblocks[2] = 1;
 
+    dv_power.resize(stokes);
+    for (int ii = 0; ii < stokes; ii++)
+        dv_power[ii].resize(d_power_size * streamno);
+    pdv_power = thrust::raw_pointer_cast(dv_power.data());
+
+    dv_time_scrunch.resize(stokes);
+    for (int ii = 0; ii < stokes; ii++)
+        dv_time_scrunch[ii].resize(d_time_scrunch_size * streamno);
+    pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch);
+
+    dv_freq_scrunch.resize(stokes);
+    for (int ii = 0; ii < stokes)
+        dv_freq_scrunch[ii].resize(d_freq_scrunch_size * streamno);
+    pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch);
+
+
     cudaHostAlloc((void**)&h_in, d_in_size * streamno * sizeof(cufftComplex), cudaHostAllocDefault);
     cudaMalloc((void**)&d_in, d_in_size * streamno * sizeof(cufftComplex));
     cudaMalloc((void**)&d_fft, d_fft_size * streamno * sizeof(cufftComplex));
@@ -106,7 +123,6 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
         // or a reference to an object of a type derived from T (C++14 §20.9.2)
         mythreads.push_back(thread(&Pool::minion, this, ii));
     }
-
     // dedisp thread
     cudaStreamCreate(&mystreams[avt-2]);
     mythreads.push_back(thread(&Pool::dedisp_thread, this, avt-2));
@@ -127,7 +143,7 @@ void Pool::add_data(cufftComplex *buffer)
 {
     std::lock_guard<mutex> addguard(datamutex);
     // that has to have a mutex
-    mydata.push(vector<cufftComplex>(buffer, buffer + filsize));
+    mydata.push(vector<cufftComplex>(buffer, buffer + d_in_size));
 }
 
 
@@ -137,7 +153,8 @@ void Pool::minion(int stream)
     cout << "Starting thread associated with stream " << stream << endl << endl;
     cout.flush();
 
-    unsigned int skip = stream * d_in_size / 2;
+    // skip for data with two polarisations
+    unsigned int skip = stream * d_in_size;
 
     while(working) {
         // need to protect if with mutex
@@ -146,20 +163,22 @@ void Pool::minion(int stream)
         unsigned int index{0};       // index will be used to distinguish between time samples
         datamutex.lock();
         if(!mydata.empty()) {
-            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
+            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip * npol);
             mydata.pop();
             datamutex.unlock();
 	        //cout << "Stream " << stream << " got the data\n";
 	        //cout.flush();
-            if(cudaMemcpyAsync(d_in + skip * npol, h_in + skip * npol, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
+            if(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
 		        cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
 		        cout.flush();
 	        }
-            if(cufftExecC2C(myplans[stream], d_in + skip * npol, d_fft + skip * npol, CUFFT_FORWARD) != CUFFT_SUCCESS)
+            if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS)
 		          cout << "Error in FFT execution\n";
-            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip * npol, d_power + skip, d_in_size / npol);
-            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip, d_time_scrunch + skip);
-            addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + skip, d_freq_scrunch + skip);
+            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size, stream);
+            //powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, d_power + skip / npol, d_in_size / npol);
+            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_time_scrunch_size * stream, timeavg);
+            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip / npol, d_time_scrunch + stream * d_time_scrunch_size);
+            addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + stream * d_time_scrunch_size, d_freq_scrunch + stream * );
             mainbuffer.write(d_freq_scrunch + skip, index, d_freq_scrunch_size, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
@@ -225,8 +244,8 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame, obs_tim
             idx2 = chan * 128 + sample + fpga_id * WORDS_PER_PACKET;        // get the position in the buffer
             h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
             h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-            h_pol[idx2 + filsize].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-            h_pol[idx2 + filsize].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+            h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+            h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
         }
     }
 
