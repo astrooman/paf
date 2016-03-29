@@ -93,6 +93,7 @@ class Pool
         queue<vector<cufftComplex>> mydata;
         vector<thread> mythreads;
         unsigned int dedisp_buffno;
+        int pack_per_buf;
         size_t dedisp_buffsize;
         size_t dedisp_totsamples;
     protected:

@@ -37,12 +37,47 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
                                                                 dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
 {
 
+    // PREPARE THE GPU SIDE OF THINGS
     // streamno for filterbank and additional 2 for dedispersion and single pulse search
     avt = min(streamno + 2,thread::hardware_concurrency());
-
     if(config.verbose)
         cout << "Will create " << avt << " CUDA streams\n";
+    // want as many streams and plans as there will be threads
+    // every thread will be associated with its own stream
+    mystreams = new cudaStream_t[avt];
+    myplans = new cufftHandle[avt];
+    int nkernels = 3;
+    nthreads = new unsigned int[nkernels];
+    // nthreads[0] - powerscale() kernel; nthreads[1] - addtime() kernel; nthreads[2] - addchannel() kernel
+    nblocks = new unsigned int[nkernels];
+    // nblocks[0] - powerscale() kernel; nblocks[1] - addtime() kernel; nblocks[2] - addchannel() kernel
+    // very simple approach for now
+    nthreads[0] = fftpoint * timeavg * nchans;
+    nthreads[1] = nchans;
+    nthreads[2] = nchans * (fftpoint - 5) / freqavg;
+    nblocks[0] = 1;
+    nblocks[1] = 1;
+    nblocks[2] = 1;
 
+    // PREPARE THE READ AND FILTERBANK BUFFERS
+    sizes[0] = (int)fftpoint;
+    pack_per_buf = 96;
+    h_pol = new cufftComplex[d_in_size * 2];
+
+    cudaHostAlloc((void**)&h_in, d_in_size * streamno * sizeof(cufftComplex), cudaHostAllocDefault);
+    cudaMalloc((void**)&d_in, d_in_size * streamno * sizeof(cufftComplex));
+    cudaMalloc((void**)&d_fft, d_fft_size * streamno * sizeof(cufftComplex));
+    // not simple malloc as we want to store all the Stoke parameters
+    dv_power.resize(streamno);
+    dv_time_scrunch.resize(streamno);
+    dv_freq_scrunch.resize(streamno);
+    for (int ii = 0; ii < streamno; ii++) {
+        dv_power[ii].resize(d_power_size * stokes);
+        dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
+        dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
+    }
+
+    // PREPARE THE DEDISPERSION
     // gemerate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
@@ -62,29 +97,30 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     //    dedisp.set_killmask(killmask);
     // everything should be ready for dedispersion after this point
 
+    // PREPARE THE SINGLE PULSE SEARCH
     set_search_params(&params, config);
     hd_create_pipeline(&pipeline, params)
     // everything should be ready for single pulse search after this point
 
-    sizes[0] = (int)fftpoint;
-    // want as many streams and plans as there will be threads
-    // every thread will be associated with its own stream
-    h_pol = new cufftComplex[d_in_size];
-    mystreams = new cudaStream_t[avt];
-    myplans = new cufftHandle[avt];
-
-    int nkernels = 3;
-    nthreads = new unsigned int[nkernels];
-    // nthreads[0] - powerscale() kernel; nthreads[1] - addtime() kernel; nthreads[2] - addchannel() kernel
-    nblocks = new unsigned int[nkernels];
-    // nblocks[0] - powerscale() kernel; nblocks[1] - addtime() kernel; nblocks[2] - addchannel() kernel
-    // very simple approach for now
-    nthreads[0] = fftpoint * timeavg * nchans;
-    nthreads[1] = nchans;
-    nthreads[2] = nchans * (fftpoint - 5) / freqavg;
-    nblocks[0] = 1;
-    nblocks[1] = 1;
-    nblocks[2] = 1;
+    // START PROCESSING
+    for (int ii = 0; ii < avt - 2; ii++) {
+            cudaStreamCreate(&mystreams[ii]);
+            cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
+            cufftSetStream(myplans[ii], mystreams[ii]);
+            // need to meet requirements for INVOKE(f, t1, t2, ... tn)
+            // (t1.*f)(t2, ... tn) when f is a pointer to a member function of class T
+            // and t1 is an object of type T or a reference to an object of type T
+            // this is t1 and &Pool::minion is a pointer to a member function of class T
+            // or a reference to an object of a type derived from T (C++14 §20.9.2)
+            mythreads.push_back(thread(&Pool::minion, this, ii));
+        }
+        // dedisp thread
+        cudaStreamCreate(&mystreams[avt-2]);
+        mythreads.push_back(thread(&Pool::dedisp_thread, this, avt-2));
+        // single pulse thread
+        cudaStreamCreate(&mystreams[avt-1]);
+        mythreads.push_back(thread(&Pool::search_thread, this, avt-1));
+    }
 
 //  This is so broken, I am surprised at my own stupidity
 /*    dv_power.resize(stokes);
@@ -103,20 +139,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch);
 */
 
-    dv_power.resize(streamno);
-    dv_time_scrunch.resize(streamno);
-    dv_freq_scrunch.resize(streamno);
-    for (int ii = 0; ii < streamno; ii++) {
-        dv_power[ii].resize(d_power_size * stokes);
-        dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
-        dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
-    }
-
-
-
-    cudaHostAlloc((void**)&h_in, d_in_size * streamno * sizeof(cufftComplex), cudaHostAllocDefault);
-    cudaMalloc((void**)&d_in, d_in_size * streamno * sizeof(cufftComplex));
-    cudaMalloc((void**)&d_fft, d_fft_size * streamno * sizeof(cufftComplex));
+/*
     cudaMalloc((void**)&d_power, d_power_size * streamno * sizeof(float));
     cudaMalloc((void**)&d_time_scrunch, d_time_scrunch_size * streamno * sizeof(float));
     cudaMalloc((void**)&d_freq_scrunch, d_freq_scrunch_size * streamno * sizeof(float));
@@ -124,24 +147,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     cudaMalloc((void**)&d_dedisp, dedisp_totsamples * sizeof(unsigned char));
     cudaMalloc((void**)&d_search, config.gulp * dedisp.get_dm_count() * sizeof(unsigned char));
     // here only launch threads that will take care of filterbank
-    for (int ii = 0; ii < avt - 2; ii++) {
-        cudaStreamCreate(&mystreams[ii]);
-        cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
-        cufftSetStream(myplans[ii], mystreams[ii]);
-        // need to meet requirements for INVOKE(f, t1, t2, ... tn)
-        // (t1.*f)(t2, ... tn) when f is a pointer to a member function of class T
-        // and t1 is an object of type T or a reference to an object of type T
-        // this is t1 and &Pool::minion is a pointer to a member function of class T
-        // or a reference to an object of a type derived from T (C++14 §20.9.2)
-        mythreads.push_back(thread(&Pool::minion, this, ii));
-    }
-    // dedisp thread
-    cudaStreamCreate(&mystreams[avt-2]);
-    mythreads.push_back(thread(&Pool::dedisp_thread, this, avt-2));
-    // single pulse thread
-    cudaStreamCreate(&mystreams[avt-1]);
-    mythreads.push_back(thread(&Pool::search_thread, this, avt-1));
-}
+*/
 
 Pool::~Pool(void)
 {
@@ -235,12 +241,57 @@ void Pool::search_thread(int sstream)
   }
 }
 
-void Pool::get_data(unsigned char* data, int frame, int &previous_frame, obs_time start_time)
+void Pool::get_data(unsigned char* data, int frame, int &previous_frame, int &previous_framet, obs_time start_time)
 {
+    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
-    if((frame - previous_frame) > 1) {
+    int fpga_id = frame % 48;
+    int framet = (int)(frame / 48);         // proper frame number within the current period
+
+    int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+                                                                                // used to skip second polarisation data
+    if (frame > previous_frame) {
+
+        previous_frame = frame;
+
+        #pragma unroll
+        for (int chan = 0; chan < 7; chan++) {
+            for (int sample = 0; sample < 128; sample++) {
+                idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
+                idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
+                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+            }
+        }
+
+    } else if (previous_frame - frame < 10) {
+
+        #pragma unroll
+        for (int chan = 0; chan < 7; chan++) {
+            for (int sample = 0; sample < 128; sample++) {
+                idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
+                idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
+                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+            }
+        }
+
+    }   // don't save if more than 10 frames late
+
+    if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
+        add_data(h_pol);
+    } else if((bufidx) > 10 && (frame > pack_per_buf)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
+        add_data(h_pol + d_in_size);
+    }
+
+    /* if((frame - previous_frame) > 1) {
         // count words only as one word provides one full time sample per polarisation
         pol_begin += (frame - previous_frame) * 7 * 128;
     } else {
@@ -253,18 +304,9 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame, obs_tim
         pol_begin = 0;
     }
 
-    int fpga_id = frame % 48;
-    #pragma unroll
-    for (int chan = 0; chan < 7; chan++) {
-        for (int sample = 0; sample < 128; sample++) {
-            idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-            idx2 = chan * 128 + sample + fpga_id * WORDS_PER_PACKET;        // get the position in the buffer
-            h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-            h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-            h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-            h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-        }
-    }
 
     previous_frame = frame;
+    previous_framet = framet;
+
+    */
 }

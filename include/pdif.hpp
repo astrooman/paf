@@ -77,7 +77,6 @@ void get_header(unsigned char* packet, header_s &head)
     long tsipp = (long)(packet[32] | (packet[33] << 8) | (packet[34] << 16) | (packet[35] << 24)
                     | ((long)packet[36] << 32) | ((long)packet[37] << 40) | ((long)packet[38] << 48) | ((long)packet[39] << 56));
     head.sipp = tsipp;
-
 /*
     cout << "PDIF version " << head.version + 1 << endl;
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;

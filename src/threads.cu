@@ -215,6 +215,7 @@ int main(int argc, char *argv[])
     cufftComplex *polb = new cufftComplex[polsize];
 
     int previous_frame  = -1;
+    int previous_framet = 0;
 
     // proper data receiving
     while(true) {
@@ -227,7 +228,7 @@ int main(int argc, char *argv[])
         get_header(inbuf, head);
         static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
-        my_pool.get_data(inbuf, head.frame_no, previous_frame, start_time);
+        my_pool.get_data(inbuf, head.frame_no, previous_frame, previous_framet, start_time);
     }
 
     // while(chunkno < chunks) {
