@@ -21,8 +21,9 @@ template <class T>
 class Buffer
 {
     private:
-        float *pfilterbank;
-        vector<thrust::device_vector<float>> filterbank;
+        vector<thrust::device_vector<float>> d_filterbank;            // stores different Stoke parameters
+        vector<vector<float> h_filterbank;
+        float **pd_filterbank;                                        // array of raw pointers to Stoke parameters device vectors
         bool ready0, ready1, ready2;
         size_t size;            // total size of the data: #gulps * gulp size + extra samples for dedispersion
         size_t gulp;            // size of the single gulp
@@ -86,9 +87,11 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
     size = size_u;
     stokes = stokes_u;
     filterbank.resize(stokes);
-    for (int ii = 0; ii < stokes; ii++)
+    pfilterbank = new float*[stokes];
+    for (int ii = 0; ii < stokes; ii++) {
         filterbank[ii].resize(size);
-    pfilterbank = thrust::raw_pointer_cast(filterbank.data());
+        pfilterbank[ii] = thrust::raw_pointer_cast(filterbank[ii].data());
+    }
     cudaMalloc((void**)&d_buf, size * stokes * sizeof(T));
     sample_state = new unsigned int[(int)size];
     std::fill(sample_state, sample_state + size, 0);
@@ -109,12 +112,14 @@ template<class T>
 void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream)
 {
     cudaMemcpyAsync(out, d_buf + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream);
+    // + copy the data to the RAM buffer
+
     std::fill(sample_state, sample_state + size, 0);
 }
 
 
 template<class T>
-void Buffer<T>::write(T *d_data, unsigned int index, unsigned int amount, cudaStream_t stream)
+void Buffer<T>::write(T *d_data, unsigned int jump, unsigned int amount, cudaStream_t stream)
 {
     // need to make sure only one stream saves the data to the buffer
     // we will save one data sample at a time, with fixed size
@@ -123,7 +128,12 @@ void Buffer<T>::write(T *d_data, unsigned int index, unsigned int amount, cudaSt
     index = index % size;
     if (end == size)    // reached the end of the buffer
         end = end - gulpno * gulp;    // go back to the start
-    cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+
+    cudaMemcpyAsync(pd_filterbank[0] + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+    cudaMemcpyAsync(pd_filterbank[1] + index * amount, d_data + amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+    cudaMemcpyAsync(pd_filterbank[2] + index * amount, d_data + 2 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+    cudaMemcpyAsync(pd_filterbank[3] + index * amount, d_data + 3 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+    //cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
     sample_state[index] = 1;
     // need to save in two places in the buffer
     if (index >= gulpno * gulp) {

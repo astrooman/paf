@@ -32,9 +32,11 @@ class Pool
         vector<thrust::device_vector<float>> dv_time_scrunch;
         vector<thrust::device_vector<float>> dv_freq_scrunch;
 
+/*
         float *pdv_power;
         float *pdv_time_scrunch;
         float *pdv_freq_scrunch;
+*/
 
         bool working;
         // const to be safe

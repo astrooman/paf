@@ -86,7 +86,8 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     nblocks[1] = 1;
     nblocks[2] = 1;
 
-    dv_power.resize(stokes);
+//  This is so broken, I am surprised at my own stupidity
+/*    dv_power.resize(stokes);
     for (int ii = 0; ii < stokes; ii++)
         dv_power[ii].resize(d_power_size * streamno);
     pdv_power = thrust::raw_pointer_cast(dv_power.data());
@@ -100,6 +101,17 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     for (int ii = 0; ii < stokes)
         dv_freq_scrunch[ii].resize(d_freq_scrunch_size * streamno);
     pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch);
+*/
+
+    dv_power.resize(streamno);
+    dv_time_scrunch.resize(streamno);
+    dv_freq_scrunch.resize(streamno);
+    for (int ii = 0; ii < streamno; ii++) {
+        dv_power[ii].resize(d_power_size * stokes);
+        dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
+        dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
+    }
+
 
 
     cudaHostAlloc((void**)&h_in, d_in_size * streamno * sizeof(cufftComplex), cudaHostAllocDefault);
@@ -156,6 +168,10 @@ void Pool::minion(int stream)
     // skip for data with two polarisations
     unsigned int skip = stream * d_in_size;
 
+    float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
+    float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
+    float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
+
     while(working) {
         // need to protect if with mutex
         // current mutex implementation is a big ugly, but just need a dirty hack
@@ -163,10 +179,10 @@ void Pool::minion(int stream)
         unsigned int index{0};       // index will be used to distinguish between time samples
         datamutex.lock();
         if(!mydata.empty()) {
-            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip * npol);
+            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
             mydata.pop();
             datamutex.unlock();
-	        //cout << "Stream " << stream << " got the data\n";
+            //cout << "Stream " << stream << " got the data\n";
 	        //cout.flush();
             if(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
 		        cout << "HtD copy error on stream " << stream << " " << cudaGetErrorString(cudaGetLastError()) << endl;
@@ -174,12 +190,13 @@ void Pool::minion(int stream)
 	        }
             if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS)
 		          cout << "Error in FFT execution\n";
-            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size, stream);
+            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             //powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, d_power + skip / npol, d_in_size / npol);
-            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_time_scrunch_size * stream, timeavg);
-            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip / npol, d_time_scrunch + stream * d_time_scrunch_size);
-            addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + stream * d_time_scrunch_size, d_freq_scrunch + stream * );
-            mainbuffer.write(d_freq_scrunch + skip, index, d_freq_scrunch_size, mystreams[stream]);
+            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
+            //addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip / npol, d_time_scrunch + stream * d_time_scrunch_size);
+            addchannel<<<nblocks[2]. nthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg)
+            //addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + stream * d_time_scrunch_size, d_freq_scrunch + stream * );
+            mainbuffer.write(pdv_freq_scrunch, unsigned int index, d_freq_scrunch_size, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
 	        datamutex.unlock();
