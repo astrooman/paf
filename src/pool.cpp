@@ -1,6 +1,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <buffer.hpp>
@@ -12,6 +13,7 @@
 #include <pool.hpp>
 
 using std::mutex;
+using std::pair;
 using std::queue;
 using std::thread;
 using std::vector;
@@ -157,11 +159,11 @@ Pool::~Pool(void)
         mythreads[ii].join();
 }
 
-void Pool::add_data(cufftComplex *buffer)
+void Pool::add_data(cufftComplex *buffer, obs_time frame_time)
 {
     std::lock_guard<mutex> addguard(datamutex);
-    // that has to have a mutex
-    mydata.push(vector<cufftComplex>(buffer, buffer + d_in_size));
+    // bit messy
+    mydata.push(pair<vector<cufftComplex>, obs_time>((vector<cufftComplex>(buffer, buffer + d_in_size), frame_time));
 }
 
 
@@ -185,7 +187,8 @@ void Pool::minion(int stream)
         unsigned int index{0};       // index will be used to distinguish between time samples
         datamutex.lock();
         if(!mydata.empty()) {
-            std::copy((mydata.front()).begin(), (mydata.front()).end(), h_in + skip);
+            std::copy((mydata.front()).first.begin(), (mydata.front()).first.end(), h_in + skip);
+            obst_time frame_time = mydata.front().second;
             mydata.pop();
             datamutex.unlock();
             //cout << "Stream " << stream << " got the data\n";
@@ -202,7 +205,7 @@ void Pool::minion(int stream)
             //addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(d_power + skip / npol, d_time_scrunch + stream * d_time_scrunch_size);
             addchannel<<<nblocks[2]. nthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg)
             //addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(d_time_scrunch + stream * d_time_scrunch_size, d_freq_scrunch + stream * );
-            mainbuffer.write(pdv_freq_scrunch, unsigned int index, d_freq_scrunch_size, mystreams[stream]);
+            mainbuffer.write(pdv_freq_scrunch, frame_time, d_freq_scrunch_size, mystreams[stream]);
             cudaThreadSynchronize();
         } else {
 	        datamutex.unlock();
@@ -232,7 +235,7 @@ void Pool::search_thread(int sstream)
         bool ready{true};
         if (ready) {
             // this need access to config - make config a data member
-            cout << "Searching in the gulp " << endl;
+            cout << "Searching in the gulp " << gulps_processed << endl;
             hd_execute(pipeline, d_dedisp, config.gulp, 8, gulps_processed);
             gulps_processed++;
         } else {
@@ -241,7 +244,7 @@ void Pool::search_thread(int sstream)
   }
 }
 
-void Pool::get_data(unsigned char* data, int frame, int &previous_frame, int &previous_framet, obs_time start_time)
+void Pool::get_data(unsigned char* data, int frame, int &highest_framet, int &highest_framet, obs_time start_time)
 {
     // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
     unsigned int idx = 0;
@@ -256,6 +259,7 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame, int &pr
     if (frame > previous_frame) {
 
         previous_frame = frame;
+        highest_framet = (int)(frame / 48);
 
         #pragma unroll
         for (int chan = 0; chan < 7; chan++) {
@@ -286,9 +290,9 @@ void Pool::get_data(unsigned char* data, int frame, int &previous_frame, int &pr
     }   // don't save if more than 10 frames late
 
     if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
-        add_data(h_pol);
+        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_framet - 1});
     } else if((bufidx) > 10 && (frame > pack_per_buf)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
-        add_data(h_pol + d_in_size);
+        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_framet - 1});
     }
 
     /* if((frame - previous_frame) > 1) {

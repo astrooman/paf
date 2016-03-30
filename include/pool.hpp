@@ -90,7 +90,8 @@ class Pool
         unsigned int *nblocks;
         // containers
         // use queue as FIFO needed
-        queue<vector<cufftComplex>> mydata;
+        queue<pair<vector<cufftComplex>, obs_time>> mydata;
+        //queue<vector<cufftComplex>> mydata;
         vector<thread> mythreads;
         unsigned int dedisp_buffno;
         int pack_per_buf;
@@ -103,9 +104,9 @@ class Pool
         ~Pool(void);
         Pool(Pool&) = delete;
         // add deleted copy, move, etc constructors
-        void add_data(cufftComplex *buffer);
+        void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
-        void get_data(unsigned char* data, int frame, int &previous_frame, obs_time start_time);
+        void get_data(unsigned char* data, int frame, int &highest_frame, obs_time start_time);
         void minion(int stream);
         void receive_thread()
         void search_thread(int sstream);
