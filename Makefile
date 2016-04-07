@@ -7,17 +7,22 @@ CC=clang++
 NVCC=/Developer/NVIDIA/CUDA-7.5/bin/nvcc
 DEBUG= -g -G
 
-INCLUDE = -I${INC_DIR} -I${DEDISP_DIR}/include
+INCLUDE = -I${INC_DIR}
 LIBS = -L${DEDISP_DIR}/lib -lstdc++ -ldedisp
 
 CFLAGS = -Wall -Wextra -std=c++11 -stdlib=libc++
 NVCC_FLAG = -gencode=arch=compute_52,code=sm_52 --std=c++11 -lcufft -Xcompiler ${DEBUG}
 
+# CPPOBJECTS = ${OBJ_DIR}/
+
+CUDAOBJECTS = ${OBJ_DIR}/threads.o ${OBJ_DIR}/pool.o ${OBJ_DIR}/kernels.o
+
 all: pafrb
 
-pafrb: ${OBJ_DIR}/threads.o
-	${NVCC} ${NVCC_FLAG} ${INCLUDE} ${LIBS} $< -o ${BIN_DIR}/$@
-${OBJ_DIR}/threads.o: ${SRC_DIR}/threads.cu
+pafrb: ${CUDAOBJECTS}
+	${NVCC} ${NVCC_FLAG} ${INCLUDE} ${LIBS} ${CUDAOBJECTS} -o ${BIN_DIR}/pafrb
+
+${OBJ_DIR}/%.o: ${SRC_DIR}/%.cu
 	${NVCC} -c ${NVCC_FLAG} ${INCLUDE} $< -o $@
 
 .PHONY: clean

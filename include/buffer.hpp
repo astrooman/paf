@@ -106,10 +106,10 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
 }
 
 template<class T>
-void Buffer<T>::dump()
+void Buffer<T>::dump(int idx, header_f header)
 {
-        // idx will be use to tell which
-        save_filterbank(ph_filterbank, gulp + extra, gulp * idx);
+        // idx will be use to tell which part of the buffer to dump
+        save_filterbank(ph_filterbank, gulp + extra, (gulp + extra) * idx, header);
         // need info from the telescope
 }
 

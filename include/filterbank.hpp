@@ -6,7 +6,35 @@
 #include <string>
 #include <sstream>
 
-void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start)
+struct header_f
+{
+
+    std::string raw_file;
+    std::string source_name;
+
+    double az;                      // azimuth angle in deg
+    double dec;                     // source declination
+    double fch1;                    // frequency of the top channel in MHz
+    double foff;                    // channel bandwidth in MHz
+    double ra;                      // source right ascension
+    double rdm;                     // reference DM
+    double tsamp;                   // sampling time in seconds
+    double tstart;                  // observation start time in MJD format
+    double za;                      // zenith angle in deg
+
+    int data_type;                  // data type ID
+    int ibeam;                      // beam number
+    int machine_id;
+    int nbeams;
+    int nbits;
+    int nchans;
+    int nifs;                       // something, something, something, DAAARK SIIIDEEEE
+    int telescope_id;
+
+
+}
+
+void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f header)
 {
     std::ostringstream oss;
     oss.str("");
@@ -28,7 +56,7 @@ void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start)
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "telescope_id");
         outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.tel_id, sizeof(int));
+        outfile.write((char*)&head.telescope_id, sizeof(int));
 
         length = 11;
         outfile.write((char*)&length, sizeof(int));

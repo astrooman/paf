@@ -8,8 +8,9 @@
 #include <config.hpp>
 #include <cuda.h>
 #include <cufft.h>
-#include <dedisp.h>
-#include <DedispPlan.h>
+#include <dedisp/dedisp.h>
+#include <dedisp/DedispPlan.h>
+#include <filterbank.hpp>
 #include <pool.hpp>
 
 using std::mutex;
@@ -19,6 +20,7 @@ using std::thread;
 using std::vector;
 
 #define BYTES_PER_WORD 8
+#define HEADER 64
 #define WORDS_PER_PACKET 896
 
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config) : batchsize(bs),
@@ -220,18 +222,22 @@ void Pool::dedisp_thread(int dstream)
     while(working) {
         int ready = mainbuffer.ready();
         if (ready) {
+
+            header_f headerfil;
+
             mainbuffer.send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
+            mainbuffer.dump((gulps_sent % 2), headerfil);
             gulps_sent++;
             // TO DO: include data member with the number of gulps already dedispersed
-            cout << "Dedispersing gulp " << endl;
-            dedisp.execute(dedisp_totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
+            // cout << "Dedispersing gulp " << endl;
+            // dedisp.execute(dedisp_totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
         } else {
             std::this_thread::yield();
         }
     }
 }
 
-void Pool::search_thread(int sstream)
+/* void Pool::search_thread(int sstream)
 {
     while(working) {
         bool ready{true};
@@ -244,7 +250,7 @@ void Pool::search_thread(int sstream)
             std::this_thread::yield();
         }
   }
-}
+} */
 
 void Pool::get_data(unsigned char* data, int frame, int &highest_framet, int &highest_framet, obs_time start_time)
 {
