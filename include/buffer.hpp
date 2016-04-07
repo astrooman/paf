@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 
+#include <filterbank.hpp>
 #include <thrust/host_vector.h>
 #include <thrsust/device_vector.h>
 
@@ -44,7 +45,6 @@ class Buffer
         Buffer();
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         ~Buffer(void);
-
 
         void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         void dump();
@@ -95,7 +95,7 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
     pd_filterbank = new float*[stokes];
     ph_filterbank = new float*[stokes];
     for (int ii = 0; ii < stokes; ii++) {
-        h_filterbank[ii].resize(totsize);
+        h_filterbank[ii].resize((gulp + extra) * 2);
         ph_filterbank[ii] = thrust::raw_pointer_cast(h_filterbank[ii].data());
         d_filterbank[ii].resize(totsize);
         pd_filterbank[ii] = thrust::raw_pointer_cast(d_filterbank[ii].data());
@@ -108,7 +108,8 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
 template<class T>
 void Buffer<T>::dump()
 {
-        // filterbank dump code here
+        // idx will be use to tell which
+        save_filterbank(ph_filterbank, gulp + extra, gulp * idx);
         // need info from the telescope
 }
 
@@ -125,13 +126,15 @@ int Buffer<T>::ready()
 }
 
 template<class T>
-void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream)
+void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump)
 {
+    host_jump *= (gulp + extra);
+
     cudaMemcpyAsync(out, d_buf + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream);
-    cudaMemcpyAsync(ph_filterbank[0], pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(ph_filterbank[1], pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(ph_filterbank[2], pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(ph_filterbank[3], pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(ph_filterbank[3] + host_jump, pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream);
 
     statemutex.lock();
     std::fill(sample_state, sample_state + totsize, 0);

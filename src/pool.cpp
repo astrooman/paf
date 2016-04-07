@@ -33,6 +33,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
                                                                 d_time_scrunch_size((bs - 5) * bs),
                                                                 d_freq_scrunch_size((bs - 5) * bs / fr),
                                                                 pol_begin(0),
+                                                                gulps_sent(0),
                                                                 gulps_processed(0),
                                                                 working(true),
                                                                 mainbuffer(),
@@ -219,7 +220,8 @@ void Pool::dedisp_thread(int dstream)
     while(working) {
         int ready = mainbuffer.ready();
         if (ready) {
-            mainbuffer.send(d_dedisp, ready, mystreams[dstream]);
+            mainbuffer.send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
+            gulps_sent++;
             // TO DO: include data member with the number of gulps already dedispersed
             cout << "Dedispersing gulp " << endl;
             dedisp.execute(dedisp_totsamples, d_dedisp, 8, d_search, 8, DEDISP_DEVICE_POINTERS);
