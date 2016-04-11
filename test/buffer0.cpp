@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define PORT "25000"
+#define PORT "17003"
 #define DATA 8096
 #define BUFLEN 7232   // 8908 bytes for sample block and 64  bytes for header
 

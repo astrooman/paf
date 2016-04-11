@@ -132,7 +132,7 @@ void get_header(unsigned char* packet, header_s &head)
 //    head.sipp = tsipp;
 
 
-/*    cout << "VDIF version " << head.version << endl;
+    cout << "VDIF version " << head.version << endl;
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;
     cout << "Invalid data: " << head.invalid << endl;
     cout << "Complex data: " << head.comp << endl;
@@ -143,10 +143,12 @@ void get_header(unsigned char* packet, header_s &head)
     cout << "Sample block length: " << head.block_len << endl;
     cout << "Period: " << head.period << endl;
     cout << "Number of channels: " << head.nchans << endl;
+    cout << "Thread ID: " << head.thread << endl;
+    cout << "Group ID: " << head.group << endl;
     cout << "Data frame within the current period: " << head.frame_no << endl;
     cout << "Sample intervals per period: " << head.sipp << endl;
     cout << "Synchronisation word: " << std::hex << head.synch << std::dec << endl;
-*/
+
 }
 
 
