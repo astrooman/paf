@@ -18,11 +18,15 @@ void set_print(int ii)
     cout << "I'm in thread " << ii << endl;
     cout << tryme.var1 << " " << tryme.var2 << endl;
 
+    int stupid = ii * 25;
+
+    cout << stupid << endl;
+
 }
 int main(int argc, char *argv[])
 {
 
-    threads* my_threads = new thread[5];
+    thread* my_threads = new thread[5];
 
     for (int id = 0; id < 5; id++) {
         my_threads[id] = thread(set_print, id);

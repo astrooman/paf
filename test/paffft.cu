@@ -194,7 +194,7 @@ int main(int argc, char* argv[])
     }
 
 	// for now, we are just going to overwrite data over and over again
-	for (unsigned int pack = 0; pack < 65536 * 2; pack+=4) {
+	for (unsigned int pack = 0; pack < 16 * 2; pack+=4) {
 
 		for (int sid = 0; sid < 4; sid++) {
 			start = totalsize * sid;
@@ -204,7 +204,9 @@ int main(int argc, char* argv[])
 		for (int sid = 0; sid < 4; sid++) {
 			start = totalsize * sid;
 			cufftExecC2C(gstreams.plans[sid], d_in + start, d_in + start, CUFFT_FORWARD);
+			cudaProfilerStart();
 			poweradd<<<nblocks, nthreads, 0, gstreams.streams[sid]>>>(d_in + start, d_out + start, totalsize / 2);
+			cudaProfilerStop();
 		}
 
 		for (int sid = 0; sid < 4; sid++) {

@@ -32,9 +32,9 @@ struct header_f
     int telescope_id;
 
 
-}
+};
 
-void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f header)
+inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head)
 {
     std::ostringstream oss;
     oss.str("");
@@ -175,11 +175,11 @@ void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_
 
         size_t to_save = nsamps * head.nchans * head.nbits / 8;
 
-        outfile.write(reinterpret_cast<char*>(odata), to_save);
+        outfile.write(reinterpret_cast<char*>(ph_filterbank[0]), to_save);
 
     }
 
-    outfile.close()
+    outfile.close();
 
 
 }

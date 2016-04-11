@@ -1,6 +1,6 @@
 #include <kernels.cuh>
 
-__global__ void addtime(unsigned char *in, unsigned char *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
+__global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
 {
     // index will tell which 1MHz channel we are taking care or
     // use 1 thread per 1MHz channel
@@ -17,7 +17,7 @@ __global__ void addtime(unsigned char *in, unsigned char *out, unsigned int jump
 
 }
 
-__global__ void addchannel(unsigned char *in, unsigned char *out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc) {
+__global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 

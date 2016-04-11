@@ -10,14 +10,14 @@
 #include <config.hpp>
 #include <cuda.h>
 #include <cufft.h>
-#include <dedisp.h>
-#include <DedispPlan.hpp>
+//#include <dedisp/dedisp.hpp>
+//#include <dedisp/DedispPlan.hpp>
 #include <pdif.hpp>
-#include <pool.hpp>
+#include <pool.cuh>
 
 // Heimdall headers - including might be a bit messy
-#include <params.hpp>
-#include <pipeline.hpp>
+#include <heimdall/params.hpp>
+#include <heimdall/pipeline.hpp>
 
 #include <boost/asio.hpp>
 #include <errno.h>
@@ -68,8 +68,8 @@ int main(int argc, char *argv[])
     double band = 1.185;         // sampling rate for each band in MHz
     double dstart{0.0};
     double dend{4000.0};
-    double foff{0.0};
-    double ftop{0.0};
+    double foff{0.50};
+    double ftop{1400.0};
     double tsamp = ((double)1.0 / (band * 1e+06) * (double)32.0);
     unsigned int filchans{nchans * 27 / freq};
     unsigned int gulp{131072};  // 2^17, equivalent to ~14s for 108us sampling time
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
     unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
-    Pool mypool(batchs, ffts, config.times, config.streamno, config.freq, config);
+    Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
 
     // networking stuff
     // standard approach
@@ -147,6 +147,11 @@ int main(int argc, char *argv[])
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;    // allows to use NULL in getaddrinfo
+    if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+        cout << "getaddrinfo error " << gai_strerror(rv) << endl;
+        exit(EXIT_FAILURE);
+
+    }
 
     // loop through the linked list and try binding to the first possible socket
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -168,15 +173,10 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    if((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
-        cout << "getaddrinfo error " << gai_strerror(rv) << endl;
-        exit(EXIT_FAILURE);
-    }
-
     freeaddrinfo(servinfo);     // no longer need it
 
     // Boost ASIO approach
-
+/*
     boost::asio::io_service io_service;
     udp::endpoint sender_endpoint;
 
@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
     socket.set_option(option);
     socket.set_option(option2);
     socket.bind(udp::endpoint(udp::v4(), config.port));
-
+*/
     cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
 
 
@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
         get_header(inbuf, head);
         static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
-        my_pool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.head.ref_s) * 12000000, highest_frame, previous_framet, start_time);
+        mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 12000000, highest_frame, highest_framet, start_time);
     }
 
     // while(chunkno < chunks) {

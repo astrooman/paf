@@ -7,9 +7,10 @@
 
 #include <filterbank.hpp>
 #include <thrust/host_vector.h>
-#include <thrsust/device_vector.h>
+#include <thrust/device_vector.h>
 
 using std::mutex;
+using std::vector;
 
 struct obs_time {
 
@@ -17,7 +18,7 @@ struct obs_time {
     int start_second;           // seconds from the reference epoch at the start of the observation
     int framet;                 // frame number from the start of the observation
 
-}
+};
 
 template <class T>
 class Buffer
@@ -46,11 +47,11 @@ class Buffer
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
         ~Buffer(void);
 
-        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
-        void dump();
+        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int stokes_u);
+        void dump(int idx, header_f head);
         int ready();
-        void send(unsigned char *out, int idx, cudaStream_t &stream);
-        void write(T *d_data, unsigned int index, unsigned int amount, cudaStream_t stream);
+        void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
+        void write(T *d_data, obs_time frame_time, unsigned int amount, cudaStream_t stream);
         // add deleted copy, move, etc constructors
 };
 
@@ -69,7 +70,7 @@ Buffer<T>::Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u) : 
 {
     start = 0;
     end = 0;
-    cudaMalloc((void**)&d_buf, totsize * sizeof(T));
+    //cudaMalloc((void**)&d_buf, totsize * sizeof(T));
     sample_state = new unsigned int[(int)totsize];
     std::fill(sample_state, sample_state + totsize, 0);
 }
@@ -91,7 +92,8 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
     totsize = size_u;
     stokes = stokes_u;
     gulp_times = new obs_time[gulpno];
-    filterbank.resize(stokes);
+    h_filterbank.resize(stokes);
+    d_filterbank.resize(stokes);
     pd_filterbank = new float*[stokes];
     ph_filterbank = new float*[stokes];
     for (int ii = 0; ii < stokes; ii++) {
@@ -116,7 +118,7 @@ void Buffer<T>::dump(int idx, header_f header)
 template<class T>
 int Buffer<T>::ready()
 {
-    std::lock_quard<mutex> addguard(statemutex);
+    std::lock_guard<mutex> addguard(statemutex);
     // for now check only the last position for the gulp
     for (int ii = 0; ii < gulpno; ii++) {
         if (sample_state[(ii + 1) * gulp + extra - 1] == 1)
@@ -150,7 +152,7 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
     // no need to check that there is enough space available to fit all the data before the end of the buffer
     std::lock_guard<mutex> addguard(buffermutex);
     int index = frame_time.framet % totsize;
-    if((index % gulp) = 0)
+    if((index % gulp) == 0)
         gulp_times[index / gulp] = frame_time;
     if (end == totsize)    // reached the end of the buffer
         end = end - gulpno * gulp;    // go back to the start

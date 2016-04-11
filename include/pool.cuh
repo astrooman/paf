@@ -10,11 +10,12 @@
 #include <config.hpp>
 #include <cuda.h>
 #include <cufft.h>
-#include <DedispPlan.h>
+#include <dedisp/DedispPlan.hpp>
 
 #include <thrust/device_vector.h>
 
 using std::mutex;
+using std::pair;
 using std::queue;
 using std::thread;
 using std::vector;
@@ -23,7 +24,7 @@ class Pool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
-        Buffer<unsigned char> mainbuffer;
+        Buffer<float> mainbuffer;
         DedispPlan dedisp;
         hd_pipeline pipeline;
         hd_params params;
@@ -48,14 +49,16 @@ class Pool
         const unsigned int d_freq_scrunch_size;     // d_time_scrunch_size / # frequency channels to average
         const unsigned int batchsize;               // the number of FFTs to process at one
         const unsigned int fftpoint;                // size of the single FFT
+        const unsigned int nostreams;               // # CUDA streams
         const unsigned int timeavg;                 // # time samples to average
-        const unsigned int streamno;                // # CUDA streams
         const unsigned int freqavg;                 // # frequency channels to average
         const unsigned int npol;                    // number of polarisations in the input data
+        unsigned int nchans;
+        unsigned int stokes;
         // one buffer
         unsigned int filsize;
         // polarisations buffer
-        unsigned char *h_pol;
+        cufftComplex *h_pol;
         int pol_begin;
         // GPU and thread stuff
         // raw voltage buffers
@@ -79,6 +82,7 @@ class Pool
         unsigned char *d_dedisp;        // dedispersion buffer - aggregated frequency scrunched buffer
         unsigned char *d_search;        // single pulse search buffer - dedispersion output
 
+        unsigned int gulps_sent;
         unsigned int gulps_processed;
         int sizes[1];
         int avt;
@@ -106,9 +110,9 @@ class Pool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
-        void get_data(unsigned char* data, int frame, int &highest_frame, obs_time start_time);
+        void get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, obs_time start_time);
         void minion(int stream);
-        void receive_thread()
+        void receive_thread(int stream);
         void search_thread(int sstream);
 };
 

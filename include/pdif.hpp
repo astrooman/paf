@@ -5,7 +5,7 @@
 #include <iostream>
 
 #include <cufft.h>
-#include <pool.hpp>
+#include <pool.cuh>
 
 #define HEADER 64   // header is 64 bytes long
 
