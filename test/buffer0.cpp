@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <cufft.h>
-#include <test_vdif.hpp>
+#include <test_pdif.hpp>
 
 #include <inttypes.h>
 #include <errno.h>

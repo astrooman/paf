@@ -1,5 +1,5 @@
-#ifndef _H_PAFRB_VDIF
-#define _H_PAFRB_VDIF
+#ifndef _H_PAFRB_PDIF
+#define _H_PAFRB_PDIF
 
 #include <fstream>
 #include <iostream>
@@ -14,7 +14,7 @@ using std::cout;
 using std::endl;
 
 struct header_s {
-    // thigs are listed in the order they appear in the vdif header
+    // thigs are listed in the order they appear in the pdif header
     // WORD 0
     int ref_s;      // seconds from reference epoch
     bool comp;      // complex data flag: real = 0, complex = 1
@@ -24,7 +24,7 @@ struct header_s {
     // WORD 2
     int arr_len;    // data array length in units of 8 bytes
     int in_bits;    // bits per sample
-    int version;    // vdif version number; 1 for VDIF2 (doesn't make much sense)
+    int version;    // pdif version number
     // WORD 3
     int station;    // station ID
     int rep;        // sample representation: 0 - offset binary, 1 - 2's compliment, 2 - IEEE floating point
@@ -77,9 +77,8 @@ void get_header(unsigned char* packet, header_s &head)
     long tsipp = (long)(packet[32] | (packet[33] << 8) | (packet[34] << 16) | (packet[35] << 24)
                     | ((long)packet[36] << 32) | ((long)packet[37] << 40) | ((long)packet[38] << 48) | ((long)packet[39] << 56));
     head.sipp = tsipp;
-
 /*
-    cout << "VDIF version " << head.version + 1 << endl;
+    cout << "PDIF version " << head.version + 1 << endl;
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;
     cout << "Period: " << head.period << endl;
     cout << "Number of channels: " << head.nchans + 1 << endl;

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include <cufft.h>
-#include <vdif.hpp>
+#include <pdif.hpp>
 
 #include <errno.h>
 #include <netdb.h>

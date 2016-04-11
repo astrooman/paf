@@ -1,5 +1,5 @@
-#ifndef _H_PAFRB_VDIF
-#define _H_PAFRB_VDIF
+#ifndef _H_PAFRB_PDIF
+#define _H_PAFRB_PDIF
 
 #include <fstream>
 #include <ios>
@@ -21,7 +21,7 @@ using std::cout;
 using std::endl;
 
 struct header_s {
-    // thigs are listed in the order they appear in the vdif header
+    // thigs are listed in the order they appear in the pdif header
     // WORD 0
     int ref_s;      // seconds from reference epoch
     bool comp;      // complex data flag: real = 0, complex = 1
@@ -31,7 +31,7 @@ struct header_s {
     // WORD 2
     int arr_len;    // data array length in units of 8 bytes
     int in_bits;    // bits per sample
-    int version;    // vdif version number; 1 for VDIF2 (doesn't make much sense)
+    int version;    // pdif version number; 1 for PDIF2 (doesn't make much sense)
     // WORD 3
     int station;    // station ID
     int rep;        // sample representation: 0 - offset binary, 1 - 2's compliment, 2 - IEEE floating point
@@ -65,6 +65,7 @@ void get_header(unsigned char* packet, header_s &head)
 
     long long word;
     long long *hword = new long long[8];
+    // stuff arrives in the network order and has to be changed into host order
     for (int ii = 0; ii < 8; ii++) {
 	hword[ii] = be64toh(*(reinterpret_cast<long long*>(packet+ii*8)));
     }
@@ -132,7 +133,11 @@ void get_header(unsigned char* packet, header_s &head)
 //    head.sipp = tsipp;
 
 
+<<<<<<< HEAD:include/test_vdif.hpp
     cout << "VDIF version " << head.version << endl;
+=======
+/*    cout << "PDIF version " << head.version << endl;
+>>>>>>> fa86b3ae9962885985c123bd4ed1714bff7c4ee7:include/test_pdif.hpp
     cout << "Seconds from the reference epoch: " << head.ref_s << endl;
     cout << "Invalid data: " << head.invalid << endl;
     cout << "Complex data: " << head.comp << endl;

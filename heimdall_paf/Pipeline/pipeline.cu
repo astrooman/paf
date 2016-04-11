@@ -101,7 +101,8 @@ hd_error hd_create_pipeline(hd_pipeline* pipeline_, hd_params params) {
 
 }
 // unsigned char *d_dedisp is the pointer to the dedispersed data residing on the device memory
-hd_error hd_execute(hd_pipeline pl, unsigned char *d_dedisp, hd_size nsamps, hd_size nbits)
+hd_error hd_execute(hd_pipeline pl, unsigned char *d_dedisp, hd_size nsamps,
+                        hd_size nbits, unsigned int gulps_processed)
 
 hd_error hd_execute(hd_pipeline pl,
                     const hd_byte* h_filterbank, hd_size nsamps, hd_size nbits,
