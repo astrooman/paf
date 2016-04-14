@@ -37,7 +37,7 @@ using std::string;
 using std::thread;
 using std::vector;
 
-#define PORT "45003"
+#define PORT "17103"
 #define DATA 7168          // 128 time samples, 7 channels per time sample, 64-bit words
 #define BUFLEN 7168 + 64   // 8908 bytes for sample block and 64  bytes for header
 
@@ -217,14 +217,17 @@ int main(int argc, char *argv[])
     int highest_frame  = -1;
     int highest_framet = 0;
 
+    int ihave = 0;
+
     // proper data receiving
-    while(true) {
+    while(ihave < 48) {
 
         numbytes = recvfrom(sfd, inbuf, BUFLEN, 0, (struct sockaddr*)&their_addr, &addrlen);
 
         // assume last packet will have 0 bytes
         if(!numbytes)
             break;
+        ihave++;
         get_header(inbuf, head);
         static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
