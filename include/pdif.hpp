@@ -133,22 +133,23 @@ void get_header(unsigned char* packet, header_s &head)
 //    head.sipp = tsipp;
 
 
-    cout << "PDIF version " << head.version << endl;
-    cout << "Seconds from the reference epoch: " << head.ref_s << endl;
-    cout << "Invalid data: " << head.invalid << endl;
-    cout << "Complex data: " << head.comp << endl;
-    cout << "In bits: " << head.in_bits << endl;
-    cout << "Station: " << std::hex << head.station << std::dec << endl;
-    cout << "Thread number: " << head.thread << endl;
-    cout << "Group number: " << head.group << endl;
-    cout << "Reference epoch: " << head.epoch << endl;
-    cout << "Data array length: " << head.arr_len << endl;
-    cout << "Sample block length: " << head.block_len << endl;
-    cout << "Period: " << head.period << endl;
-    cout << "Number of channels: " << head.nchans << endl;
+//    cout << "PDIF version " << head.version << endl;
+//    cout << "Seconds from the reference epoch: " << head.ref_s << endl;
+//    cout << "Invalid data: " << head.invalid << endl;
+//    cout << "Complex data: " << head.comp << endl;
+//    cout << "In bits: " << head.in_bits << endl;
+//    cout << "Station: " << std::hex << head.station << std::dec << endl;
+//    cout << "Thread number: " << head.thread << endl;
+//    cout << "Group number: " << head.group << endl;
+//    cout << "Reference epoch: " << head.epoch << endl;
+//    cout << "Data array length: " << head.arr_len << endl;
+//    cout << "Sample block length: " << head.block_len << endl;
+//    cout << "Period: " << head.period << endl;
+//    cout << "Number of channels: " << head.nchans << endl;
     cout << "Data frame within the current period: " << head.frame_no << endl;
-    cout << "Sample intervals per period: " << head.sipp << endl;
-    cout << "Synchronisation word: " << std::hex << head.synch << std::dec << endl;
+//    cout << "Sample intervals per period: " << head.sipp << endl;
+//    cout << "Synchronisation word: " << std::hex << head.synch << std::dec << endl;
+    cout.flush();
 }
 
 

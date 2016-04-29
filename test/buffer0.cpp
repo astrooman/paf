@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <cufft.h>
-#include <test_pdif.hpp>
+#include <pdif.hpp>
 
 #include <inttypes.h>
 #include <errno.h>
@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define PORT "25000"
+#define PORT "26666"
 #define DATA 8096
 #define BUFLEN 7232   // 8908 bytes for sample block and 64  bytes for header
 
@@ -106,15 +106,15 @@ int main(int argc, char *argv[])
 
 	frame[BUFLEN] = '\0';
 	cout << "Received " << numbytes << " bytes\n";
-	cout << frame[0] << " " << frame[32] << endl;
+	cout << frame[0] << " " << frame[1] << " " << frame[2] << endl;
         if (!numbytes) { // break on 0 bytes received for now - later process until the last frame reached
             cout << "Not received anything\n";
             break;
         }
 
-        get_header(reinterpret_cast<unsigned char*>(frame), head);
-	cout << head.frame_no << endl;
-	cout << previous_frame << endl;
+        //get_header(reinterpret_cast<unsigned char*>(frame), head);
+	//cout << head.frame_no << endl;
+	//cout << previous_frame << endl;
 //        get_data(reinterpret_cast<unsigned char*>(frame), polafull, polbfull, d_begin, head.frame_no, previous_frame);
 
     }
