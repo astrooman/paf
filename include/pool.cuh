@@ -110,7 +110,7 @@ class Pool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
-        void get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, obs_time start_time);
+        void get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, int &thread, obs_time start_time);
         void minion(int stream);
         void receive_thread(int stream);
         void search_thread(int sstream);

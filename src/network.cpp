@@ -18,7 +18,7 @@ using std::endl;
 
 #define BUFLEN 8092
 
-Network::Network(boost::asio::io_servie &ios) : count(0)
+Network::Network(boost::asio::io_servie &ios, Pool &mypool) : count(0), highest_frame(-1)
 {
     boost::asio::socket_base::reuse_address option1(true);
     boost::asio::socket_base::receive_buffer_size option2(8000);
@@ -32,23 +32,24 @@ Network::Network(boost::asio::io_servie &ios) : count(0)
     cout << "Waiting to receive something..." << endl;
     cout.flush();
 
-    netthread = std::thread(&Network::receive, this);
+    netthread = std::thread(&Network::receive, this, mypool);
     // sleeping makes sure that async_receive_from() was called before ios.run() call
     std::this_thread::sleep_for(std::chrono::seconds(1));   // need to sort this out properly later
     iothread = std::thread([&ios]{ios.run();});
 }
 
-void Network::receive(void)
+void Network::receive(Pool &mypool)
 {
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&Network::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, 17100));
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&Network::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, 17100, mypool));
 }
 
-void Network::receive_handler(const boost::system::error_code &error, size_t bytes_transferred, int rport)
+void Network::receive_handler(const boost::system::error_code &error, size_t bytes_transferred, int rport, Pool &mypool)
 {
+    // there will be so many race conditions here when we call it with multiple threads
     count++;
-    header_s heads;
-    get_header(rec_buffer.data(), heads);
-
+    header_s head;
+    get_header(rec_buffer.data(), head);
+    mypoo.get_data(rec_buffer.data(), head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, head.thread, start_time);
     if (count < 1024)
         receive();
 }

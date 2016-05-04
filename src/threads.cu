@@ -134,6 +134,8 @@ int main(int argc, char *argv[])
     unsigned int ffts{32};
     Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
 
+    boost::asio::io_service ios;
+    Network incoming(ios, mypool);
     // networking stuff
     // standard approach
     int sfd, numbytes, rv;
@@ -231,7 +233,8 @@ int main(int argc, char *argv[])
         get_header(inbuf, head);
         static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
-        mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 12000000, highest_frame, highest_framet, start_time);
+        // there are 250,000 frames for a period of 27 seconds
+        mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, highest_framet, head.thread, start_time);
     }
 
     // while(chunkno < chunks) {
