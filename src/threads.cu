@@ -63,6 +63,7 @@ int main(int argc, char *argv[])
     unsigned int freq{16};       // no frequency averaging by default, at least 8, possibly 16
     // might be 336 / 168 or 384 / 192
     unsigned int nchans{336};   // number of 1MHz channels - might change
+    unsigned int ngpus{3};      // number of GPUs
 
     // dedispersion parameters
     double band = 1.185;         // sampling rate for each band in MHz
@@ -103,6 +104,9 @@ int main(int argc, char *argv[])
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
                 config.freq = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) = "-n") {      // the number of GPUs to use
+                ii++;
+                config.ngpus = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
                 config.test = true;
             } else if (std::string(argv[ii]) == "-v") {
@@ -114,10 +118,11 @@ int main(int argc, char *argv[])
                         << "\t -b - the number of beams to process\n"
                         << "\t -t - the number of time samples to average\n"
                         << "\t -f - the number of frequency channels to average\n"
-                        << "\t -s - the number of CUDA streams to use\n"
+                        << "\t -n - the number of GPUs to use\n"
+                        << "\t -s - the number of CUDA streams per GPU to use\n"
                         << "\t -b - use the test buffer\n"
-                        << "\t -h - print out this message\n"
-                        << "\t --config - configuration file\n\n";
+                        << "\t --config - configuration file\n";
+                        << "\t -h - print out this message\n\n"
                 exit(EXIT_SUCCESS);
             }
         }
@@ -126,13 +131,20 @@ int main(int argc, char *argv[])
     // should not take more than 5 seconds
     cout << "Starting up. This may take few seconds..." << endl;
 
+    int devcount{0};
+    cudaGetDeviceCount(&devcount);
+    if (config.ngpus > devcount) {
+        cout << "You can't use more GPUs than you have available!" << endl;
+        config.ngpus = devcount;
+    }
+
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible
     unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
-    Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
+    Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config, ngpus);
 
     boost::asio::io_service ios;
     Network incoming(ios, mypool);

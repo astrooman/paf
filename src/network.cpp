@@ -49,7 +49,7 @@ void Network::receive_handler(const boost::system::error_code &error, size_t byt
     count++;
     header_s head;
     get_header(rec_buffer.data(), head);
-    mypoo.get_data(rec_buffer.data(), head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, head.thread, start_time);
+    mypool.get_data(rec_buffer.data(), head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, head.thread, start_time);
     if (count < 1024)
         receive();
 }
