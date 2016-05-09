@@ -25,6 +25,7 @@ struct config_s {
     unsigned int freq;          // number of frequency channels to average
     unsigned int gulp;
     unsigned int nchans;        // number of 1MHz channels
+    unsigned int ngpus;         // number of GPUs to use
     unsigned int port;
     unsigned int stokes;        // number of Stokes parameters to output
     unsigned int streamno;      // number of CUDA streams for filterbanking
@@ -47,7 +48,7 @@ inline void default_config(config_s &config) {
     config.freq = 8;
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 336;
-    config.port = 17003;
+    config.ngpus = 3;
     config.stokes = 4;
     config.streamno = 4;
     config.times = 4;

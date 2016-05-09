@@ -65,6 +65,7 @@ int main(int argc, char *argv[])
     unsigned int freq{16};       // no frequency averaging by default, at least 8, possibly 16
     // might be 336 / 168 or 384 / 192
     unsigned int nchans{336};   // number of 1MHz channels - might change
+    unsigned int ngpus{3};      // number of GPUs
 
     // dedispersion parameters
     double band = 1.185;         // sampling rate for each band in MHz
@@ -105,6 +106,9 @@ int main(int argc, char *argv[])
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
                 config.freq = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) = "-n") {      // the number of GPUs to use
+                ii++;
+                config.ngpus = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
                 config.test = true;
             } else if (std::string(argv[ii]) == "-v") {
@@ -116,10 +120,11 @@ int main(int argc, char *argv[])
                         << "\t -b - the number of beams to process\n"
                         << "\t -t - the number of time samples to average\n"
                         << "\t -f - the number of frequency channels to average\n"
-                        << "\t -s - the number of CUDA streams to use\n"
+                        << "\t -n - the number of GPUs to use\n"
+                        << "\t -s - the number of CUDA streams per GPU to use\n"
                         << "\t -b - use the test buffer\n"
-                        << "\t -h - print out this message\n"
-                        << "\t --config - configuration file\n\n";
+                        << "\t --config - configuration file\n";
+                        << "\t -h - print out this message\n\n"
                 exit(EXIT_SUCCESS);
             }
         }
@@ -127,6 +132,13 @@ int main(int argc, char *argv[])
     }
     // should not take more than 5 seconds
     cout << "Starting up. This may take few seconds..." << endl;
+
+    int devcount{0};
+    cudaGetDeviceCount(&devcount);
+    if (config.ngpus > devcount) {
+        cout << "You can't use more GPUs than you have available!" << endl;
+        config.ngpus = devcount;
+    }
 
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
@@ -235,7 +247,8 @@ int main(int argc, char *argv[])
         get_header(inbuf, head);
         static obs_time start_time{head.epoch, head.ref_s};
         // adding the data is already included in the get_data() method
-        mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 12000000, highest_frame, highest_framet, start_time);
+        // there are 250,000 frames for a period of 27 seconds
+        mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, highest_framet, head.thread, start_time);
     }
 
     // while(chunkno < chunks) {

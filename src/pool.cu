@@ -71,6 +71,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
 
     // PREPARE THE READ AND FILTERBANK BUFFERS
     sizes[0] = (int)fftpoint;
+    // this buffertakes two full bandwidths, 48 packets per bandwidth
     pack_per_buf = 96;
     h_pol = new cufftComplex[d_in_size * 2];
 
@@ -258,22 +259,25 @@ void Pool::dedisp_thread(int dstream)
   }
 } */
 
-void Pool::get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, obs_time start_time)
+void Pool::get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, int thread, obs_time start_time)
 {
     // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
-    int fpga_id = frame % 48;
-    int framet = (int)(frame / 48);         // proper frame number within the current period
+    int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
 
-    int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+    //int fpga_id = frame % 48;
+    //int framet = (int)(frame / 48);         // proper frame number within the current period
+
+    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
+    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
     int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
                                                                                 // used to skip second polarisation data
     if (frame > highest_frame) {
 
         highest_frame = frame;
-        highest_framet = (int)(frame / 48);
+        //highest_framet = (int)(frame / 48)
 
         #pragma unroll
         for (int chan = 0; chan < 7; chan++) {
@@ -304,9 +308,9 @@ void Pool::get_data(unsigned char* data, int frame, int &highest_frame, int &hig
     }   // don't save if more than 10 frames late
 
     if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
-        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_framet - 1});
-    } else if((bufidx) > 10 && (frame > pack_per_buf)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
-        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_framet - 1});
+        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+    } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
+        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
     }
 
     /* if((frame - previous_frame) > 1) {
