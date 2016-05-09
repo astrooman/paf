@@ -4,16 +4,17 @@
 #include <utility>
 #include <vector>
 
-#include "buffer.hpp"
-#include "config.hpp"
 #include <cufft.h>
 #include <cuda.h>
+
+#include "buffer.hpp"
+#include "config.hpp"
 #include "dedisp/dedisp.hpp"
 #include "dedisp/DedispPlan.hpp"
 #include "filterbank.hpp"
 #include "heimdall/pipeline.hpp"
 #include "kernels.cuh"
-#include "pool.cuh"
+#include "pool_multi.cuh"
 
 using std::cout;
 using std::endl;
@@ -21,11 +22,30 @@ using std::mutex;
 using std::pair;
 using std::queue;
 using std::thread;
+using unique_ptr;
 using std::vector;
 
 #define BYTES_PER_WORD 8
 #define HEADER 64
 #define WORDS_PER_PACKET 896
+
+Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
+{
+     for (int ii = 0; ii < ngpus; ii++) {
+         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii)));
+     }
+
+     for (int ii = 0; ii < ngpus; ii++) {
+         threadvector.push_back(thread(&GPUpool, std::move(gpuvector[ii])));
+     }
+}
+
+Oberpool::~Oberpool(void)
+{
+    for (int ii = 0; ii < ngpus; ii++) {
+        threadvector[ii].join();
+    }
+}
 
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config) : batchsize(bs),
                                                                 fftpoint(fs),

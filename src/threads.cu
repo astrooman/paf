@@ -6,14 +6,16 @@
 #include <thread>
 #include <vector>
 
-#include <buffer.hpp>
-#include <config.hpp>
 #include <cuda.h>
 #include <cufft.h>
+
+#include "buffer.hpp"
+#include "config.hpp"
 //#include <dedisp/dedisp.hpp>
 //#include <dedisp/DedispPlan.hpp>
-#include <pdif.hpp>
-#include <pool.cuh>
+#include "network.hpp"
+#include "pdif.hpp"
+#include "pool_multi.cuh"
 
 // Heimdall headers - including might be a bit messy
 #include <heimdall/params.hpp>
@@ -132,7 +134,14 @@ int main(int argc, char *argv[])
     unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
+
+    Oberpool mypool()
+
     Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
+
+    boost::asio::io_service ios;
+    Network incoming(ios);
+    incoming.set_receive();
 
     // networking stuff
     // standard approach
@@ -199,11 +208,6 @@ int main(int argc, char *argv[])
                                                         // data required to performed filterbanking
                                                         // with averaging for all necessary beams and channels
     // unsigned int packetel = mempacket / sizeof(cufftComplex);
-
-
-
-
-    cout << "Waiting to receive from the server...\n";
 
     int chunkno{0};
 

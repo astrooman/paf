@@ -46,7 +46,7 @@ inline void default_config(config_s &config) {
     config.chunks = 32;
     config.freq = 8;
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
-    config.nchans = 192;
+    config.nchans = 336;
     config.port = 17003;
     config.stokes = 4;
     config.streamno = 4;

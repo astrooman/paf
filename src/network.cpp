@@ -47,6 +47,8 @@ void Network::receive_handler(const boost::system::error_code &error, size_t byt
 {
     count++;
     header_s heads;
+    // possible race conditions here
+    static obs_time start_time{head.epoch, head.ref_s};
     get_header(rec_buffer.data(), heads);
 
     if (count < 1024)
