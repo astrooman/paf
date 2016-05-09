@@ -4,7 +4,6 @@
 #include <utility>
 #include <vector>
 
-<<<<<<< HEAD
 #include <cufft.h>
 #include <cuda.h>
 
@@ -33,7 +32,7 @@ using std::vector;
 Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
 {
      for (int ii = 0; ii < ngpus; ii++) {
-         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii)));
+         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(config)));
      }
 
      for (int ii = 0; ii < ngpus; ii++) {
@@ -46,6 +45,15 @@ Oberpool::~Oberpool(void)
     for (int ii = 0; ii < ngpus; ii++) {
         threadvector[ii].join();
     }
+}
+
+GPUpool::GPUpool(config_s &config) : batchsize(config.batch),
+                                        fftpoint(config.fftsize),
+                                        timeavg(config.timesavg),
+                                        freqavg(config.freqavg),
+                                        nostreams(config.streamno),
+{
+
 }
 
 Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config) : batchsize(bs),

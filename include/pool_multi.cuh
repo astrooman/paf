@@ -38,11 +38,13 @@ class Oberpool
         Oberpool(int ng);
         Oberpool(const Oberpool &inpool) = delete;
         Oberpool& operator=(const Oberpool &inpool) = delete;
+        Oberpool(Oberpool &&inpool) = delete;
+        Oberpool& operator=(Oberpool &&inpool) = delete;
         ~Oberpool(void);
 
 }
 
-class Pool
+class GPUpool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
@@ -126,9 +128,13 @@ class Pool
     protected:
 
     public:
-        Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config);
-        ~Pool(void);
-        Pool(Pool&) = delete;
+        GPUpool(void) = delete;
+        GPUpool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config);
+        ~GPUpool(void);
+        GPUpool(const GPUpool &inpool) = delete;
+        GPUpool& operator=(const GPUpool &inpool) = delete;
+        GPUpool(GPUpool &&inpool) = delete;
+        GPUpool& operator=(GPUpool &&inpool) = delete;
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);

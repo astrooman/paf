@@ -102,10 +102,10 @@ int main(int argc, char *argv[])
                 config.beamno = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-t") {     // the number of time sample to average
                 ii++;
-                config.times = atoi(argv[ii]);
+                config.timesavg = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
-                config.freq = atoi(argv[ii]);
+                config.freqavg = atoi(argv[ii]);
             } else if (std::string(argv[ii]) = "-n") {      // the number of GPUs to use
                 ii++;
                 config.ngpus = atoi(argv[ii]);

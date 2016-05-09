@@ -45,14 +45,16 @@ inline void default_config(config_s &config) {
 
     config.beamno = 1;
     config.chunks = 32;
-    config.freq = 8;
+    config.fftsize = 32;
+    config.freqavg = 8;
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 336;
     config.ngpus = 3;
     config.stokes = 4;
     config.streamno = 4;
-    config.times = 4;
+    config.timesavg = 4;
 
+    config.batch = config.nchans;
     config.filchans = config.nchans * 27 / config.freq;
     config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.times;
 
