@@ -14,7 +14,7 @@
 #include "config.hpp"
 #include "dedisp/DedispPlan.hpp"
 
-
+using boost::asio::ip::udp;
 using std::mutex;
 using std::pair;
 using std::queue;
@@ -48,7 +48,7 @@ class GPUpool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
-        Buffer<float> mainbuffer;
+        Buffer<float> dedispbuffer;
         DedispPlan dedisp;
         hd_pipeline pipeline;
         hd_params params;
@@ -83,6 +83,7 @@ class GPUpool
         unsigned int filsize;
         // polarisations buffer
         cufftComplex *h_pol;
+        int gpuid;
         int pol_begin;
         // GPU and thread stuff
         // raw voltage buffers
@@ -110,6 +111,7 @@ class GPUpool
         unsigned int gulps_processed;
         int sizes[1];
         int avt;
+        int highest_frame;
         cudaStream_t *mystreams;
         cufftHandle *myplans;
         mutex datamutex;
@@ -138,8 +140,9 @@ class GPUpool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
-        void get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, obs_time start_time);
+        void get_data(unsigned char* data, int frame, obs_time start_time);
         void minion(int stream);
+        void receive_handler(udp::endpoint endpoint);
         void receive_thread(int stream);
         void search_thread(int sstream);
 };

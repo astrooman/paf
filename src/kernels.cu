@@ -1,5 +1,5 @@
 #include <kernels.cuh>
-
+// jump take care of all Stoke paramters
 __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
 {
     // index will tell which 1MHz channel we are taking care or

@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
 
     Oberpool mypool(config);
 
-    Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
+    /*Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);
 
     boost::asio::io_service ios;
     Network incoming(ios);
@@ -196,18 +196,6 @@ int main(int argc, char *argv[])
 
     freeaddrinfo(servinfo);     // no longer need it
 
-    // Boost ASIO approach
-/*
-    boost::asio::io_service io_service;
-    udp::endpoint sender_endpoint;
-
-    udp::socket socket(io_service, udp::v4());
-    boost::asio::socket_base::reuse_address option(true);
-    boost::asio::socket_base::receive_buffer_size option2(9000);
-    socket.set_option(option);
-    socket.set_option(option2);
-    socket.bind(udp::endpoint(udp::v4(), config.port));
-*/
     cufftComplex *chunkbuf = new cufftComplex[batchs * ffts * times];
 
 
@@ -250,7 +238,7 @@ int main(int argc, char *argv[])
         // there are 250,000 frames for a period of 27 seconds
         mypool.get_data(inbuf, head.frame_no + (head.ref_s - start_time.start_second) * 250000, highest_frame, highest_framet, head.thread, start_time);
     }
-
+    */
     // while(chunkno < chunks) {
     //     // will only receive 6 or 7 channels in one packet
     //     // will have to stitch them together

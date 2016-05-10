@@ -103,7 +103,6 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
     dedisp_totsamples = (size_t)config.gulp + dedisp.get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / config.gulp + 1;
     dedisp_buffsize = dedisp_buffno * config.gulp + dedisp.get_max_delay();
-    int stokes = 4; // make it a parameter later
     mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), config.gulp, dedisp_buffsize, stokes);
     //if (false)       // switch off for now
     //    dedisp.set_killmask(killmask);
@@ -132,7 +131,7 @@ Pool::Pool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, u
         // single pulse thread
         //cudaStreamCreate(&mystreams[avt-1]);
         //mythreads.push_back(thread(&Pool::search_thread, this, avt-1));
-    }
+}
 
 //  This is so broken, I am surprised at my own stupidity
 /*    dv_power.resize(stokes);
