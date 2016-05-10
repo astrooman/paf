@@ -114,8 +114,8 @@ class GPUpool
         cufftHandle *myplans;
         mutex datamutex;
         mutex workmutex;
-        unsigned int *nthreads;
-        unsigned int *nblocks;
+        unsigned int *CUDAthreads;
+        unsigned int *CUDAblocks;
         // containers
         // use queue as FIFO needed
         queue<pair<vector<cufftComplex>, obs_time>> mydata;

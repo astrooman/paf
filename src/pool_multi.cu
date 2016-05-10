@@ -52,7 +52,57 @@ GPUpool::GPUpool(config_s &config) : batchsize(config.batch),
                                         timeavg(config.timesavg),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
+                                        npol(np),
+                                        d_in_size(bs * fs * ts * np),
+                                        d_fft_size(bs * fs * ts * np),
+                                        d_power_size(bs * fs * ts),
+                                        d_time_scrunch_size((fs - 5) * bs),
+                                        d_freq_scrunch_size((fs - 5) * bs / fr),
+                                        gulps_sent(0),
+                                        gulps_processed(0),
+                                        working(true),
+                                        mainbuffer(),
+                                        // frequencies will have to be configured properly
+                                        dedisp(config.filchans, config.tsamo, config.ftop, config.foff)
+
 {
+    avt = min(nostreams + 2, thread::hadrware_concurrency());
+
+    if (config.verbose)
+        cout << "Will create " << avt << " CUDA streams\n";
+
+    // every thread will be associated with its own CUDA streams
+    mystreams = new cudaStream_t[avt];
+    // each stream will have its own cuFFT plan
+    myplans = new cufftHandle[avt];
+
+    int nkernels = 3;
+    // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
+    CUDAthreads = new unsigned int[nkernels];
+    CUDAblocks = new unsigned int[nkernels];
+    // make a private const data memmber and put in the initializer list!!
+    nchans = config.nchans;
+    nthreads[0] = fftpoint * timeavg * nchans;
+    nthreads[1] = nchans;
+    nthreads[2] = nchans * (fftpoint - 5) / freqavg;
+    nblocks[0] = 1;
+    nblocks[1] = 1;
+    nblocks[2] = 1;
+
+    // PREPARE THE READ AND FILTERBANK BUFFERS
+    // it has to be an array and I can't do anything about that
+    sizes[0] = (int)fftpoint;
+    // this buffer takes two full bandwidths, 48 packets per bandwidth
+    pack_per_buf = 96;
+    h_pol = new cufftComplex[d_in_size * 2];
+
+    cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault);
+    cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex));
+    cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex));
+    // need to store all 4 Stoke parameters
+    dv_power.resize(nostreams);
+    dv_time_scrunch.resize(nostreams);
+    dv_freq_scrunch.resize(nostreams);
 
 }
 
