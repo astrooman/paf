@@ -8,6 +8,7 @@
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
 #include <cufft.h>
+#include <cufftXt.h>
 #include <cuda.h>
 
 #include "buffer.hpp"
@@ -104,9 +105,9 @@ void GPUpool::execute(void)
     ios = iop;
 
     // every thread will be associated with its own CUDA streams
-    mystreams = new cudaStream_t[avt];
+    mystreams = new cudaStream_t[nostreams];
     // each stream will have its own cuFFT plan
-    myplans = new cufftHandle[avt];
+    myplans = new cufftHandle[nostreams];
 
     int nkernels = 3;
     // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
@@ -132,8 +133,14 @@ void GPUpool::execute(void)
     pack_per_buf = 96;
     h_pol = new cufftComplex[d_in_size * 2];
 
-    cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault);
-    cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex));
+    //if((cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault)) != cudaSuccess) {
+    //    cout << "Host alloc error!" << endl;
+    //    cout << cudaGetErrorString(cudaGetLastError()) << endl;
+    //}
+    cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocWriteCombined | cudaHostAllocPortable | cudaHostAllocMapped);
+    cudaHostGetDevicePointer(&d_in, h_in, 0);
+
+    //cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex));
     cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex));
     // need to store all 4 Stoke parameters
     dv_power.resize(nostreams);
@@ -168,13 +175,28 @@ void GPUpool::execute(void)
     //hd_create_pipeline(&pilenine, params);
     // everything should be ready for single pulse search after this point
 
+    cout << cudaGetErrorString(cudaGetLastError());
+
     // STAGE: start processing
     // FFT threads
     for (int ii = 0; ii < nostreams; ii++) {
+            cout << "Taking care of minion number " << ii << endl;
+            cout.flush();
             cudaStreamCreate(&mystreams[ii]);
+            cout << "Created stream " << ii << endl;
+            cout.flush();
+            int whichgpus[1];
+            whichgpus[0] = ii;
+            //cufftXtSetGPUs(myplans[ii], 1, whichgpus);
             cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
+            cout << "Created plan" << ii << endl;
+            cout.flush();
             cufftSetStream(myplans[ii], mystreams[ii]);
+            cout << "Set the stream" << ii << endl;
+            cout.flush();
             mythreads.push_back(thread(&GPUpool::minion, this, ii));
+            cout << "Started the thread" << ii << endl;
+            cout.flush();
     }
     // dedispersion thread
     cudaStreamCreate(&mystreams[avt - 2]);
@@ -243,12 +265,16 @@ void GPUpool::minion(int stream)
             obs_time framte_time = mydata.front().second;
             mydata.pop();
             datamutex.unlock();
-
-            if(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
-                // TODO: exception thrown
-            }
+            cout << "Grabbed the data" << endl;
+            cout.flush();
+            //if(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
+            //    cout << "Problems with HtD copy" << endl;
+            //    cout.flush();
+            //}
             if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS) {
-                // TODO: exception thrown
+                cout << "Problems with FFT exec" << endl;
+                cout.flush();      
+                 // TODO: exception thrown
             }
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
@@ -370,11 +396,11 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 
     }
 
-    if ((frame % 2) = 0) {                     // send the first one
+    if ((frame % 2) == 0) {                     // send the first one
         add_data(h_pol, {start_time.start_epoch, start_time.start_second, frame});
         cout << "Sent the first buffer" << endl;
         cout.flush();
-    } else if((frame % 2) = 1) {        // send the second one
+    } else if((frame % 2) == 1) {        // send the second one
         add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, frame});
         cout << "Sent the second buffer" << endl;
         cout.flush();
