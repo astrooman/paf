@@ -79,7 +79,7 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         working(true),
                                         mainbuffer(),
                                         // frequencies will have to be configured properly
-                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
+                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
 
 {
     avt = min(nostreams + 2, thread::hardware_concurrency());
@@ -273,7 +273,7 @@ void GPUpool::minion(int stream)
             //}
             if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS) {
                 cout << "Problems with FFT exec" << endl;
-                cout.flush();      
+                cout.flush();
                  // TODO: exception thrown
             }
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
