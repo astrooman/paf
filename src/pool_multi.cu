@@ -4,6 +4,9 @@
 #include <utility>
 #include <vector>
 
+#include <boost/array.hpp>
+#include <boost/asio.hpp>
+#include <boost/bind.hpp>
 #include <cufft.h>
 #include <cuda.h>
 
@@ -14,6 +17,7 @@
 #include "filterbank.hpp"
 #include "heimdall/pipeline.hpp"
 #include "kernels.cuh"
+#include "pdif.hpp"
 #include "pool_multi.cuh"
 
 using boost::asio::ip::udp;
@@ -29,6 +33,7 @@ using std::vector;
 #define BYTES_PER_WORD 8
 #define HEADER 64
 #define WORDS_PER_PACKET 896
+#define BUFLEN 7168 + 64
 
 mutex cout_guard;
 
@@ -40,11 +45,11 @@ Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
 {
 
      for (int ii = 0; ii < ngpus; ii++) {
-         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(config)));
+         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii, config)));
      }
 
      for (int ii = 0; ii < ngpus; ii++) {
-         threadvector.push_back(thread(&GPUpool, std::move(gpuvector[ii])));
+         threadvector.push_back(thread(&GPUpool::execute, std::move(gpuvector[ii])));
      }
 }
 
@@ -55,36 +60,41 @@ Oberpool::~Oberpool(void)
     }
 }
 
-GPUpool::GPUpool(int id, config_s &config) : gpuid(id),
+GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         highest_frame(-1),
                                         batchsize(config.batch),
                                         fftpoint(config.fftsize),
                                         timeavg(config.timesavg),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
-                                        npol(np),
-                                        d_in_size(bs * fs * ts * np),
-                                        d_fft_size(bs * fs * ts * np),
-                                        d_power_size(bs * fs * ts),
-                                        d_time_scrunch_size((fs - 5) * bs),
-                                        d_freq_scrunch_size((fs - 5) * bs / fr),
+                                        npol(config.npol),
+                                        d_in_size(config.batch * config.fftsize * config.timesavg * config.npol),
+                                        d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol),
+                                        d_power_size(config.batch * config.fftsize * config.timesavg),
+                                        d_time_scrunch_size((config.fftsize - 5) * config.batch),
+                                        d_freq_scrunch_size((config.fftsize - 5) * config.batch / config.freqavg),
                                         gulps_sent(0),
                                         gulps_processed(0),
                                         working(true),
-                                        dedispbuffer(),
+                                        mainbuffer(),
                                         // frequencies will have to be configured properly
-                                        dedisp(config.filchans, config.tsamo, config.ftop, config.foff)
+                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff)
 
 {
-    avt = min(nostreams + 2, thread::hadrware_concurrency());
+    avt = min(nostreams + 2, thread::hardware_concurrency());
+
+    _config = config;
 
     if (config.verbose) {
         cout_guard.lock();
         cout << "Starting GPU pool " << gpuid << endl;
         cout_guard.unlock();
     }
+}
 
-    cudaSetDevice(gpuid)
+void GPUpool::execute(void)
+{
+    cudaSetDevice(gpuid);
 
     // every thread will be associated with its own CUDA streams
     mystreams = new cudaStream_t[avt];
@@ -96,13 +106,14 @@ GPUpool::GPUpool(int id, config_s &config) : gpuid(id),
     CUDAthreads = new unsigned int[nkernels];
     CUDAblocks = new unsigned int[nkernels];
     // TODO: make a private const data memmber and put in the initializer list!!
-    nchans = config.nchans;
-    nthreads[0] = fftpoint * timeavg * nchans;
-    nthreads[1] = nchans;
-    nthreads[2] = nchans * (fftpoint - 5) / freqavg;
-    nblocks[0] = 1;
-    nblocks[1] = 1;
-    nblocks[2] = 1;
+    nchans = _config.nchans;
+
+    CUDAthreads[0] = fftpoint * timeavg * nchans;
+    CUDAthreads[1] = nchans;
+    CUDAthreads[2] = nchans * (fftpoint - 5) / freqavg;
+    CUDAblocks[0] = 1;
+    CUDAblocks[1] = 1;
+    CUDAblocks[2] = 1;
 
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     // it has to be an array and I can't do anything about that
@@ -119,8 +130,8 @@ GPUpool::GPUpool(int id, config_s &config) : gpuid(id),
     dv_time_scrunch.resize(nostreams);
     dv_freq_scrunch.resize(nostreams);
     // TODO: make a private const data memmber and put in the initializer list!!
-    stokes = config.stokes;
-    for (int ii = 0; ii < nostream; ii++) {
+    stokes = _config.stokes;
+    for (int ii = 0; ii < nostreams; ii++) {
         dv_power[ii].resize(d_power_size * stokes);
         dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
         dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
@@ -130,19 +141,19 @@ GPUpool::GPUpool(int id, config_s &config) : gpuid(id),
     // gemerate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-    dedisp.generate_dm_list(config.dstart, config.dend, 64.0f, 1.10f);
+    dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
 
-    dedisp_totsamples = (size_t)config.gulp + dedisp.get_max_delay();
-    dedisp_buffno = (dedisp_totsamples - 1) / config.gulp + 1;
-    dedisp_buffsize = deidps_buffno * config.gulp + dedisp.get_max_delay();
-    //can this method be simplified?
-    dedispbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), config.gulp, dedisp_buffsize, stokes);
+    dedisp_totsamples = (size_t)_config.gulp + dedisp.get_max_delay();
+    dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
+    dedisp_buffsize = dedisp_buffno * _config.gulp + dedisp.get_max_delay();
+    // can this method be simplified?
+    mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), _config.gulp, dedisp_buffsize, stokes);
     //if(config.killmask)
     //    dedisp.set_killmask();
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
-    set_search_params(params, config);
+    set_search_params(params, _config);
     //commented out for the filterbank dump mode
     //hd_create_pipeline(&pilenine, params);
     // everything should be ready for single pulse search after this point
@@ -159,25 +170,25 @@ GPUpool::GPUpool(int id, config_s &config) : gpuid(id),
     cudaStreamCreate(&mystreams[avt - 2]);
     mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
     // single pulse thread
-    cudaStreamCreate(&mystreams[avt - 1]);
-    mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
+    //cudaStreamCreate(&mystreams[avt - 1]);
+    //mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
 
     // STAGE: networking
     // crude approach for now
     boost::asio::io_service ios;
-    vector<udp::endpoint> sender_endpoints;
-    vector<udp::socket> sockets;
+    //vector<udp::endpoint> sender_endpoints;
+    //vector<udp::socket> sockets;
     boost::asio::socket_base::reuse_address option(true);
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(ios, udp::endpoint(boost::asio::ip::adress::from_string("10.17.0.2"), 17000 + ii)));
+        sockets.push_back(udp::socket(ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17000 + ii)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
     }
 
-    mythreads.push_back(thread(&GPU_pool::receive_thread, this));
-    std::this_thrad::sleep_for(std::chrono::seconds(1));
+    mythreads.push_back(thread(&GPUpool::receive_thread, this));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     mythreads.push_back(thread([&ios]{ios.run();}));
 
 }
@@ -204,7 +215,7 @@ void GPUpool::minion(int stream)
         datamutex.lock();
         if(!mydata.empty()) {
             std::copy((mydata.front()).first.begin(), (mydata.front()).first.end(), h_in + skip);
-            obst_time framte_time = mydata.front().second;
+            obs_time framte_time = mydata.front().second;
             mydata.pop();
             datamutex.unlock();
 
@@ -214,15 +225,15 @@ void GPUpool::minion(int stream)
             if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS) {
                 // TODO: exception thrown
             }
-            powerscale<<<nblocks[0], nthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
-            addtime<<<nblocks[1], nthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
-            addchannel<<<nblocks[2], nthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
+            powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
+            addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
+            addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
             mainbuffer.write(pdv_freq_scrunch, framte_time, d_freq_scrunch_size, mystreams[stream]);
             // TODO: ????
             cudaThreadSynchronize();
 
         } else {
-            datamutex.unclock();
+            datamutex.unlock();
             std::this_thread::yield();
         }
     }
@@ -232,7 +243,7 @@ void GPUpool::dedisp_thread(int dstream) {
 
     cudaSetDevice(gpuid);
     while(working) {
-        int ready = mainbuffer.read();
+        int ready = mainbuffer.ready();
         if (ready) {
             header_f headerfil;
 
@@ -245,6 +256,7 @@ void GPUpool::dedisp_thread(int dstream) {
     }
 }
 
+/* DISABLE: SEARCH
 void GPUpool::search_thread(int stream)
 {
 
@@ -260,24 +272,24 @@ void GPUpool::search_thread(int stream)
         }
     }
 }
-
+*/
 // TODO: sort out horrible race conditions in the networking code
 
 void GPUpool::receive_thread(void) {
     sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoints[0]));
 }
 
-void GPUpool::receive_handler(udp::endpoint endpoint) {
+void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
     header_s head;
     get_header(rec_buffer.data(), head);
-    static obs_time rec_time{head.epoch, heads.ref_s};
+    static obs_time start_time{head.epoch, head.ref_s};
     // this is ugly, but I don't have a better solution at the moment
-    int long_ip = boost::asio::ip:;adress_v4:;from_string((endpoint.address()).to_string()).to_ulong();
+    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
 
-    get_data(rec_buffer.data(), fpga, rec_time);
-    receive();
+    get_data(rec_buffer.data(), fpga, start_time);
+    receive_thread();
 }
 
 void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
@@ -287,10 +299,17 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
-    //int fpga_id = frame % 48;
-    int framet = (int)(frame / 48);         // proper frame number within the current period
 
-    int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+    header_s head;
+    get_header(data, head);
+
+    // there are 250,000 frames per 27s period
+    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
+
+    //int fpga_id = frame % 48;
+    //int framet = (int)(frame / 48);         // proper frame number within the current period
+
+    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
 
     //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
 

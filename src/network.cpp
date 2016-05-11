@@ -16,7 +16,7 @@ using boost::asio::ip::udp;
 using std::cout;
 using std::endl;
 
-#define BUFLEN 8092
+
 
 Network::Network(boost::asio::io_servie &ios, Pool &mypool) : count(0), highest_frame(-1)
 {
@@ -24,7 +24,7 @@ Network::Network(boost::asio::io_servie &ios, Pool &mypool) : count(0), highest_
     boost::asio::socket_base::receive_buffer_size option2(8000);
 
     for (ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(ios, udp::endpoint(boost::asio::ip::address::from_string("xx.xx.xx.xx"), 17100 + ii)));
+        sockets.push_back(udp::socket(ios, udp::endpoint(boost::asio::ip::address::from_string("127.0.0.1"), 17100 + ii)));
         sockets[ii].set_option(option1);
         sockets[ii].set_option(option2);
     }

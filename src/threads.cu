@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
                 config.freqavg = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) = "-n") {      // the number of GPUs to use
+            } else if (std::string(argv[ii]) == "-n") {      // the number of GPUs to use
                 ii++;
                 config.ngpus = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
@@ -123,8 +123,8 @@ int main(int argc, char *argv[])
                         << "\t -n - the number of GPUs to use\n"
                         << "\t -s - the number of CUDA streams per GPU to use\n"
                         << "\t -b - use the test buffer\n"
-                        << "\t --config - configuration file\n";
-                        << "\t -h - print out this message\n\n"
+                        << "\t --config - configuration file\n"
+                        << "\t -h - print out this message\n\n";
                 exit(EXIT_SUCCESS);
             }
         }

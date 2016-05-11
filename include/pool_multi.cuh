@@ -6,6 +6,9 @@
 #include <thread>
 #include <vector>
 
+#include <boost/array.hpp>
+#include <boost/asio.hpp>
+#include <boost/bind.hpp>
 #include <cuda.h>
 #include <cufft.h>
 #include <thrust/device_vector.h>
@@ -29,26 +32,26 @@ class Oberpool
 
         int ngpus;
 
-        std::vector<std::unique_ptr<GPUpool> gpuvector;
+        std::vector<std::unique_ptr<GPUpool>> gpuvector;
         std::vector<std::thread> threadvector;
     protected:
 
     public:
         Oberpool(void) = delete;
-        Oberpool(int ng);
+        Oberpool(config_s config);
         Oberpool(const Oberpool &inpool) = delete;
         Oberpool& operator=(const Oberpool &inpool) = delete;
         Oberpool(Oberpool &&inpool) = delete;
         Oberpool& operator=(Oberpool &&inpool) = delete;
         ~Oberpool(void);
 
-}
+};
 
 class GPUpool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
-        Buffer<float> dedispbuffer;
+        Buffer<float> mainbuffer;
         DedispPlan dedisp;
         hd_pipeline pipeline;
         hd_params params;
@@ -57,12 +60,16 @@ class GPUpool
         vector<thrust::device_vector<float>> dv_time_scrunch;
         vector<thrust::device_vector<float>> dv_freq_scrunch;
 
+        vector<udp::endpoint> sender_endpoints;
+        vector<udp::socket> sockets;
+        boost::array<unsigned char, 7168 + 64> rec_buffer;
+
 /*
         float *pdv_power;
         float *pdv_time_scrunch;
         float *pdv_freq_scrunch;
 */
-
+        config_s _config;
         bool working;
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
@@ -131,7 +138,7 @@ class GPUpool
 
     public:
         GPUpool(void) = delete;
-        GPUpool(unsigned int bs, unsigned int fs, unsigned int ts, unsigned int fr, unsigned int sn, unsigned int np, config_s config);
+        GPUpool(int id, config_s config);
         ~GPUpool(void);
         GPUpool(const GPUpool &inpool) = delete;
         GPUpool& operator=(const GPUpool &inpool) = delete;
@@ -140,10 +147,11 @@ class GPUpool
         // add deleted copy, move, etc constructors
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
+        void execute(void);
         void get_data(unsigned char* data, int frame, obs_time start_time);
         void minion(int stream);
-        void receive_handler(udp::endpoint endpoint);
-        void receive_thread(int stream);
+        void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint);
+        void receive_thread(void);
         void search_thread(int sstream);
 };
 

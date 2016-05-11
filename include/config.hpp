@@ -19,17 +19,20 @@ struct config_s {
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
 
+    unsigned int batch;
     unsigned int beamno;        // number of beams per card
     unsigned int chunks;        // time chunks to process - testing only
+    unsigned int fftsize;
     unsigned int filchans;      // number fo filterbank channels
-    unsigned int freq;          // number of frequency channels to average
+    unsigned int freqavg;          // number of frequency channels to average
     unsigned int gulp;
     unsigned int nchans;        // number of 1MHz channels
     unsigned int ngpus;         // number of GPUs to use
+    unsigned int npol;
     unsigned int port;
     unsigned int stokes;        // number of Stokes parameters to output
     unsigned int streamno;      // number of CUDA streams for filterbanking
-    unsigned int times;         // number of time samples to average
+    unsigned int timesavg;         // number of time samples to average
 
 };
 
@@ -50,13 +53,14 @@ inline void default_config(config_s &config) {
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 336;
     config.ngpus = 3;
+    config.npol;
     config.stokes = 4;
     config.streamno = 4;
     config.timesavg = 4;
 
     config.batch = config.nchans;
-    config.filchans = config.nchans * 27 / config.freq;
-    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.times;
+    config.filchans = config.nchans * 27 / config.freqavg;
+    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timesavg;
 
 }
 

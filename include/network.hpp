@@ -25,7 +25,7 @@ class Network
         unsigned short count;
         std::thread iothread;
         std::thread netthread;
-        std::vector<udp:;socket> sockets;
+        std::vector<udp::socket> sockets;
         udp::endpoint sender_endpoint;
 
 };

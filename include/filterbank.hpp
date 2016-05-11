@@ -37,7 +37,7 @@ struct header_f
 inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head)
 {
     std::ostringstream oss;
-    oss.str("");
+    oss.str("stokes1");
     std::string filename;
     filename = oss.str() + ".dat";
     std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);

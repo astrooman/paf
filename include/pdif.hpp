@@ -60,7 +60,7 @@ struct header_s {
 };
 
 // should read header from the data packet
-void get_header(unsigned char* packet, header_s &head)
+inline void get_header(unsigned char* packet, header_s &head)
 {
 
     long long word;
@@ -153,7 +153,7 @@ void get_header(unsigned char* packet, header_s &head)
 }
 
 
-void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &d_begin, int frame, int &previous_frame) {
+/*void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &d_begin, int frame, int &previous_frame) {
 
     unsigned int idx = 0;
     unsigned int idx2 = 0;
@@ -184,6 +184,6 @@ void get_data(unsigned char *data, cufftComplex *pola, cufftComplex *polb, int &
 
     previous_frame = frame;
 
-}
+} */
 
 #endif
