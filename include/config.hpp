@@ -51,9 +51,9 @@ inline void default_config(config_s &config) {
     config.fftsize = 32;
     config.freqavg = 8;
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
-    config.nchans = 336;
+    config.nchans = 7;
     config.ngpus = 3;
-    config.npol;
+    config.npol = 2;
     config.stokes = 4;
     config.streamno = 4;
     config.timesavg = 4;

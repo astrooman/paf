@@ -83,11 +83,15 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
 {
     avt = min(nostreams + 2, thread::hardware_concurrency());
 
+    cudaSetDevice(gpuid);
+    //dedisp(config.filchans, config.tsamp, config.ftop, config.foff);
+
     _config = config;
 
     if (config.verbose) {
         cout_guard.lock();
         cout << "Starting GPU pool " << gpuid << endl;
+	cout.flush();
         cout_guard.unlock();
     }
 }
@@ -96,12 +100,18 @@ void GPUpool::execute(void)
 {
     cudaSetDevice(gpuid);
 
+    std::shared_ptr<boost::asio::io_service> iop(new boost::asio::io_service);
+    ios = iop;
+
     // every thread will be associated with its own CUDA streams
     mystreams = new cudaStream_t[avt];
     // each stream will have its own cuFFT plan
     myplans = new cufftHandle[avt];
 
     int nkernels = 3;
+    // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
+    CUDAthreads = new unsigned int[nkernels];
+    CUDAblocks = new unsigned int[nkernels];
     // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
     CUDAthreads = new unsigned int[nkernels];
     CUDAblocks = new unsigned int[nkernels];
@@ -175,28 +185,37 @@ void GPUpool::execute(void)
 
     // STAGE: networking
     // crude approach for now
-    boost::asio::io_service ios;
+    //boost::asio::io_service ios;
     //vector<udp::endpoint> sender_endpoints;
     //vector<udp::socket> sockets;
     boost::asio::socket_base::reuse_address option(true);
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
+    cout << "Creating sockets" << endl;
+    cout.flush();
+
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17000 + ii)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
     }
 
+    cout << "Created sockets" << endl;
+    cout.flush();
+
     mythreads.push_back(thread(&GPUpool::receive_thread, this));
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    mythreads.push_back(thread([&ios]{ios.run();}));
-
+    ios->run();
+    //mythreads.push_back(thread([&ios]{ios.run();}));
+    //mythreads[mythreads.size() - 1].join();
 }
 
 GPUpool::~GPUpool(void)
 {
     // TODO: clear the memory properly
-    for(int ii = 0; ii < avt; ii++)
+    cout << "Calling destructor" << endl;
+    cout.flush();
+    for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
 }
 
@@ -204,11 +223,17 @@ void GPUpool::minion(int stream)
 {
     cudaSetDevice(gpuid);
 
+    cout << "In minion " << stream << endl;
+    cout.flush();
+
     unsigned int skip = stream * d_in_size;
 
     float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
+
+    cout << "Pointers OK" << endl;
+    cout.flush();
 
     while(working) {
         unsigned int index{0};
@@ -276,11 +301,14 @@ void GPUpool::search_thread(int stream)
 // TODO: sort out horrible race conditions in the networking code
 
 void GPUpool::receive_thread(void) {
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoints[0]));
+    cout << "In the receiver thread. Waiting to get something..." << endl;
+    cout.flush();
+    sockets[5].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoint));
 }
 
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
     header_s head;
+    cout << "I'm in the handler" << endl;
     get_header(rec_buffer.data(), head);
     static obs_time start_time{head.epoch, head.ref_s};
     // this is ugly, but I don't have a better solution at the moment
@@ -356,8 +384,12 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 
     if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
         add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        cout << "Sent the first buffer" << endl;
+        cout.flush();
     } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
         add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        cout << "Sent the second buffer" << endl;
+        cout.flush();
     }
 
     /* if((frame - previous_frame) > 1) {

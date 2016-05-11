@@ -1,6 +1,7 @@
 #ifndef _H_PAFRB_POOL
 #define _H_PAFRB_POOL
 
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -60,10 +61,12 @@ class GPUpool
         vector<thrust::device_vector<float>> dv_time_scrunch;
         vector<thrust::device_vector<float>> dv_freq_scrunch;
 
-        vector<udp::endpoint> sender_endpoints;
+        udp::endpoint sender_endpoint;
+	vector<udp::endpoint> sender_endpoints;
         vector<udp::socket> sockets;
         boost::array<unsigned char, 7168 + 64> rec_buffer;
 
+        std::shared_ptr<boost::asio::io_service> ios;
 /*
         float *pdv_power;
         float *pdv_time_scrunch;

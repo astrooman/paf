@@ -146,7 +146,6 @@ int main(int argc, char *argv[])
     unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
                                             // need to decide how this data will be stored
     unsigned int ffts{32};
-
     Oberpool mypool(config);
 
     /*Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);

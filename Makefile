@@ -4,11 +4,11 @@ OBJ_DIR = ./obj
 BIN_DIR = ./bin
 DEDISP_DIR = ./dedisp_paf
 CC=g++
-NVCC=/usr/local/cuda-7.0/bin/nvcc
+NVCC=/usr/bin/nvcc
 DEBUG= -g -G
 
 INCLUDE = -I${INC_DIR}
-LIBS = -L${DEDISP_DIR}/lib -L/usr/lib/x86_64-linux-gnu/ -lstdc++ -lboost_system -lpthread
+LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread
 
 CFLAGS = -Wall -Wextra -std=c++11
 NVCC_FLAG = -gencode=arch=compute_52,code=sm_52 --std=c++11 -lcufft -Xcompiler ${DEBUG}
