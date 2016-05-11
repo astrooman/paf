@@ -349,6 +349,8 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 
     int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
                                                                                 // used to skip second polarisation data
+
+    // TEST: version for 7MHz band only
     if (frame > highest_frame) {
 
         highest_frame = frame;
@@ -358,7 +360,7 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
         for (int chan = 0; chan < 7; chan++) {
             for (int sample = 0; sample < 128; sample++) {
                 idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
+                idx2 = chan * 128 + sample;        // get the position in the buffer
                 h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
                 h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
                 h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
@@ -366,31 +368,60 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
             }
         }
 
-    } else if (highest_frame - frame < 10) {
+    }
 
-        #pragma unroll
-        for (int chan = 0; chan < 7; chan++) {
-            for (int sample = 0; sample < 128; sample++) {
-                idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
-                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-            }
-        }
-
-    }   // don't save if more than 10 frames late
-
-    if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
-        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+    if ((frame % 2) = 0) {                     // send the first one
+        add_data(h_pol, {start_time.start_epoch, start_time.start_second, frame});
         cout << "Sent the first buffer" << endl;
         cout.flush();
-    } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
-        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+    } else if((frame % 2) = 1) {        // send the second one
+        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, frame});
         cout << "Sent the second buffer" << endl;
         cout.flush();
     }
+
+    // if (frame > highest_frame) {
+    //
+    //     highest_frame = frame;
+    //     //highest_framet = (int)(frame / 48)
+    //
+    //     #pragma unroll
+    //     for (int chan = 0; chan < 7; chan++) {
+    //         for (int sample = 0; sample < 128; sample++) {
+    //             idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
+    //             idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
+    //             h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+    //             h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+    //             h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+    //             h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+    //         }
+    //     }
+    //
+    // } else if (highest_frame - frame < 10) {
+    //
+    //     #pragma unroll
+    //     for (int chan = 0; chan < 7; chan++) {
+    //         for (int sample = 0; sample < 128; sample++) {
+    //             idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
+    //             idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
+    //             h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+    //             h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+    //             h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+    //             h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+    //         }
+    //     }
+    //
+    // }   // don't save if more than 10 frames late
+    //
+    // if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
+    //     add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+    //     cout << "Sent the first buffer" << endl;
+    //     cout.flush();
+    // } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
+    //     add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+    //     cout << "Sent the second buffer" << endl;
+    //     cout.flush();
+    // }
 
     /* if((frame - previous_frame) > 1) {
         // count words only as one word provides one full time sample per polarisation
