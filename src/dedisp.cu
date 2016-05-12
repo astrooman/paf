@@ -216,7 +216,8 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 				      dedisp_float dt,
 				      dedisp_float f0,
 				      dedisp_float df,
-				      dedisp_size ngpus)
+				      dedisp_size ngpus,
+				      int gpuid)
 {
   dedisp_error err;
 
@@ -255,7 +256,7 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	plan->dt            = dt;
 	plan->f0            = f0;
 	plan->df            = df;
-    plan->gpuid         = gpuid;
+        plan->gpuid         = gpuid;
 	//plan->stream        = 0;
 
 	//NEW: Check number of requested devices
@@ -500,7 +501,7 @@ dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
     std::fill(plan->killmask.begin(), plan->killmask.end(), (dedisp_bool)true);
     for (ii = 0; ii < plan->device_count; ii++)
       {
-	err = dedisp_set_device(paln->gpuid);
+	err = dedisp_set_device(plan->gpuid);
 	if (err != DEDISP_NO_ERROR)
 	  {
 	    dedisp_destroy_plan(plan);

@@ -30,7 +30,7 @@
 DedispPlan::DedispPlan(size_type  nchans,
                        float_type dt,
                        float_type f0,
-                       float_type df
+                       float_type df,
                        int gpuid) {
 	check_error( dedisp_create_plan(&m_plan,
 	                                nchans,
