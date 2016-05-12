@@ -43,9 +43,17 @@ class GPUpool {
         GPUpool& operator=(GPUpool &&inpool) = delete;
         ~GPUpool(void);
         void execute(void);
+        void worker(int ii);
     private:
         double *buffer;
+        int batchsize = 336;
+        int fftpoint = 32;
         int id;
+        int sizes[1] = {32};
+
+        vector<thread> mythreads;
+        cudaStream_t *mystreams;
+        cufftHandle *myplans;
 };
 
 Oberpool::Oberpool(void)
@@ -79,6 +87,7 @@ GPUpool::GPUpool(void)
 
 GPUpool::GPUpool(int ii)
 {
+
     cout << "Hello from the GPUpool constructor with id " << ii << "!!" << endl;
     cout.flush();
     id = ii;
@@ -86,6 +95,18 @@ GPUpool::GPUpool(int ii)
 
 void GPUpool::execute(void)
 {
+    cout << "Setting device ID to " << id << endl;
+    cudaSetDevice(id);
+    mystreams = new cudaStream_t[4];
+    myplans = new cufftHandle[4];
+
+    for (int ii = 0; ii < 4; ii++) {
+        cudaStreamCreate(&mystreams[ii]);
+        cufftPlanMany(&myplan[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
+        cufftSetStream(myplans[ii], mystreams[ii]);
+        mythreads.push_back(&GPUpool::worker, this, ii);
+    }
+
     cout_guard.lock();
     cout << "Starting a GPU thread!!" << endl;
     cout_guard.unlock();
@@ -94,6 +115,14 @@ void GPUpool::execute(void)
         buffer[ii] = id;
     std::this_thread::sleep_for(std::chrono::seconds(5));
 }
+
+void GPUpool::worker(int ii)
+{
+
+    cout << "Starting worker " << ii << " on GPU " << id << endl;
+
+}
+
 GPUpool::~GPUpool(void)
 {
     std::lock_guard<std::mutex> addguard(cout_guard);
