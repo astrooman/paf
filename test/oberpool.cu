@@ -6,6 +6,8 @@
 #include <thread>
 #include <vector>
 
+#include <cufft.h>
+
 using std::cout;
 using std::endl;
 using std::thread;
@@ -102,9 +104,9 @@ void GPUpool::execute(void)
 
     for (int ii = 0; ii < 4; ii++) {
         cudaStreamCreate(&mystreams[ii]);
-        cufftPlanMany(&myplan[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
+        cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
         cufftSetStream(myplans[ii], mystreams[ii]);
-        mythreads.push_back(&GPUpool::worker, this, ii);
+        mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
 
     cout_guard.lock();
@@ -129,6 +131,8 @@ GPUpool::~GPUpool(void)
     /*for (int ii = 0; ii < 32; ii++)
         cout << buffer[ii] << endl; */
     cout << "Bye fron the GPUpool destructor!!" << endl;
+    for (int ii = 0; ii < mythreads.size(); ii++)
+        mythreads[ii].join();
 }
 
 int main(int argc, char *argv[])
