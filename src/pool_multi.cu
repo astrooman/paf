@@ -1,3 +1,5 @@
+#include <iostream>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -9,9 +11,10 @@
 #include <boost/bind.hpp>
 #include <cufft.h>
 #include <cufftXt.h>
-#include <cuda.h>
+//#include <cuda.h>
+#include <thrust/device_vector.h>
 
-#include "buffer.hpp"
+#include "buffer.cuh"
 #include "config.hpp"
 #include "dedisp/dedisp.hpp"
 #include "dedisp/DedispPlan.hpp"
@@ -78,13 +81,14 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         gulps_processed(0),
                                         working(true),
                                         mainbuffer(),
+					packcount(0)
                                         // frequencies will have to be configured properly
-                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
+                                        //dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
 
 {
     avt = min(nostreams + 2, thread::hardware_concurrency());
 
-    cudaSetDevice(gpuid);
+//    cudaSetDevice(gpuid);
     //dedisp(config.filchans, config.tsamp, config.ftop, config.foff);
 
     _config = config;
@@ -105,9 +109,9 @@ void GPUpool::execute(void)
     ios = iop;
 
     // every thread will be associated with its own CUDA streams
-    mystreams = new cudaStream_t[nostreams];
+    mystreams = new cudaStream_t[4];
     // each stream will have its own cuFFT plan
-    myplans = new cufftHandle[nostreams];
+    //myplans = new cufftHandle[4];
 
     int nkernels = 3;
     // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
@@ -131,16 +135,29 @@ void GPUpool::execute(void)
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
     pack_per_buf = 96;
+    cout << h_pol;
     h_pol = new cufftComplex[d_in_size * 2];
 
-    //if((cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault)) != cudaSuccess) {
-    //    cout << "Host alloc error!" << endl;
-    //    cout << cudaGetErrorString(cudaGetLastError()) << endl;
-    //}
-    cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocWriteCombined | cudaHostAllocPortable | cudaHostAllocMapped);
-    cudaHostGetDevicePointer(&d_in, h_in, 0);
+    cout_guard.lock();
+    cout << d_in_size << " " << nostreams << " " << h_in << endl;
+    cout_guard.unlock();
 
-    //cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex));
+    //cudaSetDeviceFlags(cudaDeviceMapHost);
+
+//    cudaMallocHost((void**)&h_in, 7 * 32 * nostreams * sizeof(cufftComplex));
+
+    if((cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault)) != cudaSuccess) {
+        cout << "Host alloc error!" << endl;
+        cout << cudaGetErrorString(cudaGetLastError()) << endl;
+    }
+
+    cout << "Input data size: " << d_in_size << endl;
+    cout << "h_in pointer: " << h_in << endl;
+
+    //cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocWriteCombined | cudaHostAllocPortable | cudaHostAllocMapped);
+   // cudaHostGetDevicePointer(&d_in, h_in, 0);
+
+    cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex));
     cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex));
     // need to store all 4 Stoke parameters
     dv_power.resize(nostreams);
@@ -158,13 +175,13 @@ void GPUpool::execute(void)
     // gemerate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-    dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
+    //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
 
-    dedisp_totsamples = (size_t)_config.gulp + dedisp.get_max_delay();
+    dedisp_totsamples = (size_t)_config.gulp + 5000; //dedisp.get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + dedisp.get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //dedisp.get_max_delay();
     // can this method be simplified?
-    mainbuffer.allocate(dedisp_buffno, dedisp.get_max_delay(), _config.gulp, dedisp_buffsize, stokes);
+    mainbuffer.allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes);
     //if(config.killmask)
     //    dedisp.set_killmask();
     // everything should be ready for dedispersion after this point
@@ -175,7 +192,7 @@ void GPUpool::execute(void)
     //hd_create_pipeline(&pilenine, params);
     // everything should be ready for single pulse search after this point
 
-    cout << cudaGetErrorString(cudaGetLastError());
+    cout << cudaGetErrorString(cudaGetLastError()) << endl;
 
     // STAGE: start processing
     // FFT threads
@@ -183,6 +200,7 @@ void GPUpool::execute(void)
             cout << "Taking care of minion number " << ii << endl;
             cout.flush();
             cudaStreamCreate(&mystreams[ii]);
+            cout << cudaGetErrorString(cudaGetLastError()) << endl;
             cout << "Created stream " << ii << endl;
             cout.flush();
             int whichgpus[1];
@@ -191,16 +209,16 @@ void GPUpool::execute(void)
             cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
             cout << "Created plan" << ii << endl;
             cout.flush();
-            cufftSetStream(myplans[ii], mystreams[ii]);
+            //cufftSetStream(myplans[ii], mystreams[ii]);
             cout << "Set the stream" << ii << endl;
             cout.flush();
-            mythreads.push_back(thread(&GPUpool::minion, this, ii));
+            //mythreads.push_back(thread(&GPUpool::minion, this, ii));
             cout << "Started the thread" << ii << endl;
             cout.flush();
     }
     // dedispersion thread
-    cudaStreamCreate(&mystreams[avt - 2]);
-    mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
+ //   cudaStreamCreate(&mystreams[avt - 2]);
+ //   mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
     // single pulse thread
     //cudaStreamCreate(&mystreams[avt - 1]);
     //mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
@@ -217,7 +235,7 @@ void GPUpool::execute(void)
     cout.flush();
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
     }
@@ -244,7 +262,7 @@ GPUpool::~GPUpool(void)
 void GPUpool::minion(int stream)
 {
     cudaSetDevice(gpuid);
-
+ //   cudaSetDeviceFlags(cudaDeviceMapHost);
     cout << "In minion " << stream << endl;
     cout.flush();
 
@@ -290,7 +308,7 @@ void GPUpool::minion(int stream)
     }
 }
 
-void GPUpool::dedisp_thread(int dstream) {
+/*void GPUpool::dedisp_thread(int dstream) {
 
     cudaSetDevice(gpuid);
     while(working) {
@@ -306,7 +324,7 @@ void GPUpool::dedisp_thread(int dstream) {
         }
     }
 }
-
+*/
 /* DISABLE: SEARCH
 void GPUpool::search_thread(int stream)
 {
@@ -341,9 +359,10 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
     int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
-
     get_data(rec_buffer.data(), fpga, start_time);
-    receive_thread();
+    packcount++;
+    //if (packcount < 48)
+        receive_thread();
 }
 
 void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
@@ -474,4 +493,5 @@ void GPUpool::add_data(cufftComplex *buffer, obs_time frame_time)
     std::lock_guard<mutex> addguard(datamutex);
     // TODO: is it possible to simplify this messy line?
     mydata.push(pair<vector<cufftComplex>, obs_time>(vector<cufftComplex>(buffer, buffer + d_in_size), frame_time));
+    cout << "Pushed the data to the queue of current length of " << mydata.size() << endl;
 }

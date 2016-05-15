@@ -14,7 +14,7 @@
 #include <cufft.h>
 #include <thrust/device_vector.h>
 
-#include "buffer.hpp"
+#include "buffer.cuh"
 #include "config.hpp"
 #include "dedisp/DedispPlan.hpp"
 
@@ -53,10 +53,10 @@ class GPUpool
     private:
         // that can be anything, depending on how many output bits we decide to use
         Buffer<float> mainbuffer;
-        DedispPlan dedisp;
+//        DedispPlan dedisp;
         hd_pipeline pipeline;
         hd_params params;
-
+        int packcount;
         vector<thrust::device_vector<float>> dv_power;
         vector<thrust::device_vector<float>> dv_time_scrunch;
         vector<thrust::device_vector<float>> dv_freq_scrunch;
@@ -98,7 +98,8 @@ class GPUpool
         // GPU and thread stuff
         // raw voltage buffers
         // d_in is a cufftExecC2C() input
-        cufftComplex *h_in, *d_in;
+        cufftComplex *h_in = 0;
+        cufftComplex *d_in = 0;
         // the ffted signal buffer
         // cufftExecC2C() output
         // powerscale() kernel input
@@ -123,7 +124,7 @@ class GPUpool
         int avt;
         int highest_frame;
         cudaStream_t *mystreams;
-        cufftHandle *myplans;
+        cufftHandle myplans[4];
         mutex datamutex;
         mutex workmutex;
         unsigned int *CUDAthreads;

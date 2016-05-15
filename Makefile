@@ -8,10 +8,10 @@ NVCC=/usr/bin/nvcc
 DEBUG= -g -G
 
 INCLUDE = -I${INC_DIR}
-LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread
+LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart
 
 CFLAGS = -Wall -Wextra -std=c++11
-NVCC_FLAG = -gencode=arch=compute_52,code=sm_52 --std=c++11 -lcufft -Xcompiler ${DEBUG}
+NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG}
 
 CPPOBJECTS = ${OBJ_DIR}/DedispPlan.o
 
