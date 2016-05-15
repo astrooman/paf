@@ -9,10 +9,11 @@
 #include <cuda.h>
 #include <cufft.h>
 
-#include "buffer.hpp"
+#include "buffer.cuh"
 #include "config.hpp"
-//#include <dedisp/dedisp.hpp>
-//#include <dedisp/DedispPlan.hpp>
+#include "dedisp/dedisp.hpp"
+#include "dedisp/DedispPlan.hpp"
+#include "errors.hpp"
 #include "network.hpp"
 #include "pdif.hpp"
 #include "pool_multi.cuh"
@@ -134,7 +135,7 @@ int main(int argc, char *argv[])
     cout << "Starting up. This may take few seconds..." << endl;
 
     int devcount{0};
-    cudaGetDeviceCount(&devcount);
+    cudaCheckError(cudaGetDeviceCount(&devcount));
     if (config.ngpus > devcount) {
         cout << "You can't use more GPUs than you have available!" << endl;
         config.ngpus = devcount;

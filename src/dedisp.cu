@@ -94,6 +94,7 @@ struct dedisp_plan_struct {
   dedisp_bool  scrunching_enabled;
   dedisp_float pulse_width;
   dedisp_float scrunch_tol;
+  int gpuid;
     cudaStream_t stream;
 };
 
@@ -172,7 +173,7 @@ dedisp_error update_scrunch_list(dedisp_plan plan)
   //NEW: Allocate on and copy to all devices
   for (int ii = 0; ii < plan->device_count; ii++)
     {
-      error = dedisp_set_device(ii);
+      error = dedisp_set_device(plan->gpuid);
       if (error != DEDISP_NO_ERROR)
 	{
 	  dedisp_destroy_plan(plan);
@@ -215,7 +216,8 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 				      dedisp_float dt,
 				      dedisp_float f0,
 				      dedisp_float df,
-				      dedisp_size ngpus)
+				      dedisp_size ngpus,
+				      int gpuid)
 {
   dedisp_error err;
 
@@ -254,6 +256,7 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	plan->dt            = dt;
 	plan->f0            = f0;
 	plan->df            = df;
+        plan->gpuid         = gpuid;
 	//plan->stream        = 0;
 
 	//NEW: Check number of requested devices
@@ -283,7 +286,7 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
 		cout << ii << endl;
-	    err = dedisp_set_device(ii);
+	    err = dedisp_set_device(gpuid);
 	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);
@@ -330,9 +333,10 @@ dedisp_error dedisp_create_plan(dedisp_plan* plan_,
 				dedisp_size  nchans,
                                 dedisp_float dt,
                                 dedisp_float f0,
-                                dedisp_float df)
+                                dedisp_float df,
+                                int gpuid)
 {
-  return dedisp_create_plan_multi(plan_, nchans, dt, f0, df, 1);
+  return dedisp_create_plan_multi(plan_, nchans, dt, f0, df, 1, gpuid);
 }
 
 dedisp_error dedisp_set_gulp_size(dedisp_plan plan,
@@ -366,7 +370,7 @@ dedisp_error dedisp_set_dm_list(dedisp_plan plan,
 	//NEW: copy to all devices
 	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
-	    err = dedisp_set_device(ii);
+	    err = dedisp_set_device(plan->gpuid);
 	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);
@@ -416,7 +420,7 @@ dedisp_error dedisp_generate_dm_list(dedisp_plan plan,
 	//NEW: do this for all devices
 	for (int ii = 0; ii < plan->device_count; ii++)
           {
-            err = dedisp_set_device(ii);
+            err = dedisp_set_device(plan->gpuid);
             if (err != DEDISP_NO_ERROR)
               {
                 dedisp_destroy_plan(plan);
@@ -479,7 +483,7 @@ dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
 
     for (ii = 0; ii < plan->device_count; ii++)
       {
-	err = dedisp_set_device(ii);
+	err = dedisp_set_device(plan->gpuid);
 	if (err != DEDISP_NO_ERROR)
 	  {
 	    dedisp_destroy_plan(plan);
@@ -497,7 +501,7 @@ dedisp_error dedisp_set_killmask(dedisp_plan plan, const dedisp_bool* killmask)
     std::fill(plan->killmask.begin(), plan->killmask.end(), (dedisp_bool)true);
     for (ii = 0; ii < plan->device_count; ii++)
       {
-	err = dedisp_set_device(ii);
+	err = dedisp_set_device(plan->gpuid);
 	if (err != DEDISP_NO_ERROR)
 	  {
 	    dedisp_destroy_plan(plan);

@@ -45,13 +45,14 @@ public:
 	DedispPlan(size_type  nchans,
 	           float_type dt,
 	           float_type f0,
-	           float_type df);
+	           float_type df,
+		       int gpuid);
 
 	// Destructor
 	~DedispPlan();
-	
+
 	static void set_device(int device_idx);
-	
+
 	// Public interface
 	void set_gulp_size(size_type gulp_size);
 	void set_killmask(const bool_type* killmask);
