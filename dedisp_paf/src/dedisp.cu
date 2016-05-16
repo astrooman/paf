@@ -79,6 +79,7 @@ typedef unsigned int dedisp_word;
 struct dedisp_plan_struct {
   // Multi-GPU parameters
   dedisp_size  device_count;
+    int gpuid;
   // Size parameters
   dedisp_size  dm_count;
   dedisp_size  nchans;

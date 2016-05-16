@@ -24,7 +24,8 @@
 //#define DEDISP_DEBUG
 //#define DEDISP_BENCHMARK
 
-#include <dedisp/dedisp.hpp>
+#include "errors.hpp"
+#include "dedisp/dedisp.hpp"
 #include <pthread.h>
 
 #include <vector>
@@ -245,9 +246,6 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	  throw_error(DEDISP_MEM_ALLOC_FAILED);
 	}
 
-	cout << "Managed to create the plan" << endl;
-	cout.flush();
-
 	plan->device_count  = ngpus;
 	plan->dm_count      = 0;
 	plan->nchans        = nchans;
@@ -256,16 +254,7 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	plan->dt            = dt;
 	plan->f0            = f0;
 	plan->df            = df;
-        plan->gpuid         = gpuid;
-	//plan->stream        = 0;
-
-	//NEW: Check number of requested devices
-	//Currently always returns DEDISP_NO_ERROR
-	err = set_requested_devices(plan);
-	if( err != DEDISP_NO_ERROR ) {
-	  dedisp_destroy_plan(plan);
-	  return err;
-        }
+    plan->gpuid         = gpuid;
 
 	//NEW: resize containers for cuda device vectors
 	plan->d_delay_table.resize(plan->device_count);
@@ -285,14 +274,12 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	//NEW: resize the device vectors for each device
 	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
-		cout << ii << endl;
 	    err = dedisp_set_device(gpuid);
 	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);
 		return err;
 	      }
-
 	    try {
 	      plan->d_delay_table[ii].resize(plan->nchans);
 	    }
@@ -300,8 +287,6 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	      dedisp_destroy_plan(plan);
 	      throw_error(DEDISP_MEM_ALLOC_FAILED);
 	    }
-		cout << "Managed to allocate delay table" << endl;
-		cout.flush();
 	    try {
 	      plan->d_delay_table[ii] = plan->delay_table;
 	    }
@@ -316,8 +301,6 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	      dedisp_destroy_plan(plan);
 	      throw_error(DEDISP_MEM_ALLOC_FAILED);
 	    }
-		cout << "Managed to allocate the killmask" << endl;
-		cout.flush();
 	  }
 	err = dedisp_set_killmask(plan, (dedisp_bool*)0);
 	if( err != DEDISP_NO_ERROR ) {
@@ -418,23 +401,22 @@ dedisp_error dedisp_generate_dm_list(dedisp_plan plan,
 	plan->dm_count = plan->dm_list.size();
 	// Allocate device memory for the DM list
 	//NEW: do this for all devices
-	for (int ii = 0; ii < plan->device_count; ii++)
-          {
-            err = dedisp_set_device(plan->gpuid);
-            if (err != DEDISP_NO_ERROR)
+    for (int ii = 0; ii < plan->device_count; ii++) {
+        cudaCheckError(cudaSetDevice(plan->gpuid));
+        /* if (err != DEDISP_NO_ERROR)
               {
                 dedisp_destroy_plan(plan);
                 return err;
-              }
+            } */
 	    try {
-	      plan->d_dm_list[ii].resize(plan->dm_count);
+            plan->d_dm_list[ii].resize(plan->dm_count);
 	    }
 	    catch(...) { throw_error(DEDISP_MEM_ALLOC_FAILED); }
 	    try {
-	      plan->d_dm_list[ii] = plan->dm_list;
+            plan->d_dm_list[ii] = plan->dm_list;
 	    }
 	    catch(...) { throw_error(DEDISP_MEM_COPY_FAILED); }
-	  }
+    }
 
 	// Calculate the maximum delay and store it in the plan
 	plan->max_delay = dedisp_size(plan->dm_list[plan->dm_count-1] *

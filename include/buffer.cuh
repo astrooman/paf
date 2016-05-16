@@ -159,6 +159,7 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
     if (end == totsize)    // reached the end of the buffer
         end = end - gulpno * gulp;    // go back to the start
 
+    // TODO: try to come up with a slightly different implementation - DtD copies should be avoided whenever possible
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[0] + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[1] + index * amount, d_data + amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[2] + index * amount, d_data + 2 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));

@@ -81,22 +81,19 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         gulps_processed(0),
                                         working(true),
                                         mainbuffer(),
-					packcount(0)
+					                    packcount(0)
                                         // frequencies will have to be configured properly
-                                        //dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
+                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
 
 {
     avt = min(nostreams + 2, thread::hardware_concurrency());
-
-//    cudaSetDevice(gpuid);
-    //dedisp(config.filchans, config.tsamp, config.ftop, config.foff);
 
     _config = config;
 
     if (config.verbose) {
         cout_guard.lock();
         cout << "Starting GPU pool " << gpuid << endl;
-	cout.flush();
+	    cout.flush();
         cout_guard.unlock();
     }
 }
@@ -135,12 +132,7 @@ void GPUpool::execute(void)
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
     pack_per_buf = 96;
-    cout << h_pol;
     h_pol = new cufftComplex[d_in_size * 2];
-
-    cout_guard.lock();
-    cout << d_in_size << " " << nostreams << " " << h_in << endl;
-    cout_guard.unlock();
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
@@ -158,24 +150,24 @@ void GPUpool::execute(void)
     }
 
     // STAGE: PREPARE THE DEDISPERSION
-    // gemerate_dm_list(dm_start, dm_end, width, tol)
+    // generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-    //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
 
+    dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     dedisp_totsamples = (size_t)_config.gulp + 5000; //dedisp.get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
     dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //dedisp.get_max_delay();
     // can this method be simplified?
     mainbuffer.allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes);
-    //if(config.killmask)
-    //    dedisp.set_killmask();
+    if(config.killmask)
+        dedisp.set_killmask();
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
     set_search_params(params, _config);
     //commented out for the filterbank dump mode
-    //hd_create_pipeline(&pilenine, params);
+    hd_create_pipeline(&pilenine, params);
     // everything should be ready for single pulse search after this point
 
     // STAGE: start processing
@@ -183,16 +175,16 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < nostreams; ii++) {
             cudaCheckError(cudaStreamCreate(&mystreams[ii]));
             // TODO: add separate error checking for cufft functions
-            cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize);
-            cufftSetStream(myplans[ii], mystreams[ii]);
+            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize));
+            cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
     // dedispersion thread
- //   cudaStreamCreate(&mystreams[avt - 2]);
- //   mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
+    cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
+    mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
     // single pulse thread
-    //cudaStreamCreate(&mystreams[avt - 1]);
-    //mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
+    cudaCheckError(cudaStreamCreate(&mystreams[avt - 1]));
+    mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
 
     // STAGE: networking
     // crude approach for now
@@ -242,22 +234,14 @@ void GPUpool::worker(int stream)
             obs_time framte_time = mydata.front().second;
             mydata.pop();
             datamutex.unlock();
-            cout << "Grabbed the data" << endl;
-            cout.flush();
-            //if(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]) != cudaSuccess) {
-            //    cout << "Problems with HtD copy" << endl;
-            //    cout.flush();
-            //}
-            if(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD) != CUFFT_SUCCESS) {
-                cout << "Problems with FFT exec" << endl;
-                cout.flush();
-                 // TODO: exception thrown
-            }
+            cudaCheckError(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]));
+            cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
             mainbuffer.write(pdv_freq_scrunch, framte_time, d_freq_scrunch_size, mystreams[stream]);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
+            // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
             cudaThreadSynchronize();
 
@@ -268,14 +252,13 @@ void GPUpool::worker(int stream)
     }
 }
 
-/*void GPUpool::dedisp_thread(int dstream) {
+void GPUpool::dedisp_thread(int dstream) {
 
-    cudaSetDevice(gpuid);
+    cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
         int ready = mainbuffer.ready();
         if (ready) {
             header_f headerfil;
-
             mainbuffer.send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             mainbuffer.dump((gulps_sent % 2), headerfil);
             gulps_sent++;
@@ -284,12 +267,12 @@ void GPUpool::worker(int stream)
         }
     }
 }
-*/
+
 /* DISABLE: SEARCH
 void GPUpool::search_thread(int stream)
 {
 
-    cudaSetDevice(gpuid);
+    cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
         // TODO: sort this out properly
         bool ready(true);
