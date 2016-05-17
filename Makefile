@@ -8,7 +8,7 @@ NVCC=/usr/bin/nvcc
 DEBUG= -g -G
 
 INCLUDE = -I${INC_DIR}
-LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart
+LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda
 
 CFLAGS = -Wall -Wextra -std=c++11
 NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG}

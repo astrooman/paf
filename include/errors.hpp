@@ -1,18 +1,23 @@
 #ifndef _H_PAFRB_ERRORS
 #define _H_PAFRB_ERRORS
 
+#include <iostream>
+
+#include <cufft.h>
+
 #define cudaCheckError(myerror) {checkGPU((myerror), __FILE__, __LINE__);}
 #define cufftCheckError(mymsg) {checkFFT((mymsg), __FILE__, __LINE__);}
 
 inline void checkGPU(cudaError_t code, const char *file, int line) {
 
     if (code != cudaSuccess) {
-        cout << "CUDA error: " << cudaGetErrorString(code) << " in file " << file << ", line " << line << endl;
+        std::cout << "CUDA error: " << cudaGetErrorString(code) << " in file " << file << ", line " << line << std::endl;
         exit(EXIT_FAILURE);
         // TODO: throw exception instead of exiting
     }
 
 }
+
 inline const char *cufftGetErrorString(cufftResult_t msg) {
 
     switch(msg) {
@@ -34,21 +39,23 @@ inline const char *cufftGetErrorString(cufftResult_t msg) {
             return "CUFFT_INVALID_SIZE";
         case CUFFT_UNALIGNED_DATA:
             return "CUFFT_UNALIGNED_DATA";
-        case CUFFT_INCOMPATIBLE_PARAMETER_LIST:
-            return "CUFFT_INCOMPATIBLE_PARAMETER_LIST";
+        case CUFFT_INCOMPLETE_PARAMETER_LIST:
+            return "CUFFT_INCOMPLETE_PARAMETER_LIST";
         case CUFFT_INVALID_DEVICE:
             return "CUFFT_INVALID_DEVICE";
         case CUFFT_PARSE_ERROR:
             return "CUFFT_PARSE_ERROR";
         case CUFFT_NO_WORKSPACE:
             return "CUFFT_NO_WORKSPACE";
+        default:
+            return "CUFFT UNKNOWN ERROR";
     }
 }
 
 inline void checkFFT(cufftResult_t msg, const char *file, int line) {
 
     if (msg != CUFFT_SUCCESS) {
-        cout << "CUFFT error: " <<  << " in file " << file << ", line " << line << endl;
+        std::cout << "CUFFT error: " <<  cufftGetErrorString(msg) << " in file " << file << ", line " << line << std::endl;
         exit(EXIT_FAILURE);
         // TODO: throw exception instead of exiting
     }

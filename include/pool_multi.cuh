@@ -48,12 +48,15 @@ class Oberpool
 
 };
 
+// TODO: clean this mess up!!
+
 class GPUpool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
         Buffer<float> mainbuffer;
-//        DedispPlan dedisp;
+        //DedispPlan dedisp;
+        std::unique_ptr<DedispPlan> p_dedisp;
         hd_pipeline pipeline;
         hd_params params;
         int packcount;

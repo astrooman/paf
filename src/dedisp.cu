@@ -274,7 +274,7 @@ dedisp_error dedisp_create_plan_multi(dedisp_plan* plan_,
 	//NEW: resize the device vectors for each device
 	for (int ii = 0; ii < plan->device_count; ii++)
 	  {
-	    err = dedisp_set_device(gpuid);
+	    err = dedisp_set_device(gpuid); 
 	    if (err != DEDISP_NO_ERROR)
 	      {
 		dedisp_destroy_plan(plan);

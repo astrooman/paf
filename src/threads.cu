@@ -135,12 +135,12 @@ int main(int argc, char *argv[])
     cout << "Starting up. This may take few seconds..." << endl;
 
     int devcount{0};
-    cudaCheckError(cudaGetDeviceCount(&devcount));
+/*    cudaCheckError(cudaGetDeviceCount(&devcount));
     if (config.ngpus > devcount) {
         cout << "You can't use more GPUs than you have available!" << endl;
         config.ngpus = devcount;
     }
-
+*/
     // using thread pool will remove the need of checking which stream is used
     // each thread will be associated with a separate stream
     // it will start proceesing the new chunk as soon as possible

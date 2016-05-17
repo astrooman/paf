@@ -1,8 +1,10 @@
 #ifndef _H_PAFRB_CONFIG
 #define _H_PAFRB_CONFIG
 
+#include <algorithm>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <heimdall/params.hpp>
 
@@ -18,6 +20,8 @@ struct config_s {
     double foff;                // channel width in MHz
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
+
+    std::vector<int> killmask;
 
     unsigned int batch;
     unsigned int beamno;        // number of beams per card
@@ -61,7 +65,8 @@ inline void default_config(config_s &config) {
     config.batch = config.nchans;
     config.filchans = config.nchans * 27 / config.freqavg;
     config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timesavg;
-
+    for (int ii = 0; ii < config.filchans; ii++)
+         (config.killmask).push_back((int)1);
 }
 
 inline void read_config(string file, config_s config) {

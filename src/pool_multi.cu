@@ -48,13 +48,15 @@ TODO: Too many copies - could I use move in certain places?
 Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
 {
 
-     for (int ii = 0; ii < ngpus; ii++) {
-         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii, config)));
-     }
 
-     for (int ii = 0; ii < ngpus; ii++) {
-         threadvector.push_back(thread(&GPUpool::execute, std::move(gpuvector[ii])));
-     }
+
+    for (int ii = 0; ii < ngpus; ii++) {
+        gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii, config)));
+    }
+
+    for (int ii = 0; ii < ngpus; ii++) {
+        threadvector.push_back(thread(&GPUpool::execute, std::move(gpuvector[ii])));
+    }
 }
 
 Oberpool::~Oberpool(void)
@@ -83,9 +85,12 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         mainbuffer(),
 					                    packcount(0)
                                         // frequencies will have to be configured properly
-                                        dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
+ //                                       dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
 
 {
+
+    cout << "New pool" << endl;
+
     avt = min(nostreams + 2, thread::hardware_concurrency());
 
     _config = config;
@@ -101,6 +106,8 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
 void GPUpool::execute(void)
 {
     cudaCheckError(cudaSetDevice(gpuid));
+
+    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
 
     std::shared_ptr<boost::asio::io_service> iop(new boost::asio::io_service);
     ios = iop;
@@ -154,20 +161,20 @@ void GPUpool::execute(void)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
 
-    dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
-    dedisp_totsamples = (size_t)_config.gulp + 5000; //dedisp.get_max_delay();
+    //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
+    p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
+    dedisp_totsamples = (size_t)_config.gulp + 5000; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //dedisp.get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //p_dedisp->get_max_delay();
     // can this method be simplified?
-    mainbuffer.allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes);
-    if(config.killmask)
-        dedisp.set_killmask();
+    mainbuffer.allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes); 
+    p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
     set_search_params(params, _config);
     //commented out for the filterbank dump mode
-    hd_create_pipeline(&pilenine, params);
+    //hd_create_pipeline(&pipeline, params);
     // everything should be ready for single pulse search after this point
 
     // STAGE: start processing
@@ -183,8 +190,8 @@ void GPUpool::execute(void)
     cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
     mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
     // single pulse thread
-    cudaCheckError(cudaStreamCreate(&mystreams[avt - 1]));
-    mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
+    //cudaCheckError(cudaStreamCreate(&mystreams[avt - 1]));
+    //mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
 
     // STAGE: networking
     // crude approach for now
