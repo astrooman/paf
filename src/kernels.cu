@@ -1,7 +1,10 @@
+#include <stdio.h>
+
 #include <kernels.cuh>
 // jump take care of all Stoke paramters
 __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
 {
+
     // index will tell which 1MHz channel we are taking care or
     // use 1 thread per 1MHz channel
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -32,6 +35,7 @@ __global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned 
 
 __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
 {
+
     int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
 	// offset introduced, jump to the B polarisation data - can cause some slowing down
 	int idx2 = idx1 + jump;

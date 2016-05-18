@@ -1,3 +1,4 @@
+#include <bitset>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -48,8 +49,6 @@ TODO: Too many copies - could I use move in certain places?
 Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
 {
 
-
-
     for (int ii = 0; ii < ngpus; ii++) {
         gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii, config)));
     }
@@ -82,13 +81,9 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         gulps_sent(0),
                                         gulps_processed(0),
                                         working(true),
-                                        mainbuffer(),
-					                    packcount(0)
-                                        // frequencies will have to be configured properly
- //                                       dedisp(config.filchans, config.tsamp, config.ftop, config.foff, id)
+					packcount(0)
 
 {
-
     cout << "New pool" << endl;
 
     avt = min(nostreams + 2, thread::hardware_concurrency());
@@ -108,7 +103,7 @@ void GPUpool::execute(void)
     cudaCheckError(cudaSetDevice(gpuid));
 
     p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
-
+    p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
     std::shared_ptr<boost::asio::io_service> iop(new boost::asio::io_service);
     ios = iop;
 
@@ -167,7 +162,7 @@ void GPUpool::execute(void)
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
     dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //p_dedisp->get_max_delay();
     // can this method be simplified?
-    mainbuffer.allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes); 
+    p_mainbuffer->allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes); 
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -202,7 +197,7 @@ void GPUpool::execute(void)
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii + 6 * gpuid)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("130.155.181.223"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
     }
@@ -246,11 +241,13 @@ void GPUpool::worker(int stream)
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
-            mainbuffer.write(pdv_freq_scrunch, framte_time, d_freq_scrunch_size, mystreams[stream]);
+
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
             cudaThreadSynchronize();
+
+            p_mainbuffer->write(pdv_freq_scrunch, framte_time, d_freq_scrunch_size, mystreams[stream]);
 
         } else {
             datamutex.unlock();
@@ -263,11 +260,11 @@ void GPUpool::dedisp_thread(int dstream) {
 
     cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
-        int ready = mainbuffer.ready();
+        int ready = p_mainbuffer->ready();
         if (ready) {
             header_f headerfil;
-            mainbuffer.send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
-            mainbuffer.dump((gulps_sent % 2), headerfil);
+            p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
+            p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
         } else {
             std::this_thread::yield();
@@ -275,23 +272,6 @@ void GPUpool::dedisp_thread(int dstream) {
     }
 }
 
-/* DISABLE: SEARCH
-void GPUpool::search_thread(int stream)
-{
-
-    cudaCheckError(cudaSetDevice(gpuid));
-    while(working) {
-        // TODO: sort this out properly
-        bool ready(true);
-        if (ready) {
-            hd_execute(pipeline, d_dedisp, config.gulp, 8, gulps_processed);
-            gulps_processed++
-        } else {
-            std::this_thread::yield();
-        }
-    }
-}
-*/
 // TODO: sort out horrible race conditions in the networking code
 
 void GPUpool::receive_thread(void) {
@@ -303,6 +283,7 @@ void GPUpool::receive_thread(void) {
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
     header_s head;
     cout << "I'm in the handler" << endl;
+    cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
     get_header(rec_buffer.data(), head);
     static obs_time start_time{head.epoch, head.ref_s};
     // this is ugly, but I don't have a better solution at the moment

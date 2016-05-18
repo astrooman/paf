@@ -54,7 +54,8 @@ class GPUpool
 {
     private:
         // that can be anything, depending on how many output bits we decide to use
-        Buffer<float> mainbuffer;
+        //Buffer<float> mainbuffer;
+        std::unique_ptr<Buffer<float>> p_mainbuffer;
         //DedispPlan dedisp;
         std::unique_ptr<DedispPlan> p_dedisp;
         hd_pipeline pipeline;

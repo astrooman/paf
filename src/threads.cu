@@ -42,7 +42,6 @@ using std::vector;
 
 #define PORT "17103"
 #define DATA 7168          // 128 time samples, 7 channels per time sample, 64-bit words
-#define BUFLEN 7168 + 64   // 8908 bytes for sample block and 64  bytes for header
 
 void *get_addr(sockaddr *sadr)
 {

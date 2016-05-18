@@ -2,6 +2,7 @@
 #define _H_PAFRB_BUFFER
 
 #include <algorithm>
+#include <iostream>
 #include <mutex>
 #include <vector>
 
@@ -33,6 +34,7 @@ class Buffer
         size_t totsize;            // total size of the data: #gulps * gulp size + extra samples for dedispersion
         size_t gulp;            // size of the single gulp
         size_t extra;           // number of extra time samples required to process the full gulp
+        int gpuid;
         int gulpno;             // number of gulps required in the buffer
         int stokes;             // number of Stokes parameters to keep in the buffer
         mutex buffermutex;
@@ -45,8 +47,8 @@ class Buffer
     protected:
 
     public:
-        Buffer();
-        Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u);
+        Buffer(int id);
+        Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int id);
         ~Buffer(void);
 
         void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int stokes_u);
@@ -58,17 +60,19 @@ class Buffer
 };
 
 template<class T>
-Buffer<T>::Buffer()
+Buffer<T>::Buffer(int id) : gpuid(id)
 {
+    cudaSetDevice(gpuid);
     start = 0;
     end = 0;
 }
 
 template<class T>
-Buffer<T>::Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u) : extra(extra_u),
+Buffer<T>::Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int id) : extra(extra_u),
                                                                                 gulp(gulp_u),
                                                                                 gulpno(gulpno_u),
-                                                                                totsize(size_u)
+                                                                                totsize(size_u),
+                                                                                gpuid(id)
 {
     start = 0;
     end = 0;
@@ -134,7 +138,8 @@ void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host
 {
     host_jump *= (gulp + extra);
 
-    cudaCheckError(cudaMemcpyAsync(out, d_buf + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream));
+    // single pulse search done on the first Stoke parameter only
+    cudaCheckError(cudaMemcpyAsync(out, pd_filterbank[0] + (idx- 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
