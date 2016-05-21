@@ -146,7 +146,7 @@ inline void get_header(unsigned char* packet, header_s &head)
 //    cout << "Sample block length: " << head.block_len << endl;
 //    cout << "Period: " << head.period << endl;
 //    cout << "Number of channels: " << head.nchans << endl;
-//    cout << "Data frame within the current period: " << head.frame_no << endl;
+    cout << "Data frame within the current period: " << head.frame_no << endl;
 //    cout << "Sample intervals per period: " << head.sipp << endl;
 //    cout << "Synchronisation word: " << std::hex << head.synch << std::dec << endl;
     cout.flush();

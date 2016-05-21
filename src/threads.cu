@@ -55,30 +55,6 @@ void *get_addr(sockaddr *sadr)
 int main(int argc, char *argv[])
 {
     std::string config_file;
-
-    bool test{false};           // don't use test buffer by default
-    bool verbose{false};        // don't use verbose mode by default
-    unsigned int chunks{32};    // 32 chunks by default - this is just for testing purposes
-    unsigned int streamno{4};   // 4 streams by default
-    unsigned int beamno{3};     // 3 beams by default
-    unsigned int times{4};      // 4 time samples by default
-    unsigned int freq{16};       // no frequency averaging by default, at least 8, possibly 16
-    // might be 336 / 168 or 384 / 192
-    unsigned int nchans{336};   // number of 1MHz channels - might change
-    unsigned int ngpus{3};      // number of GPUs
-
-    // dedispersion parameters
-    double band = 1.185;         // sampling rate for each band in MHz
-    double dstart{0.0};
-    double dend{4000.0};
-    double foff{0.50};
-    double ftop{1400.0};
-    double tsamp = ((double)1.0 / (band * 1e+06) * (double)32.0);
-    unsigned int filchans{nchans * 27 / freq};
-    unsigned int gulp{131072};  // 2^17, equivalent to ~14s for 108us sampling time
-
-    int *killmask = new int[filchans];
-
     config_s config;
     default_config(config);
 
@@ -130,22 +106,15 @@ int main(int argc, char *argv[])
         }
 
     }
-    // should not take more than 5 seconds
     cout << "Starting up. This may take few seconds..." << endl;
 
     int devcount{0};
-/*    cudaCheckError(cudaGetDeviceCount(&devcount));
+    cudaCheckError(cudaGetDeviceCount(&devcount));
     if (config.ngpus > devcount) {
         cout << "You can't use more GPUs than you have available!" << endl;
         config.ngpus = devcount;
     }
-*/
-    // using thread pool will remove the need of checking which stream is used
-    // each thread will be associated with a separate stream
-    // it will start proceesing the new chunk as soon as possible
-    unsigned int batchs{config.beamno * config.nchans};      // # beams * 192 channels
-                                            // need to decide how this data will be stored
-    unsigned int ffts{32};
+
     Oberpool mypool(config);
 
     /*Pool mypool(batchs, ffts, config.times, config.freq, config.streamno, 4, config);

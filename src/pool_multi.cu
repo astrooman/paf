@@ -197,7 +197,7 @@ void GPUpool::execute(void)
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("130.155.181.223"), 17100 + ii + 6 * gpuid)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
     }
@@ -275,15 +275,17 @@ void GPUpool::dedisp_thread(int dstream) {
 // TODO: sort out horrible race conditions in the networking code
 
 void GPUpool::receive_thread(void) {
-    cout << "In the receiver thread. Waiting to get something..." << endl;
+    //cout << "In the receiver thread. Waiting to get something..." << endl;
     cout.flush();
-    sockets[5].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoint));
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoint));
 }
 
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
     header_s head;
-    cout << "I'm in the handler" << endl;
-    cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
+    //cout << "I'm in the handler" << endl;
+    //cout << "Received " << bytes_transferred << " bytes" << endl;
+    //cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
+    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
     get_header(rec_buffer.data(), head);
     static obs_time start_time{head.epoch, head.ref_s};
     // this is ugly, but I don't have a better solution at the moment
@@ -292,7 +294,7 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
 
     get_data(rec_buffer.data(), fpga, start_time);
     packcount++;
-    //if (packcount < 48)
+    if (packcount < 10)
         receive_thread();
 }
 
