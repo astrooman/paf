@@ -36,6 +36,7 @@ class Buffer
         size_t extra;           // number of extra time samples required to process the full gulp
         int gpuid;
         int gulpno;             // number of gulps required in the buffer
+        int nchans;             // number of filterbank channels per time sample
         int stokes;             // number of Stokes parameters to keep in the buffer
         mutex buffermutex;
         mutex statemutex;
@@ -51,7 +52,7 @@ class Buffer
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int id);
         ~Buffer(void);
 
-        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int stokes_u);
+        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int, filchans, int stokes_u);
         void dump(int idx, header_f head);
         int ready();
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
@@ -89,11 +90,12 @@ Buffer<T>::~Buffer()
 }
 
 template<class T>
-void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int stokes_u)
+void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u)
 {
     extra = extra_u;
     gulp = gulp_u;
     gulpno = gulpno_u;
+    nchans = filchans;
     // size is the size of the buffer for the single Stokes parameter
     totsize = size_u;
     stokes = stokes_u;
@@ -103,9 +105,10 @@ void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t siz
     pd_filterbank = new float*[stokes];
     ph_filterbank = new float*[stokes];
     for (int ii = 0; ii < stokes; ii++) {
-        h_filterbank[ii].resize((gulp + extra) * 2);
+        // used to hold 2 full filterbank buffers
+        h_filterbank[ii].resize((gulp + extra) * 2 * nchans);
         ph_filterbank[ii] = thrust::raw_pointer_cast(h_filterbank[ii].data());
-        d_filterbank[ii].resize(totsize);
+        d_filterbank[ii].resize(totsize * nchans);
         pd_filterbank[ii] = thrust::raw_pointer_cast(d_filterbank[ii].data());
     }
     cudaCheckError(cudaMalloc((void**)&d_buf, totsize * stokes * sizeof(T)));
@@ -136,10 +139,10 @@ int Buffer<T>::ready()
 template<class T>
 void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump)
 {
-    host_jump *= (gulp + extra);
+    // which half of the RAM buffer we are saving into
+    host_jump *= (gulp + extra) * nchans;
 
-    // single pulse search done on the first Stoke parameter only
-    cudaCheckError(cudaMemcpyAsync(out, pd_filterbank[0] + (idx- 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToDevice, stream));
+    // dump to the host memory only - not interested in the dedisperion in the dump mode
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
@@ -155,6 +158,7 @@ template<class T>
 void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaStream_t stream)
 {
     // need to make sure only one stream saves the data to the buffer
+    // not really a problem anyway - only one DtD available at a time
     // we will save one data sample at a time, with fixed size
     // no need to check that there is enough space available to fit all the data before the end of the buffer
     std::lock_guard<mutex> addguard(buffermutex);

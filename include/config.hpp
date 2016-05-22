@@ -53,7 +53,7 @@ inline void default_config(config_s &config) {
     config.beamno = 1;
     config.chunks = 32;
     config.fftsize = 32;
-    config.freqavg = 8;
+    config.freqavg = 9;
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 7;
     config.ngpus = 3;

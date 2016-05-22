@@ -66,7 +66,7 @@ class GPUpool
         vector<thrust::device_vector<float>> dv_freq_scrunch;
 
         udp::endpoint sender_endpoint;
-	vector<udp::endpoint> sender_endpoints;
+	    vector<std::shared_ptr<udp::endpoint>> sender_endpoints;
         vector<udp::socket> sockets;
         boost::array<unsigned char, 7168 + 64> rec_buffer;
 

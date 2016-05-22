@@ -158,11 +158,12 @@ void GPUpool::execute(void)
 
     //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
+    // this is the number of time sample - each timesample will have config.filchans frequencies
     dedisp_totsamples = (size_t)_config.gulp + 5000; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
     dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //p_dedisp->get_max_delay();
     // can this method be simplified?
-    p_mainbuffer->allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, stokes); 
+    p_mainbuffer->allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, config.filchans, tokes);
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -184,9 +185,6 @@ void GPUpool::execute(void)
     // dedispersion thread
     cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
     mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
-    // single pulse thread
-    //cudaCheckError(cudaStreamCreate(&mystreams[avt - 1]));
-    //mythreads.push_back(thread(&GPUpool::search_thread, this, avt - 1));
 
     // STAGE: networking
     // crude approach for now
@@ -200,6 +198,7 @@ void GPUpool::execute(void)
         sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
+        sender_endpoints.push_back(std::make_shared<udp::endpoint>());
     }
 
     mythreads.push_back(thread(&GPUpool::receive_thread, this));
@@ -277,7 +276,7 @@ void GPUpool::dedisp_thread(int dstream) {
 void GPUpool::receive_thread(void) {
     //cout << "In the receiver thread. Waiting to get something..." << endl;
     cout.flush();
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), sender_endpoint, boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, sender_endpoint));
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoint[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoint[0]));
 }
 
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
