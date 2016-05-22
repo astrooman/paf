@@ -158,7 +158,7 @@ class GPUpool
         void execute(void);
         void get_data(unsigned char* data, int frame, obs_time start_time);
         void worker(int stream);
-        void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint);
+        void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint);
         void receive_thread(void);
         void search_thread(int sstream);
 };

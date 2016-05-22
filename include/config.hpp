@@ -54,7 +54,8 @@ inline void default_config(config_s &config) {
     config.chunks = 32;
     config.fftsize = 32;
     config.freqavg = 9;
-    config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
+    config.gulp = 16384;        // 2^24, equivalent to ~1.75s for 108us sampling time (for testing purposes)
+    //config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 7;
     config.ngpus = 3;
     config.npol = 2;

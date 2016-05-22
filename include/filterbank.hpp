@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <sstream>
 
@@ -34,12 +35,14 @@ struct header_f
 
 };
 
-inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head)
+inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
 {
+
     std::ostringstream oss;
-    oss.str("stokes1");
+    oss.str("");
+    oss << saved;
     std::string filename;
-    filename = oss.str() + ".dat";
+    filename = "stokes1" + oss.str() + ".dat";
     std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
     int length{0};
@@ -180,8 +183,6 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
     }
 
     outfile.close();
-
-
 }
 
 

@@ -159,11 +159,11 @@ void GPUpool::execute(void)
     //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)_config.gulp + 5000; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)_config.gulp + 1000; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 5000; //p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 1000; //p_dedisp->get_max_delay();
     // can this method be simplified?
-    p_mainbuffer->allocate(dedisp_buffno, 5000, _config.gulp, dedisp_buffsize, config.filchans, tokes);
+    p_mainbuffer->allocate(dedisp_buffno, 1000, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -260,12 +260,16 @@ void GPUpool::dedisp_thread(int dstream) {
     cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
         int ready = p_mainbuffer->ready();
+        //cout << ready << endl;
         if (ready) {
             header_f headerfil;
+            headerfil.nbits = 32;
+            headerfil.nchans = _config.filchans;
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
         } else {
+            //std::cout << "Nothing to save" << std::endl;
             std::this_thread::yield();
         }
     }
@@ -276,59 +280,59 @@ void GPUpool::dedisp_thread(int dstream) {
 void GPUpool::receive_thread(void) {
     //cout << "In the receiver thread. Waiting to get something..." << endl;
     cout.flush();
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoint[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoint[0]));
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[0]));
 }
 
-void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint &endpoint) {
+void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint) {
     header_s head;
     //cout << "I'm in the handler" << endl;
     //cout << "Received " << bytes_transferred << " bytes" << endl;
     //cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
-    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
-    get_header(rec_buffer.data(), head);
-    static obs_time start_time{head.epoch, head.ref_s};
-    // this is ugly, but I don't have a better solution at the moment
-    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
-    int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
+	    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
+	    get_header(rec_buffer.data(), head);
+	    static obs_time start_time{head.epoch, head.ref_s};
+	    // this is ugly, but I don't have a better solution at the moment
+	    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
+	    int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
-    get_data(rec_buffer.data(), fpga, start_time);
-    packcount++;
-    if (packcount < 10)
-        receive_thread();
-}
+	    get_data(rec_buffer.data(), fpga, start_time);
+	    packcount++;
+	    if (packcount > 0)
+		receive_thread();
+	}
 
-void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
+	void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 
-{
-    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
-    unsigned int idx = 0;
-    unsigned int idx2 = 0;
+	{
+	    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
+	    unsigned int idx = 0;
+	    unsigned int idx2 = 0;
 
 
-    header_s head;
-    get_header(data, head);
+	    header_s head;
+	    get_header(data, head);
 
-    // there are 250,000 frames per 27s period
-    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
+	    // there are 250,000 frames per 27s period
+	    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
 
-    //int fpga_id = frame % 48;
-    //int framet = (int)(frame / 48);         // proper frame number within the current period
+	    //int fpga_id = frame % 48;
+	    //int framet = (int)(frame / 48);         // proper frame number within the current period
 
-    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+	    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
 
-    //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
+	    //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
 
-    //int fpga_id = frame % 48;
-    //int framet = (int)(frame / 48);         // proper frame number within the current period
+	    //int fpga_id = frame % 48;
+	    //int framet = (int)(frame / 48);         // proper frame number within the current period
 
-    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
-    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
+	    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
+	    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
 
-    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
-                                                                                // used to skip second polarisation data
+	    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+											// used to skip second polarisation data
 
-    // TEST: version for 7MHz band only
-    if (frame > highest_frame) {
+	    // TEST: version for 7MHz band only
+	    if (frame > highest_frame) {
 
         highest_frame = frame;
         //highest_framet = (int)(frame / 48)
@@ -349,12 +353,12 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 
     if ((frame % 2) == 0) {                     // send the first one
         add_data(h_pol, {start_time.start_epoch, start_time.start_second, frame});
-        cout << "Sent the first buffer" << endl;
-        cout.flush();
+        //cout << "Sent the first buffer" << endl;
+        //cout.flush();
     } else if((frame % 2) == 1) {        // send the second one
         add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, frame});
-        cout << "Sent the second buffer" << endl;
-        cout.flush();
+        //cout << "Sent the second buffer" << endl;
+        //cout.flush();
     }
 
     // if (frame > highest_frame) {
@@ -425,5 +429,5 @@ void GPUpool::add_data(cufftComplex *buffer, obs_time frame_time)
     std::lock_guard<mutex> addguard(datamutex);
     // TODO: is it possible to simplify this messy line?
     mydata.push(pair<vector<cufftComplex>, obs_time>(vector<cufftComplex>(buffer, buffer + d_in_size), frame_time));
-    cout << "Pushed the data to the queue of current length of " << mydata.size() << endl;
+    //cout << "Pushed the data to the queue of current length of " << mydata.size() << endl;
 }

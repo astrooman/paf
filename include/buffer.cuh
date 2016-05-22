@@ -38,6 +38,7 @@ class Buffer
         int gulpno;             // number of gulps required in the buffer
         int nchans;             // number of filterbank channels per time sample
         int stokes;             // number of Stokes parameters to keep in the buffer
+        int fil_saved;
         mutex buffermutex;
         mutex statemutex;
         size_t start;
@@ -52,7 +53,7 @@ class Buffer
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int id);
         ~Buffer(void);
 
-        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int, filchans, int stokes_u);
+        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
         void dump(int idx, header_f head);
         int ready();
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
@@ -92,6 +93,7 @@ Buffer<T>::~Buffer()
 template<class T>
 void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u)
 {
+    fil_saved = 0;
     extra = extra_u;
     gulp = gulp_u;
     gulpno = gulpno_u;
@@ -120,7 +122,8 @@ template<class T>
 void Buffer<T>::dump(int idx, header_f header)
 {
         // idx will be use to tell which part of the buffer to dump
-        save_filterbank(ph_filterbank, gulp + extra, (gulp + extra) * idx, header);
+        save_filterbank(ph_filterbank, gulp + extra, (gulp + extra) * idx, header, fil_saved);
+        fil_saved++;
         // need info from the telescope
 }
 
@@ -169,14 +172,11 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
         end = end - gulpno * gulp;    // go back to the start
 
     // TODO: try to come up with a slightly different implementation - DtD copies should be avoided whenever possible
-    std::cout << "Attempting to write to the buffer!" << std::endl;
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[0] + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[1] + index * amount, d_data + amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[2] + index * amount, d_data + 2 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[3] + index * amount, d_data + 3 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     //cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
-    std::cout << "Written to the buffer!" << std::endl;
-    std::cout.flush();
     sample_state[index] = 1;
     // need to save in two places in the buffer
     if (index >= gulpno * gulp) {
