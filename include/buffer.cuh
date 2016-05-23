@@ -1,6 +1,13 @@
 #ifndef _H_PAFRB_BUFFER
 #define _H_PAFRB_BUFFER
 
+/*! \file buffer.cuh
+    \brief Defines the main buffer class.
+
+    This is the buffer that is used to aggregate the FFTed data before it is sent to the dedispersion.
+    Uses a slightly convoluted version of a ring buffer (the same data chunk is occasionally saved into two places).
+*/
+
 #include <algorithm>
 #include <iostream>
 #include <mutex>

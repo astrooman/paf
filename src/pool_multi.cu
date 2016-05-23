@@ -263,6 +263,16 @@ void GPUpool::dedisp_thread(int dstream) {
         //cout << ready << endl;
         if (ready) {
             header_f headerfil;
+            headerfil.raw_file = "tastytastytest";
+            headerfil.source_name = "nobodyreallyknows";
+            headerfil.az = 0.0;
+            headerfil.dec = 0.0;
+            headerfil.fch1 = _config.ftop;
+            headerfil.foff = _config.foff;
+            headerfil.ra = 0.0;
+            headerfil.rdm = 0.0;
+            headerfil.tsamp = _config.tsamp;
+            headerfil.za = 0.0;
             headerfil.nbits = 32;
             headerfil.nchans = _config.filchans;
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));

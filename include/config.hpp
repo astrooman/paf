@@ -47,13 +47,13 @@ inline void default_config(config_s &config) {
     config.band = 1.185;
     config.dstart = 0.0;
     config.dend = 4000.0;
-    config.foff = 0.50;
     config.ftop = 1400.0;
 
     config.beamno = 1;
     config.chunks = 32;
     config.fftsize = 32;
     config.freqavg = 9;
+    config.foff = 1/27 * config.freqavg;
     config.gulp = 16384;        // 2^24, equivalent to ~1.75s for 108us sampling time (for testing purposes)
     //config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     config.nchans = 7;

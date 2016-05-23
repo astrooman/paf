@@ -1,6 +1,11 @@
 #ifndef _H_PAFRB_POOL
 #define _H_PAFRB_POOL
 
+/*! \file pool.cuh
+    \brief No longer in use - call Oberpool with -n 1 option for a singlpe-GPU execution.
+*/
+
+
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -109,7 +114,7 @@ class Pool
         // just in case I don't catch where they are used - not deep copy currently implemented
         Pool(const Pool &inpool) = delete;
         Pool &operator=(const Pool &inpool) = delete;
-        
+
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
         void get_data(unsigned char* data, int frame, int &highest_frame, int &highest_framet, int &thread, obs_time start_time);
