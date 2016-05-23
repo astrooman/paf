@@ -56,7 +56,7 @@ inline void default_config(config_s &config) {
     config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
     config.gulp = 16384;        // 2^24, equivalent to ~1.75s for 108us sampling time (for testing purposes)
     //config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
-    config.nchans = 7;
+    config.nchans = 21;
     config.ngpus = 3;
     config.npol = 2;
     config.stokes = 4;
