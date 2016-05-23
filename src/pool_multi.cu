@@ -272,9 +272,17 @@ void GPUpool::dedisp_thread(int dstream) {
             headerfil.ra = 0.0;
             headerfil.rdm = 0.0;
             headerfil.tsamp = _config.tsamp;
+            headerfil.tstart = 0.0;
             headerfil.za = 0.0;
+            headerfil.data_type = 1;
+            headerfil.ibeam = 0;
+            headerfil.machine_id = 2;
+            headerfil.nbeams = 1;
             headerfil.nbits = 32;
             headerfil.nchans = _config.filchans;
+            headerfil.nifs = 2;
+            headerfil.telescope_id = 2;
+            
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;

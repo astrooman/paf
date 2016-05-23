@@ -133,7 +133,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "tsamp");
         outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.tsamp, sizeof(int));
+        outfile.write((char*)&head.tsamp, sizeof(double));
 
         // bits per time sample
         outfile.write((char*)&length, sizeof(int));
@@ -145,7 +145,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "refdm");
         outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.rdm, sizeof(int));
+        outfile.write((char*)&head.rdm, sizeof(double));
 
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "ibeam");
@@ -157,13 +157,13 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "fch1");
         outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.fch1, sizeof(int));
+        outfile.write((char*)&head.fch1, sizeof(double));
 
         // channel bandwidth
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "foff");
         outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.foff, sizeof(int));
+        outfile.write((char*)&head.foff, sizeof(double));
 
         // number of if channels
         outfile.write((char*)&length, sizeof(int));
@@ -174,7 +174,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
         length = 10;
         outfile.write((char*)&length, sizeof(int));
         strcpy(field, "HEADER_END");
-        outfile.write(field, length * sizeof(int));
+        outfile.write(field, length * sizeof(char));
 
         size_t to_save = nsamps * head.nchans * head.nbits / 8;
 
