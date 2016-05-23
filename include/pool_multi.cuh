@@ -1,6 +1,11 @@
 #ifndef _H_PAFRB_POOL_MULTI
 #define _H_PAFRB_POOL_MULTI
 
+/*! \file pool_multi.cuh
+    \brief Defines classes that are responsible for all the work done
+
+*/
+
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -27,6 +32,11 @@ using std::vector;
 
 class GPUpool;
 
+/*! \class Oberpool
+    \brief Main pool class, containter for GPUpool(s).
+
+*/
+
 class Oberpool
 {
     private:
@@ -49,6 +59,11 @@ class Oberpool
 };
 
 // TODO: clean this mess up!!
+
+/*! \class GPUpool
+    \brief Class responsible for managing the work on a single GPU.
+
+*/
 
 class GPUpool
 {
@@ -145,14 +160,30 @@ class GPUpool
     protected:
 
     public:
+        //! A default constructor.
+        /*!
+            Deleted
+        */
         GPUpool(void) = delete;
+        //! A constructor.
+        /*!
+            \param id the GPU it to be set using cudaSetDevice()
+            \param config the configuration structure
+        */
         GPUpool(int id, config_s config);
         ~GPUpool(void);
+        //! A copy constructor.
+        /*!
+            Deleted for safety, to avoid problems with shallow copying.
+        */
         GPUpool(const GPUpool &inpool) = delete;
+        /*! \brief An assignment operator.
+            Deleted for safety, to avoid problems with shallow copying.
+        */
         GPUpool& operator=(const GPUpool &inpool) = delete;
         GPUpool(GPUpool &&inpool) = delete;
         GPUpool& operator=(GPUpool &&inpool) = delete;
-        // add deleted copy, move, etc constructors
+
         void add_data(cufftComplex *buffer, obs_time frame_time);
         void dedisp_thread(int dstream);
         void execute(void);
