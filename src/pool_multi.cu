@@ -133,7 +133,9 @@ void GPUpool::execute(void)
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
-    pack_per_buf = 96;
+    // TEST
+    //pack_per_buf = 12;
+    pack_per_buf = 6;
     h_pol = new cufftComplex[d_in_size * 2];
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault));
@@ -201,6 +203,15 @@ void GPUpool::execute(void)
         sender_endpoints.push_back(std::make_shared<udp::endpoint>());
     }
 
+    /*for (int ii = 0; ii < 3; ii++) {
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii + 6 * gpuid)));
+        sockets[ii].set_option(option);
+        sockets[ii].set_option(option2);
+        sender_endpoints.push_back(std::make_shared<udp::endpoint>());
+    } */
+
+    // TEST
+    //for (int ii = 0; ii < 6; ii++)
     for (int ii = 0; ii < 3; ii++) {
         mythreads.push_back(thread(&GPUpool::receive_thread, this, ii));
     }
@@ -344,7 +355,6 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
     //int framet = (int)(frame / 48);         // proper frame number within the current period
 
     int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
-    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
 
     int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
 										// used to skip second polarisation data
@@ -365,8 +375,9 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
                 h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
             }
         }
-
-    } else if (highest_frame - frame < 10) {
+    // TEST
+    //} else if (highest_frame - frame < 2) {
+    } else if (highest_frame - frame < 2) {
 
         #pragma unroll
         for (int chan = 0; chan < 7; chan++) {
@@ -380,13 +391,17 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
             }
         }
 
-    }   // don't save if more than 10 frames late
+    }   // don't save if more than 2 frames late
 
-    if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
+    // TEST
+    //if ((bufidx - pack_per_buf / 2) > 3) {
+    if ((bufidx - pack_per_buf / 2) > 2) {                     // if 2 samples or more into the second buffer - send first one
         add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
         cout << "Sent the first buffer" << endl;
         cout.flush();
-    } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
+    // TEST
+    //} else if((bufidx) > 3 && (frame > 1)) {
+    } else if((bufidx) > 2 && (frame > 1)) {        // if 2 samples or more into the first buffer and second buffer has been filled - send second one
         add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
         cout << "Sent the second buffer" << endl;
         cout.flush();
