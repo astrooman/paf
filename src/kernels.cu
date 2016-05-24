@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include <kernels.cuh>
+__device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
 // jump take care of all Stoke paramters
 __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
 {
@@ -43,11 +44,11 @@ __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
     // i think the if statement is unnecessary as the number of threads for this
     // kernel 0s fftpoint * timeavg * nchans, which is exactly the size of the output array
     if (idx1 < jump) {      // half of the input data
-        float power1 = in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y;
-        float power2 = in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y;
+        float power1 = (in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y) * fftfactor;
+        float power2 = (in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y) * fftfactor;
         out[idx1] = (power1 + power2); // I; what was this doing here? / 2.0;
         out[idx1 + jump] = (power1 - power2); // Q
-        out[idx1 + 2 * jump] = 2 * in[idx1].x * in[idx2].x + 2 * in[idx1].y * in[idx2].y; // U
-        out[idx1 + 3 * jump] = 2 * in[idx1].x * in[idx2].y - 2 * in[idx1].y * in[idx2].x; // V
+        out[idx1 + 2 * jump] = 2 * fftfactor * (in[idx1].x * in[idx2].x + in[idx1].y * in[idx2].y); // U
+        out[idx1 + 3 * jump] = 2 * fftfactor * (in[idx1].x * in[idx2].y - in[idx1].y * in[idx2].x); // V
     }
 }
