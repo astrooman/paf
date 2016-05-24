@@ -133,7 +133,9 @@ void GPUpool::execute(void)
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
-    pack_per_buf = 96;
+    // TEST
+    //pack_per_buf = 12;
+    pack_per_buf = 6;
     h_pol = new cufftComplex[d_in_size * 2];
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault));
@@ -194,14 +196,25 @@ void GPUpool::execute(void)
     boost::asio::socket_base::reuse_address option(true);
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
-    for (int ii = 0; ii < 6; ii++) {
+    for (int ii = 0; ii < 3; ii++) {
         sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
         sender_endpoints.push_back(std::make_shared<udp::endpoint>());
     }
 
-    mythreads.push_back(thread(&GPUpool::receive_thread, this));
+    /*for (int ii = 0; ii < 3; ii++) {
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii + 6 * gpuid)));
+        sockets[ii].set_option(option);
+        sockets[ii].set_option(option2);
+        sender_endpoints.push_back(std::make_shared<udp::endpoint>());
+    } */
+
+    // TEST
+    //for (int ii = 0; ii < 6; ii++)
+    for (int ii = 0; ii < 3; ii++) {
+        mythreads.push_back(thread(&GPUpool::receive_thread, this, ii));
+    }
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ios->run();
     //mythreads.push_back(thread([&ios]{ios.run();}));
@@ -282,7 +295,7 @@ void GPUpool::dedisp_thread(int dstream) {
             headerfil.nchans = _config.filchans;
             headerfil.nifs = 2;
             headerfil.telescope_id = 2;
-            
+
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
@@ -295,62 +308,58 @@ void GPUpool::dedisp_thread(int dstream) {
 
 // TODO: sort out horrible race conditions in the networking code
 
-void GPUpool::receive_thread(void) {
+void GPUpool::receive_thread(int sockid) {
     //cout << "In the receiver thread. Waiting to get something..." << endl;
     cout.flush();
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[0]));
+    sockets[sockid].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[sockid], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[sockid], sockid));
 }
 
-void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint) {
+void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint, int sockid) {
     header_s head;
     //cout << "I'm in the handler" << endl;
     //cout << "Received " << bytes_transferred << " bytes" << endl;
     //cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
-	    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
-	    get_header(rec_buffer.data(), head);
-	    static obs_time start_time{head.epoch, head.ref_s};
-	    // this is ugly, but I don't have a better solution at the moment
-	    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
-	    int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
+    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
+    get_header(rec_buffer.data(), head);
+    static obs_time start_time{head.epoch, head.ref_s};
+    // this is ugly, but I don't have a better solution at the moment
+    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
+    int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
-	    get_data(rec_buffer.data(), fpga, start_time);
-	    packcount++;
-	    if (packcount > 0)
-		receive_thread();
-	}
+    get_data(rec_buffer.data(), fpga, start_time);
+    packcount++;
+    if (packcount > 0)
+	receive_thread(sockid);
+}
 
-	void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
-
-	{
-	    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
-	    unsigned int idx = 0;
-	    unsigned int idx2 = 0;
+void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
+    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
+    unsigned int idx = 0;
+    unsigned int idx2 = 0;
 
 
-	    header_s head;
-	    get_header(data, head);
+    header_s head;
+    get_header(data, head);
 
-	    // there are 250,000 frames per 27s period
-	    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
+    // there are 250,000 frames per 27s period
+    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
 
-	    //int fpga_id = frame % 48;
-	    //int framet = (int)(frame / 48);         // proper frame number within the current period
+    //int fpga_id = frame % 48;
+    //int framet = (int)(frame / 48);         // proper frame number within the current period
 
-	    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
 
-	    //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
+    //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
 
-	    //int fpga_id = frame % 48;
-	    //int framet = (int)(frame / 48);         // proper frame number within the current period
+    //int fpga_id = frame % 48;
+    //int framet = (int)(frame / 48);         // proper frame number within the current period
 
-	    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
-	    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
+    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
 
-	    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
-											// used to skip second polarisation data
+    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+										// used to skip second polarisation data
 
-	    // TEST: version for 7MHz band only
-	    if (frame > highest_frame) {
+    if (frame > highest_frame) {
 
         highest_frame = frame;
         //highest_framet = (int)(frame / 48)
@@ -359,7 +368,22 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
         for (int chan = 0; chan < 7; chan++) {
             for (int sample = 0; sample < 128; sample++) {
                 idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample;        // get the position in the buffer
+                idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
+                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
+                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+            }
+        }
+    // TEST
+    //} else if (highest_frame - frame < 2) {
+    } else if (highest_frame - frame < 2) {
+
+        #pragma unroll
+        for (int chan = 0; chan < 7; chan++) {
+            for (int sample = 0; sample < 128; sample++) {
+                idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
+                idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
                 h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
                 h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
                 h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
@@ -367,60 +391,21 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
             }
         }
 
-    }
+    }   // don't save if more than 2 frames late
 
-    if ((frame % 2) == 0) {                     // send the first one
-        add_data(h_pol, {start_time.start_epoch, start_time.start_second, frame});
-        //cout << "Sent the first buffer" << endl;
-        //cout.flush();
-    } else if((frame % 2) == 1) {        // send the second one
-        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, frame});
-        //cout << "Sent the second buffer" << endl;
-        //cout.flush();
+    // TEST
+    //if ((bufidx - pack_per_buf / 2) > 3) {
+    if ((bufidx - pack_per_buf / 2) > 2) {                     // if 2 samples or more into the second buffer - send first one
+        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        cout << "Sent the first buffer" << endl;
+        cout.flush();
+    // TEST
+    //} else if((bufidx) > 3 && (frame > 1)) {
+    } else if((bufidx) > 2 && (frame > 1)) {        // if 2 samples or more into the first buffer and second buffer has been filled - send second one
+        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        cout << "Sent the second buffer" << endl;
+        cout.flush();
     }
-
-    // if (frame > highest_frame) {
-    //
-    //     highest_frame = frame;
-    //     //highest_framet = (int)(frame / 48)
-    //
-    //     #pragma unroll
-    //     for (int chan = 0; chan < 7; chan++) {
-    //         for (int sample = 0; sample < 128; sample++) {
-    //             idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-    //             idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
-    //             h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-    //             h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-    //             h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-    //             h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-    //         }
-    //     }
-    //
-    // } else if (highest_frame - frame < 10) {
-    //
-    //     #pragma unroll
-    //     for (int chan = 0; chan < 7; chan++) {
-    //         for (int sample = 0; sample < 128; sample++) {
-    //             idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
-    //             idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
-    //             h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-    //             h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-    //             h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-    //             h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-    //         }
-    //     }
-    //
-    // }   // don't save if more than 10 frames late
-    //
-    // if ((bufidx - pack_per_buf / 2) > 10) {                     // if 10 samples or more into the second buffer - send first one
-    //     add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-    //     cout << "Sent the first buffer" << endl;
-    //     cout.flush();
-    // } else if((bufidx) > 10 && (frame > 1)) {        // if 10 samples or more into the first buffer and second buffer has been filled - send second one
-    //     add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-    //     cout << "Sent the second buffer" << endl;
-    //     cout.flush();
-    // }
 
     /* if((frame - previous_frame) > 1) {
         // count words only as one word provides one full time sample per polarisation
