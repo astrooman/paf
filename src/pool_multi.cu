@@ -122,13 +122,22 @@ void GPUpool::execute(void)
     // TODO: make a private const data memmber and put in the initializer list!!
     nchans = _config.nchans;
 
-    CUDAthreads[0] = fftpoint * timeavg * nchans;
+    // HASK: very quick solution to making the 21MHz work
+    CUDAthreads[0] = 32 * 4 * 21 / 3;	// 2688 / 3 - need 3 blocks!
+    CUDAthreads[1] = nchans;		// 21 - fine!
+    CUDAthreads[2] = 21 * 27 / 9;	// 63 - fine!
+
+    CUDAblocks[0] = 3;
+    CUDAblocks[1] = 1;
+    CUDAblocks[2] = 1;
+
+    /* CUDAthreads[0] = fftpoint * timeavg * nchans;
     CUDAthreads[1] = nchans;
     CUDAthreads[2] = nchans * (fftpoint - 5) / freqavg;
     CUDAblocks[0] = 1;
     CUDAblocks[1] = 1;
     CUDAblocks[2] = 1;
-
+    */
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;

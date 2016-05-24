@@ -229,9 +229,9 @@ class GPUpool
             \param endpoint udp::endpoint object containing sender information (used to obtain the fpga_id from the sender's IP)
 
         */
-        void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint);
+        void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint, int sockid);
         //! Calls async_receive_from() on the UDP socket.
-        void receive_thread(void);
+        void receive_thread(int sockid);
         //! Single pulse search thread worker.
         /*! Responsible for picking up the dedispersed data buffer and dispatching it to the single pulse search pipeline.
             Calls hd_execute() and saves the filterbank if the appropriate single pulse has been detected.
