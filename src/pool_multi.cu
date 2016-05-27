@@ -159,11 +159,12 @@ void GPUpool::execute(void)
     //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)_config.gulp + 1000; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)_config.gulp + 0; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 1000; //p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 0; //p_dedisp->get_max_delay();
+    cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(dedisp_buffno, 1000, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    p_mainbuffer->allocate(dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -178,7 +179,7 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < nostreams; ii++) {
             cudaCheckError(cudaStreamCreate(&mystreams[ii]));
             // TODO: add separate error checking for cufft functions
-            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize));
+            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol));
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
@@ -195,7 +196,7 @@ void GPUpool::execute(void)
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17101 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
         sender_endpoints.push_back(std::make_shared<udp::endpoint>());
@@ -240,7 +241,6 @@ void GPUpool::worker(int stream)
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
-
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
@@ -260,11 +260,11 @@ void GPUpool::dedisp_thread(int dstream) {
     cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
         int ready = p_mainbuffer->ready();
-        //cout << ready << endl;
         if (ready) {
+            //cout << ready << endl;
             header_f headerfil;
             headerfil.raw_file = "tastytastytest";
-            headerfil.source_name = "nobodyreallyknows";
+            headerfil.source_name = "J1641-45";
             headerfil.az = 0.0;
             headerfil.dec = 0.0;
             headerfil.fch1 = _config.ftop;
@@ -280,7 +280,7 @@ void GPUpool::dedisp_thread(int dstream) {
             headerfil.nbeams = 1;
             headerfil.nbits = 32;
             headerfil.nchans = _config.filchans;
-            headerfil.nifs = 2;
+            headerfil.nifs = 1;
             headerfil.telescope_id = 2;
             
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
@@ -332,7 +332,7 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
 
 	    // there are 250,000 frames per 27s period
 	    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
-
+            //cout << "Frame " << frame << endl;
 	    //int fpga_id = frame % 48;
 	    //int framet = (int)(frame / 48);         // proper frame number within the current period
 
@@ -346,9 +346,10 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
 	    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
 	    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
 
-	    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+	    //int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
 											// used to skip second polarisation data
-
+            int startidx = (frame % 2) * d_in_size;
+            //cout << "Start index " << startidx << endl;
 	    // TEST: version for 7MHz band only
 	    if (frame > highest_frame) {
 
@@ -359,9 +360,11 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
         for (int chan = 0; chan < 7; chan++) {
             for (int sample = 0; sample < 128; sample++) {
                 idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample;        // get the position in the buffer
+                idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
                 h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
+                //std::cout << "Real " << h_pol[idx2].x << std::endl;
                 h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
+                //std::cout << "Imaginary " << h_pol[idx2].y << std::endl;
                 h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
                 h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
             }

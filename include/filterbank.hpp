@@ -35,14 +35,14 @@ struct header_f
 
 };
 
-inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
+inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
 {
 
     std::ostringstream oss;
     oss.str("");
     oss << saved;
     std::string filename;
-    filename = "stokes1" + oss.str() + ".dat";
+    filename = "stokes1" + oss.str() + ".fil";
     std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
     int length{0};
@@ -178,9 +178,31 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
 
         size_t to_save = nsamps * head.nchans * head.nbits / 8;
 
-        outfile.write(reinterpret_cast<char*>(ph_filterbank[0]), to_save);
+/*        std::cout << "Output from the filterbank" << std::endl;
+        for (int ii = 0; ii < 1; ii++) {
+            std::cout << ph_filterbank[start + ii] << " ";
+            std::cout.flush();
+        }
+        std::cout << std::endl << std::endl;
+*/
+/*        for (int ii = 0; ii < 1024; ii++) {
+            std::cout << ph_filterbank[start + nsamps * head.nchans - ii - 1] << " ";
+            std::cout.flush();
+        }
+        std::cout << std::endl << std::endl;
+*/
+/*       if (saved == 2) {
+		std::fstream float_out("floatstokes12.dat", std::ios_base::out | std::ios_base::trunc);
+		for (int ii = 0; ii < nsamps * head.nchans; ii++)
+			float_out << ph_filterbank[start + ii] << std::endl;
+		float_out.close();
+	}		
+*/
+        outfile.write(reinterpret_cast<char*>(&ph_filterbank[start]), to_save);
 
     }
+
+    std::cout << "Saved filterbank " << saved << std::endl;
 
     outfile.close();
 }
