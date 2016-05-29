@@ -196,7 +196,7 @@ void GPUpool::execute(void)
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
     for (int ii = 0; ii < 6; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17101 + ii + 6 * gpuid)));
+        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
         sender_endpoints.push_back(std::make_shared<udp::endpoint>());
@@ -361,12 +361,14 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
             for (int sample = 0; sample < 128; sample++) {
                 idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
                 idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
-                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-                //std::cout << "Real " << h_pol[idx2].x << std::endl;
-                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-                //std::cout << "Imaginary " << h_pol[idx2].y << std::endl;
-                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+                h_pol[idx2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 7] | (data[HEADER + idx + 6] << 8)));
+                //std::cout << "Real A " << h_pol[idx2].x << std::endl;
+                h_pol[idx2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 5] | (data[HEADER + idx + 4] << 8)));
+                //std::cout << "Imaginary A " << h_pol[idx2].y << std::endl;
+                h_pol[idx2 + d_in_size / 2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 3] | (data[HEADER + idx + 2] << 8)));
+                //std::cout << "Real B " << h_pol[idx2 + d_in_size / 2].x << std::endl;
+                h_pol[idx2 + d_in_size / 2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 1] | (data[HEADER + idx + 0] << 8)));
+                //std::cout << "Imaginary B " << h_pol[idx2 + d_in_size / 2].y << std::endl;
             }
         }
 

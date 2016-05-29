@@ -139,7 +139,7 @@ inline void get_header(unsigned char* packet, header_s &head)
 //    cout << "Complex data: " << head.comp << endl;
 //    cout << "In bits: " << head.in_bits << endl;
 //    cout << "Station: " << std::hex << head.station << std::dec << endl;
-    cout << "Thread number: " << head.thread << endl;
+//    cout << "Thread number: " << head.thread << endl;
 //    cout << "Group number: " << head.group << endl;
 //    cout << "Reference epoch: " << head.epoch << endl;
 //    cout << "Data array length: " << head.arr_len << endl;
