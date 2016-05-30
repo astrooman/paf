@@ -129,9 +129,6 @@ template<class T>
 void Buffer<T>::dump(int idx, header_f header)
 {
         // idx will be use to tell which part of the buffer to dump
-/*        for (int ii = 0; ii < 21; ii++)
-            std::cout << *(ph_filterbank[0] + ii) << " ";
-*/        
         std::cout << std::endl;
         save_filterbank(ph_filterbank[0], gulp + extra, (gulp + extra) * nchans * idx, header, fil_saved);
         fil_saved++;
@@ -157,21 +154,15 @@ void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host
     host_jump *= (gulp + extra) * nchans;
     // dump to the host memory only - not interested in the dedisperion in the dump mode
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * nchans * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    // that is a very quick hack to solve problems with hidden missing packets
+    cudaCheckError(cudaMemsetAsync(pd_filterbank[0] + (idx - 1) * gulp, (float)0.0, (gulp + extra) * nchans * sizeof(T), stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[3] + host_jump, pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
     cudaStreamSynchronize(stream);
-    
-    /*for (int ii = 0; ii < 27; ii++)
-        std::cout << ph_filterbank[0] + ii << " ";
 
-    float *mearray3 = new float[27];
-    cudaMemcpy(mearray3, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * nchans * sizeof(T), cudaMemcpyDeviceToHost);
-
-    std::cout << std::endl << std::endl;
-*/
     statemutex.lock();
-    // HACK: the call below is wrong - restarts the whole sample state 
+    // HACK: the call below is wrong - restarts the whole sample state
     //std::fill(sample_state, sample_state + totsize, 0);
     sample_state[idx * gulp + extra - 1] = 0;
     statemutex.unlock();
@@ -186,44 +177,24 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
     // we will save one data sample at a time, with fixed size
     // no need to check that there is enough space available to fit all the data before the end of the buffer
     std::lock_guard<mutex> addguard(buffermutex);
- //   std::cout << "Size of T: " << sizeof(T) << std::endl;
     int index = frame_time.framet % totsize;
- //   std::cout << "Frame: " << frame_time.framet << std::endl;
- //   std::cout << "Totsize: " << totsize << std::endl; 
- //   std::cout << "Index: " << index << std::endl;
- //   std::cout << "Amount: " << amount << std::endl;
     if((index % gulp) == 0)
         gulp_times[index / gulp] = frame_time;
     if (end == totsize)    // reached the end of the buffer
         end = end - gulpno * gulp;    // go back to the start
-/*    float *mearray = new float[amount];
-    float *mearray2 = new float[amount];
-    cudaCheckError(cudaMemcpy(mearray, d_data, amount * sizeof(T), cudaMemcpyDeviceToHost));
-    for (int ii = 0; ii < amount; ii++)
-        std::cout << mearray[ii] << " ";
 
-    std::cout << std::endl << std::endl;   
-*/
     // TODO: try to come up with a slightly different implementation - DtD copies should be avoided whenever possible
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[0] + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[1] + index * amount, d_data + amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[2] + index * amount, d_data + 2 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[3] + index * amount, d_data + 3 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
-    //cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
     cudaStreamSynchronize(stream);
     sample_state[index] = 1;
-/*    cudaMemcpy(mearray2, pd_filterbank[0], amount * sizeof(T), cudaMemcpyDeviceToHost);
-    for (int ii = 0; ii < amount; ii++)
-        std::cout << mearray2[ii] << " ";
 
-    std::cout << std::endl << std::endl;
-    delete[] mearray;
-    delete[] mearray2;
-*/
     // need to save in two places in the buffer
     if (index >= gulpno * gulp) {
-        // simplify the index algebra herei
-        //std::cout << "Saving in two places in the buffer" << std::endl;
+        // simplify the index algebra here
+        // TODO: need to be actually sorte out properly
         cudaCheckError(cudaMemcpyAsync(d_buf + index - (gulpno * gulp) * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
         statemutex.lock();
         sample_state[index - (gulpno * gulp)] = 1;

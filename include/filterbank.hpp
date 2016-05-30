@@ -34,7 +34,13 @@ struct header_f
 
 
 };
-
+//! Function that actually saves the filterbank file to the disk
+/*!
+    \param *ph_filterbank pointer to the data host vector - currently onyl first Stokes in the dump mode
+    \param nsamsp number of time samples to save
+    \param head structure with all the information require for the filterbank header
+    \param saved number of the filterbank files saved so far 
+*/
 inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
 {
 
@@ -177,27 +183,6 @@ inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, h
         outfile.write(field, length * sizeof(char));
 
         size_t to_save = nsamps * head.nchans * head.nbits / 8;
-
-/*        std::cout << "Output from the filterbank" << std::endl;
-        for (int ii = 0; ii < 1; ii++) {
-            std::cout << ph_filterbank[start + ii] << " ";
-            std::cout.flush();
-        }
-        std::cout << std::endl << std::endl;
-*/
-/*        for (int ii = 0; ii < 1024; ii++) {
-            std::cout << ph_filterbank[start + nsamps * head.nchans - ii - 1] << " ";
-            std::cout.flush();
-        }
-        std::cout << std::endl << std::endl;
-*/
-/*       if (saved == 2) {
-		std::fstream float_out("floatstokes12.dat", std::ios_base::out | std::ios_base::trunc);
-		for (int ii = 0; ii < nsamps * head.nchans; ii++)
-			float_out << ph_filterbank[start + ii] << std::endl;
-		float_out.close();
-	}		
-*/
         outfile.write(reinterpret_cast<char*>(&ph_filterbank[start]), to_save);
 
     }
