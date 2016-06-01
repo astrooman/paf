@@ -153,9 +153,9 @@ void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host
     // which half of the RAM buffer we are saving into
     host_jump *= (gulp + extra) * nchans;
     // dump to the host memory only - not interested in the dedisperion in the dump mode
-    cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * nchans * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp * nchans, (gulp + extra) * nchans * sizeof(T), cudaMemcpyDeviceToHost, stream));
     // that is a very quick hack to solve problems with hidden missing packets
-    cudaCheckError(cudaMemsetAsync(pd_filterbank[0] + (idx - 1) * gulp, (float)0.0, (gulp + extra) * nchans * sizeof(T), stream));
+    cudaCheckError(cudaMemsetAsync(pd_filterbank[0] + (idx - 1) * gulp * nchans, 0, (gulp + extra) * nchans * sizeof(T), stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
     cudaCheckError(cudaMemcpyAsync(ph_filterbank[3] + host_jump, pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));

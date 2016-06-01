@@ -321,7 +321,7 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
     get_header(data, head);
 
     // there are 250,000 frames per 27s period
-    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
+    int frame = head.frame_no + (head.ref_s - start_time.start_second) / 27 * 250000;
     //int fpga_id = frame % 48;
     //int framet = (int)(frame / 48);         // proper frame number within the current period
 
@@ -340,6 +340,10 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
         int startidx = (frame % 2) * d_in_size;
         //cout << "Start index " << startidx << endl;
     // TEST: version for 7MHz band only
+    if ((frame - highest_frame) > 1) {
+	cout << "Missed " << frame - highest_frame - 1 << " packets" << endl;
+        cout.flush();
+    }
     if (frame > highest_frame) {
 
         highest_frame = frame;
