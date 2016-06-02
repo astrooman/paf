@@ -202,28 +202,18 @@ void GPUpool::execute(void)
     boost::asio::socket_base::reuse_address option(true);
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
-    for (int ii = 0; ii < 3; ii++) {
+
+    for (int ii = 0; ii < 6; ii++) {
         sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.1"), 17100 + ii + 6 * gpuid)));
         sockets[ii].set_option(option);
         sockets[ii].set_option(option2);
         sender_endpoints.push_back(std::make_shared<udp::endpoint>());
     }
 
-    /*for (int ii = 0; ii < 3; ii++) {
-        sockets.push_back(udp::socket(*ios, udp::endpoint(boost::asio::ip::address::from_string("10.17.0.2"), 17100 + ii + 6 * gpuid)));
-        sockets[ii].set_option(option);
-        sockets[ii].set_option(option2);
-        sender_endpoints.push_back(std::make_shared<udp::endpoint>());
-    } */
-
-    // TEST
-    //for (int ii = 0; ii < 6; ii++)
-    for (int ii = 0; ii < 3; ii++) {
-        mythreads.push_back(thread(&GPUpool::receive_thread, this, ii));
-    }
+    mythreads.push_back(thread(&GPUpool::receive_thread, this));
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    ios->run();
-    //mythreads.push_back(thread([&ios]{ios.run();}));
+    //ios->run();
+    mythreads.push_back(thread([this]{ios->run();}));
     //mythreads[mythreads.size() - 1].join();
 }
 
@@ -310,20 +300,18 @@ void GPUpool::dedisp_thread(int dstream)
     }
 }
 
-// TODO: sort out horrible race conditions in the networking code
 void GPUpool::receive_thread(void)
 {
-    cout.flush();
-    sockets[sockid].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[sockid], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[sockid], sockid));
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[0]));
 }
 
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint)
 {
     header_s head;
 
-	get_header(rec_buffer.data(), head);
-	static obs_time start_time{head.epoch, head.ref_s};
-	// this is ugly, but I don't have a better solution at the moment
+    get_header(rec_buffer.data(), head);
+    static obs_time start_time{head.epoch, head.ref_s};
+    // this is ugly, but I don't have a better solution at the moment
     int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
