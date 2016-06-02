@@ -161,11 +161,12 @@ void GPUpool::execute(void)
     //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)_config.gulp + 1000; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)_config.gulp + 0; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 1000; //p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 0; //p_dedisp->get_max_delay();
+    cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(dedisp_buffno, 1000, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    p_mainbuffer->allocate(dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -180,7 +181,7 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < nostreams; ii++) {
             cudaCheckError(cudaStreamCreate(&mystreams[ii]));
             // TODO: add separate error checking for cufft functions
-            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize));
+            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol));
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
@@ -189,10 +190,6 @@ void GPUpool::execute(void)
     mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
 
     // STAGE: networking
-    // crude approach for now
-    //boost::asio::io_service ios;
-    //vector<udp::endpoint> sender_endpoints;
-    //vector<udp::socket> sockets;
     boost::asio::socket_base::reuse_address option(true);
     boost::asio::socket_base::receive_buffer_size option2(9000);
 
@@ -253,7 +250,6 @@ void GPUpool::worker(int stream)
             powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
-
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
@@ -268,16 +264,16 @@ void GPUpool::worker(int stream)
     }
 }
 
-void GPUpool::dedisp_thread(int dstream) {
+void GPUpool::dedisp_thread(int dstream)
+{
 
     cudaCheckError(cudaSetDevice(gpuid));
     while(working) {
         int ready = p_mainbuffer->ready();
-        //cout << ready << endl;
         if (ready) {
             header_f headerfil;
             headerfil.raw_file = "tastytastytest";
-            headerfil.source_name = "nobodyreallyknows";
+            headerfil.source_name = "J1641-45";
             headerfil.az = 0.0;
             headerfil.dec = 0.0;
             headerfil.fch1 = _config.ftop;
@@ -293,57 +289,52 @@ void GPUpool::dedisp_thread(int dstream) {
             headerfil.nbeams = 1;
             headerfil.nbits = 32;
             headerfil.nchans = _config.filchans;
-            headerfil.nifs = 2;
+            headerfil.nifs = 1;
             headerfil.telescope_id = 2;
 
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
         } else {
-            //std::cout << "Nothing to save" << std::endl;
             std::this_thread::yield();
         }
     }
 }
 
 // TODO: sort out horrible race conditions in the networking code
-
-void GPUpool::receive_thread(int sockid) {
-    //cout << "In the receiver thread. Waiting to get something..." << endl;
+void GPUpool::receive_thread(void)
+{
     cout.flush();
     sockets[sockid].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[sockid], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[sockid], sockid));
 }
 
-void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint, int sockid) {
+void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint)
+{
     header_s head;
-    //cout << "I'm in the handler" << endl;
-    //cout << "Received " << bytes_transferred << " bytes" << endl;
-    //cout << "First bits received: " << std::bitset<8>((rec_buffer.data())[0]) << endl;
-    //cout << std::bitset<8>((rec_buffer.data())[128]) << endl;
-    get_header(rec_buffer.data(), head);
-    static obs_time start_time{head.epoch, head.ref_s};
-    // this is ugly, but I don't have a better solution at the moment
+
+	get_header(rec_buffer.data(), head);
+	static obs_time start_time{head.epoch, head.ref_s};
+	// this is ugly, but I don't have a better solution at the moment
     int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
     get_data(rec_buffer.data(), fpga, start_time);
     packcount++;
     if (packcount > 0)
-	receive_thread(sockid);
+	receive_thread();
 }
 
-void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
+void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
+{
     // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
     unsigned int idx = 0;
     unsigned int idx2 = 0;
-
 
     header_s head;
     get_header(data, head);
 
     // there are 250,000 frames per 27s period
-    int frame = head.frame_no + (head.ref_s - start_time.start_second) * 250000;
-
+    int frame = head.frame_no + (head.ref_s - start_time.start_second) / 27 * 250000;
     //int fpga_id = frame % 48;
     //int framet = (int)(frame / 48);         // proper frame number within the current period
 
@@ -355,10 +346,17 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
     //int framet = (int)(frame / 48);         // proper frame number within the current period
 
     int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
+    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
 
-    int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+    //int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
 										// used to skip second polarisation data
-
+        int startidx = (frame % 2) * d_in_size;
+        //cout << "Start index " << startidx << endl;
+    // TEST: version for 7MHz band only
+    if ((frame - highest_frame) > 1) {
+	cout << "Missed " << frame - highest_frame - 1 << " packets" << endl;
+        cout.flush();
+    }
     if (frame > highest_frame) {
 
         highest_frame = frame;
@@ -369,10 +367,10 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
             for (int sample = 0; sample < 128; sample++) {
                 idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
                 idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
-                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
+                h_pol[idx2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 7] | (data[HEADER + idx + 6] << 8)));
+                h_pol[idx2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 5] | (data[HEADER + idx + 4] << 8)));
+                h_pol[idx2 + d_in_size / 2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 3] | (data[HEADER + idx + 2] << 8)));
+                h_pol[idx2 + d_in_size / 2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 1] | (data[HEADER + idx + 0] << 8)));
             }
         }
     // TEST
@@ -391,8 +389,9 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
             }
         }
 
-    }   // don't save if more than 2 frames late
+        cout.flush();
 
+    }   // don't save if more than 2 frames late
     // TEST
     //if ((bufidx - pack_per_buf / 2) > 3) {
     if ((bufidx - pack_per_buf / 2) > 2) {                     // if 2 samples or more into the second buffer - send first one
@@ -404,7 +403,6 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time) {
     } else if((bufidx) > 2 && (frame > 1)) {        // if 2 samples or more into the first buffer and second buffer has been filled - send second one
         add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
         cout << "Sent the second buffer" << endl;
-        cout.flush();
     }
 
     /* if((frame - previous_frame) > 1) {

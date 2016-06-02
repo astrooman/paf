@@ -76,16 +76,16 @@ class GPUpool
         hd_pipeline pipeline;
         hd_params params;
         int packcount;
-        vector<thrust::device_vector<float>> dv_power;
-        vector<thrust::device_vector<float>> dv_time_scrunch;
-        vector<thrust::device_vector<float>> dv_freq_scrunch;
+        vector<thrust::device_vector<float>> dv_power;          //!< Power buffer, powerscale() kernel output, addtime() kernel input; holds GPUpool::nostreams device vectors, each holding GPUpool::d_power_size * GPUpool::stokes elements
+        vector<thrust::device_vector<float>> dv_time_scrunch;   //!< Time scrunched buffer, addtime() kernel output, addchannel() kernel input; holds GPUpool::nostreams device vectors, each holding GPUpool::d_time_scrunch_size * GPUpool::stokes elements
+        vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GPUpool::nostreams device vectors, each holding GPUpool::d_freq_scrunch_size * GPUpool::stokes elements
 
         udp::endpoint sender_endpoint;
-	    vector<std::shared_ptr<udp::endpoint>> sender_endpoints;
-        vector<udp::socket> sockets;
-        boost::array<unsigned char, 7168 + 64> rec_buffer;
+	    vector<std::shared_ptr<udp::endpoint>> sender_endpoints;        //!< Stores udp::endpoint objects containing information on the sender
+        vector<udp::socket> sockets;                                    //!< Stores sockets
+        boost::array<unsigned char, 7168 + 64> rec_buffer;              //!< Buffer used to store the received data in
 
-        std::shared_ptr<boost::asio::io_service> ios;
+        std::shared_ptr<boost::asio::io_service> ios;                   //!< io_service that makes the asynchronous networking possible
 /*
         float *pdv_power;
         float *pdv_time_scrunch;
@@ -95,59 +95,59 @@ class GPUpool
         bool working;
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
-        const unsigned int d_in_size;                // size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int d_fft_size;              // size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int d_power_size;            // d_fft_size / # polarisations
-        const unsigned int d_time_scrunch_size;     // (size of single fft - 5) * # 1MHz channels
-        const unsigned int d_freq_scrunch_size;     // d_time_scrunch_size / # frequency channels to average
-        const unsigned int batchsize;               // the number of FFTs to process at one
-        const unsigned int fftpoint;                // size of the single FFT
-        const unsigned int nostreams;               // # CUDA streams
-        const unsigned int timeavg;                 // # time samples to average
-        const unsigned int freqavg;                 // # frequency channels to average
-        const unsigned int npol;                    // number of polarisations in the input data
-        unsigned int nchans;
-        unsigned int stokes;
+        const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
+        const unsigned int d_fft_size;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
+        const unsigned int d_power_size;            //!< d_fft_size / # polarisations
+        const unsigned int d_time_scrunch_size;     //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int d_freq_scrunch_size;     //!< d_time_scrunch_size / # frequency channels to average
+        const unsigned int batchsize;               //!< Currently slightly pointless
+        const unsigned int fftpoint;                //!< Size of the single FFT
+        const unsigned int nostreams;               //!< Number of CUDA streams to use
+        const unsigned int timeavg;                 //!< Number of post-FFT time samples to average
+        const unsigned int freqavg;                 //!< Number of post-FFT frequency channels to average
+        const unsigned int npol;                    //!< Number of polarisations in the input data
+        unsigned int nchans;                        //!< Number of 1MHz channels in the input data
+        unsigned int stokes;                        //!< Number of stoke parameters to generate and store
         // one buffer
         unsigned int filsize;
         // polarisations buffer
-        cufftComplex *h_pol;
-        int gpuid;
+        cufftComplex *h_pol;            //!< Buffer for complex, dual-polarisation signal for the whole bandwidth and 128 time samples
+        int gpuid;                      //!< Self-explanatory
         int pol_begin;
         // GPU and thread stuff
         // raw voltage buffers
         // d_in is a cufftExecC2C() input
         cufftComplex *h_in = 0;         //!< Raw voltage host buffer, async copied to d_in in the GPUpool::worker()
-        cufftComplex *d_in = 0;         //!< Raw voltage device buffer, cufftExecC2C() input
+        cufftComplex *d_in = 0;         //!< Raw voltage device buffer, cufftExecC2C() input, holds GPUpool::d_in_size * GPUpool::nostreams elements
         // the ffted signal buffer
         // cufftExecC2C() output
         // powerscale() kernel input
-        cufftComplex *d_fft;
+        cufftComplex *d_fft;            //!< Buffer for the signal after the FFT, powerscale() kernel input, holds GPUpool::d_fft_size * GPUpool::nostreams elements
         // the detected signal buffer
         // powerscale() kernel output
         // addtime() kernel input
-        float *d_power;
+        float *d_power;                 //!< No longer in use
         // the time scrunched signal buffer
         // addtime() kernel output
         // addchannel() kernel input
-        float *d_time_scrunch;
+        float *d_time_scrunch;          //!< No longer in use
         // the frequency schruned signal buffer
         // addchannel() kernel output
-        float *d_freq_scrunch;          // the frequency scrunched signal buffer
-        unsigned char *d_dedisp;        // dedispersion buffer - aggregated frequency scrunched buffer
-        unsigned char *d_search;        // single pulse search buffer - dedispersion output
+        float *d_freq_scrunch;          //!< No longer in use
+        unsigned char *d_dedisp;        //!< Not in use in the dump mode
+        unsigned char *d_search;        //!< Not in use in the dump mode
 
         unsigned int gulps_sent;
         unsigned int gulps_processed;
-        int sizes[1];
+        int sizes[1];                   //<! Used to store GPUpool::fftpoint - cufftPlanMany() requirement
         int avt;
         int highest_frame;
-        cudaStream_t *mystreams;
-        cufftHandle *myplans;
+        cudaStream_t *mystreams;        //<! Pointer to the array of CUDA streams
+        cufftHandle *myplans;           //<! Pointer to the array of cuFFT plans
         mutex datamutex;
         mutex workmutex;
-        unsigned int *CUDAthreads;
-        unsigned int *CUDAblocks;
+        unsigned int *CUDAthreads;      //<! Pointer to the array of thread layouts for different kernels
+        unsigned int *CUDAblocks;       //<! Pointer to the array of block layouts for different kernels
         // containers
         // use queue as FIFO needed
         queue<pair<vector<cufftComplex>, obs_time>> mydata;
