@@ -129,7 +129,8 @@ template<class T>
 void Buffer<T>::dump(int idx, header_f header)
 {
         // idx will be use to tell which part of the buffer to dump
-        save_filterbank(ph_filterbank, gulp + extra, (gulp + extra) * idx, header, fil_saved);
+        std::cout << std::endl;
+        save_filterbank(ph_filterbank[0], gulp + extra, (gulp + extra) * nchans * idx, header, fil_saved);
         fil_saved++;
         // need info from the telescope
 }
@@ -151,15 +152,19 @@ void Buffer<T>::send(unsigned char *out, int idx, cudaStream_t &stream, int host
 {
     // which half of the RAM buffer we are saving into
     host_jump *= (gulp + extra) * nchans;
-
     // dump to the host memory only - not interested in the dedisperion in the dump mode
-    cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
-    cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
-    cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
-    cudaCheckError(cudaMemcpyAsync(ph_filterbank[3] + host_jump, pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream));
+    cudaCheckError(cudaMemcpyAsync(ph_filterbank[0] + host_jump, pd_filterbank[0] + (idx - 1) * gulp * nchans, (gulp + extra) * nchans * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    // that is a very quick hack to solve problems with hidden missing packets
+    cudaCheckError(cudaMemsetAsync(pd_filterbank[0] + (idx - 1) * gulp * nchans, 0, (gulp + extra) * nchans * sizeof(T), stream));
+    cudaCheckError(cudaMemcpyAsync(ph_filterbank[1] + host_jump, pd_filterbank[1] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    cudaCheckError(cudaMemcpyAsync(ph_filterbank[2] + host_jump, pd_filterbank[2] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    cudaCheckError(cudaMemcpyAsync(ph_filterbank[3] + host_jump, pd_filterbank[3] + (idx - 1) * gulp, (gulp + extra) * sizeof(T), cudaMemcpyDeviceToHost, stream));
+    cudaStreamSynchronize(stream);
 
     statemutex.lock();
-    std::fill(sample_state, sample_state + totsize, 0);
+    // HACK: the call below is wrong - restarts the whole sample state
+    //std::fill(sample_state, sample_state + totsize, 0);
+    sample_state[idx * gulp + extra - 1] = 0;
     statemutex.unlock();
 }
 
@@ -183,11 +188,13 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[1] + index * amount, d_data + amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[2] + index * amount, d_data + 2 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
     cudaCheckError(cudaMemcpyAsync(pd_filterbank[3] + index * amount, d_data + 3 * amount, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
-    //cudaMemcpyAsync(d_buf + index * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream);
+    cudaStreamSynchronize(stream);
     sample_state[index] = 1;
+
     // need to save in two places in the buffer
     if (index >= gulpno * gulp) {
         // simplify the index algebra here
+        // TODO: need to be actually sorte out properly
         cudaCheckError(cudaMemcpyAsync(d_buf + index - (gulpno * gulp) * amount, d_data, amount * sizeof(T), cudaMemcpyDeviceToDevice, stream));
         statemutex.lock();
         sample_state[index - (gulpno * gulp)] = 1;

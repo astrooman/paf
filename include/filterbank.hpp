@@ -34,15 +34,21 @@ struct header_f
 
 
 };
-
-inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
+//! Function that actually saves the filterbank file to the disk
+/*!
+    \param *ph_filterbank pointer to the data host vector - currently onyl first Stokes in the dump mode
+    \param nsamsp number of time samples to save
+    \param head structure with all the information require for the filterbank header
+    \param saved number of the filterbank files saved so far 
+*/
+inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
 {
 
     std::ostringstream oss;
     oss.str("");
     oss << saved;
     std::string filename;
-    filename = "stokes1" + oss.str() + ".dat";
+    filename = "stokes1" + oss.str() + ".fil";
     std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
     int length{0};
@@ -177,10 +183,11 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
         outfile.write(field, length * sizeof(char));
 
         size_t to_save = nsamps * head.nchans * head.nbits / 8;
-
-        outfile.write(reinterpret_cast<char*>(ph_filterbank[0]), to_save);
+        outfile.write(reinterpret_cast<char*>(&ph_filterbank[start]), to_save);
 
     }
+
+    std::cout << "Saved filterbank " << saved << std::endl;
 
     outfile.close();
 }
