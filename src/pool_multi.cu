@@ -349,12 +349,12 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
 										// used to skip second polarisation data
         int startidx = (frame % 2) * d_in_size;
         //cout << "Start index " << startidx << endl;
-    // TEST: version for 7MHz band only
-    if ((frame - highest_frame) > 1) {
-	cout << "Missed " << frame - highest_frame - 1 << " packets" << endl;
-        cout.flush();
-    }
     if (frame > highest_frame) {
+
+        if ((frame - highest_frame) > 1) {
+            cout << "Missed " << frame - highest_frame - 1 << " packets" << endl;
+            cout.flush();
+        }
 
         highest_frame = frame;
         //highest_framet = (int)(frame / 48)
