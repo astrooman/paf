@@ -58,7 +58,7 @@ inline void default_config(config_s &config) {
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     // TEST
     //config.nchans = 42;
-    config.nchans = 21;
+    config.nchans = 14;
     config.ngpus = 3;
     config.npol = 2;
     config.stokes = 4;

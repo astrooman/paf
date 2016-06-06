@@ -144,7 +144,7 @@ void GPUpool::execute(void)
     // this buffer takes two full bandwidths, 48 packets per bandwidth
     // TEST
     //pack_per_buf = 12;
-    pack_per_buf = 6;
+    pack_per_buf = 4;
     h_pol = new cufftComplex[d_in_size * 2];
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault));
@@ -176,6 +176,8 @@ void GPUpool::execute(void)
     cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
     p_mainbuffer->allocate(dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    buffer_ready[0] = false;
+    buffer_ready[1] = false;
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -309,56 +311,64 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
 {
     header_s head;
 
+    // I don't want to call this every single time - preferably only once
     get_header(rec_buffer.data(), head);
     static obs_time start_time{head.epoch, head.ref_s};
     // this is ugly, but I don't have a better solution at the moment
     int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
-    get_data(rec_buffer.data(), fpga, start_time);
+    get_data(rec_buffer.data(), fpga, start_time, head);
     packcount++;
     if (packcount > 0)
 	receive_thread();
 }
 
-void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
+void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time, header_s head)
 {
     // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
     unsigned int idx = 0;
     unsigned int idx2 = 0;
 
-    header_s head;
-    get_header(data, head);
-
     // there are 250,000 frames per 27s period
     int frame = head.frame_no + (head.ref_s - start_time.start_second) / 27 * 250000;
-    //int fpga_id = frame % 48;
-    //int framet = (int)(frame / 48);         // proper frame number within the current period
+    // even-numbered frames saved in the first half of the buffer
+    // odd-numbered frames saved in the second half of the buffer
+    // for this test use fpga_id % 2, because at the end of the day I only care about their relative positions
+    int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
+    size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
 
-    //int bufidx = frame % pack_per_buf;                                          // number of packet received in the current buffer
+    if ((buftot - highest_buf) > 1) {
+        cout << "Missed " << bufidx - highest_buf - 1 << " packets " << endl;
+        cout.flush();
+    }
 
-    //int fpga_id = thread / 7;       // - some factor, depending on which one is the lowest frequency
-
-    //int fpga_id = frame % 48;
-    //int framet = (int)(frame / 48);         // proper frame number within the current period
-
-    int bufidx = fpga_id + (frame % 2) * 48;                                    // received packet number in the current buffer
-    //int bufidx = frame % pack_per_buf;                                          // received packet number in the current buffer
-
-    //int startidx = ((int)(bufidx / 48) * 48 + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
-										// used to skip second polarisation data
-        int startidx = (frame % 2) * d_in_size;
-        //cout << "Start index " << startidx << endl;
     if (frame > highest_frame) {
-
         if ((frame - highest_frame) > 1) {
-            cout << "Missed " << frame - highest_frame - 1 << " packets" << endl;
+            cout << "Missed " << frame - highest_frame - 1 << "  whole frames" << endl;
             cout.flush();
+            // TODO: sort this out - I don't want to have if statement all the time, when this will be relevant once only
+            if(highest_frame != -1) {
+                add_data(h_pol + d_in_size  * (highest_frame % 2) , {start_time.start_epoch, start_time.start_second, highest_frame});
+                buffer_ready[highest_frame % 2] = false;
+            }
         }
-
         highest_frame = frame;
-        //highest_framet = (int)(frame / 48)
+    }
 
+    if (buffer_ready[0] && (bufidx >= (3 * pack_per_buf / 4))) {                     // if 1 sample or more into the second buffer - send first one
+        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        buffer_ready[0] = false;
+    } else if(buffer_ready[1] && (bufidx >= pack_per_buf / 4)) {        // if 1 sample or more into the first buffer and second buffer has been filled - send second one
+        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+        buffer_ready[1] = false;
+    }
+
+    int startidx = ((int)(bufidx / pack_per_buf) * pack_per_buf + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
+										// used to skip second polarisation data
+
+    // I don't care about the data that is more than half a single buffer late
+    if ((highest_buf - buftot) < pack_per_buf / 4 ) {
         #pragma unroll
         for (int chan = 0; chan < 7; chan++) {
             for (int sample = 0; sample < 128; sample++) {
@@ -370,56 +380,8 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time)
                 h_pol[idx2 + d_in_size / 2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 1] | (data[HEADER + idx + 0] << 8)));
             }
         }
-    // TEST
-    //} else if (highest_frame - frame < 2) {
-    } else if (highest_frame - frame < 2) {
-
-        #pragma unroll
-        for (int chan = 0; chan < 7; chan++) {
-            for (int sample = 0; sample < 128; sample++) {
-                idx = (sample * 7 + chan) * BYTES_PER_WORD;     // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample + startidx;          // get the position in the buffer
-                h_pol[idx2].x = (float)(data[HEADER + idx + 0] | (data[HEADER + idx + 1] << 8));
-                h_pol[idx2].y = (float)(data[HEADER + idx + 2] | (data[HEADER + idx + 3] << 8));
-                h_pol[idx2 + d_in_size / 2].x = (float)(data[HEADER + idx + 4] | (data[HEADER + idx + 5] << 8));
-                h_pol[idx2 + d_in_size / 2].y = (float)(data[HEADER + idx + 6] | (data[HEADER + idx + 7] << 8));
-            }
-        }
-
-        cout.flush();
-
-    }   // don't save if more than 2 frames late
-    // TEST
-    //if ((bufidx - pack_per_buf / 2) > 3) {
-    if ((bufidx - pack_per_buf / 2) > 2) {                     // if 2 samples or more into the second buffer - send first one
-        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-        cout << "Sent the first buffer" << endl;
-        cout.flush();
-    // TEST
-    //} else if((bufidx) > 3 && (frame > 1)) {
-    } else if((bufidx) > 2 && (frame > 1)) {        // if 2 samples or more into the first buffer and second buffer has been filled - send second one
-        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-        cout << "Sent the second buffer" << endl;
+        buffer_ready[(int)(bufidx / pack_per_buf)] = true;
     }
-
-    /* if((frame - previous_frame) > 1) {
-        // count words only as one word provides one full time sample per polarisation
-        pol_begin += (frame - previous_frame) * 7 * 128;
-    } else {
-        pol_begin += 7 * 128;
-    }
-
-    // send the data to the data queue
-    if(pol_bein >= d_in_size / 2) {
-        add_data(h_pol);
-        pol_begin = 0;
-    }
-
-
-    previous_frame = frame;
-    previous_framet = framet;
-
-    */
 }
 
 void GPUpool::add_data(cufftComplex *buffer, obs_time frame_time)

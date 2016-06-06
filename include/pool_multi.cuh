@@ -93,6 +93,7 @@ class GPUpool
 */
         config_s _config;
         bool working;
+        bool buffer_ready[2];
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
         const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
@@ -141,7 +142,8 @@ class GPUpool
         unsigned int gulps_processed;
         int sizes[1];                   //<! Used to store GPUpool::fftpoint - cufftPlanMany() requirement
         int avt;
-        int highest_frame;
+        size_t highest_buf;
+        size_t highest_frame;
         cudaStream_t *mystreams;        //<! Pointer to the array of CUDA streams
         cufftHandle *myplans;           //<! Pointer to the array of cuFFT plans
         mutex datamutex;
@@ -215,7 +217,7 @@ class GPUpool
             \param fpga_id the FPGA number obtained from the sender's IP address; used to identify the frequency chunk and place in the buffer it will be saven in
             \param start_time structure containing the information when the current observation started (reference epoch and seconds from the reference epoch)
         */
-        void get_data(unsigned char* data, int fpga_id, obs_time start_time);
+        void get_data(unsigned char* data, int fpga_id, obs_time start_time, header_s head);
         //! Thread responsible for running the FFT.
         /*! There are 4 such threads per GPU - 4 streams per GPU used.
             Each thread is responsible for picking up the data from the queue (the thread yields if the is no data available), running the FFT and power, time scrunch and frequency scrunch kernels.
