@@ -67,6 +67,7 @@ Oberpool::~Oberpool(void)
 
 GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         highest_frame(-1),
+                                        highest_buf(0),
                                         batchsize(config.batch),
                                         fftpoint(config.fftsize),
                                         timeavg(config.timesavg),
@@ -338,22 +339,33 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time, he
     int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
     size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
 
-    if ((buftot - highest_buf) > 1) {
-        cout << "Missed " << bufidx - highest_buf - 1 << " packets " << endl;
-        cout.flush();
+    // I have missed the position in the buffer that allows me to dump the previous buffer
+    // but I also end up back i nthe previous buffer
+    if (((buftot - highest_buf) > pack_per_buf / 4) && (frame != highest_frame)) {
+        // need to save the data from the previous buffer, before I start overwriting it and lose it
+        if((frame - highest_frame) > 1) {
+            // if I manage to lose few more frames - need to send the previous frame and also the one I started saving into
+            if (buffer_ready[highest_frame % 2]) {
+                add_data(h_pol + d_in_size * (highest_frame % 2), {start_time.start_epoch, start_time.start_second, highest_frame});
+                buffer_ready[highest_frame % 2] = false;
+            }
+            if (buffer_ready[(highest_frame - 1) % 2]) {
+                add_data(h_pol + d_in_size * ((highest_frame - 1) % 2), {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+                buffer_ready[(highest_frame - 1) % 2] = false;
+            }
+        } else {
+            // OK, I've only skipped to the next frame
+            add_data(h_pol + d_in_size * ((highest_frame - 1) % 2), {start_time.start_epoch, start_time.start_second, highest_frame - 1});
+            buffer_ready[(highest_frame - 1) % 2] = false;
+        }
     }
 
     if (frame > highest_frame) {
-        if ((frame - highest_frame) > 1) {
-            cout << "Missed " << frame - highest_frame - 1 << "  whole frames" << endl;
-            cout.flush();
-            // TODO: sort this out - I don't want to have if statement all the time, when this will be relevant once only
-            if(highest_frame != -1) {
-                add_data(h_pol + d_in_size  * (highest_frame % 2) , {start_time.start_epoch, start_time.start_second, highest_frame});
-                buffer_ready[highest_frame % 2] = false;
-            }
-        }
         highest_frame = frame;
+    }
+
+    if (buftot > highest_buf) {
+        highest_buf = buftot;
     }
 
     if (buffer_ready[0] && (bufidx >= (3 * pack_per_buf / 4))) {                     // if 1 sample or more into the second buffer - send first one
