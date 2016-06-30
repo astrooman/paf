@@ -3,6 +3,23 @@
 #include <kernels.cuh>
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
 // jump take care of all Stoke paramters
+ {
+    // this is currently the ugliest solution I can think of
+    // xidx is the channel number
+    int xidx = blockIdx.x * blockDim.x + threadIdx.x;
+    int yidx = blockIdx.y * 128;
+    int2 word;
+
+    for (int sample = 0; sample < YSIZE; sample++) {
+         word = tex2D<int2>(texObj, xidx, yidx + sample);
+         //printf("%i ", sample);
+         out[xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
+         out[xidx * 128 + 7 * yidx + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
+         out[336 * 128 + xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
+         out[336 * 128 + xidx * 128 + 7 * yidx + sample].y = static_cast<float>(static_cast<short>(((word.x & 0xff00) >> 8) | ((word.x & 0xff) << 8)));
+    }
+}
+
 __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
 {
 
@@ -43,7 +60,7 @@ __global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned 
         out[idx + 3 * jumpout] += in[idx * factorc + ch + 3 * jumpin];
     }
 
-    //printf("S1 freq sum %f\n", out[idx]); 
+    //printf("S1 freq sum %f\n", out[idx]);
 }
 
 __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)

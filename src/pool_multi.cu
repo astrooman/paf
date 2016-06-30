@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <bitset>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -39,6 +41,7 @@ using std::vector;
 #define HEADER 64
 #define WORDS_PER_PACKET 896
 #define BUFLEN 7168 + 64
+#define PORTS 6
 
 mutex cout_guard;
 
@@ -113,7 +116,7 @@ void GPUpool::execute(void)
     // each stream will have its own cuFFT plan
     myplans = new cufftHandle[4];
 
-    int nkernels = 3;
+    int nkernels = 4;
     // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
     CUDAthreads = new unsigned int[nkernels];
     CUDAblocks = new unsigned int[nkernels];
@@ -124,13 +127,15 @@ void GPUpool::execute(void)
     nchans = _config.nchans;
 
     // HASK: very quick solution to making the 21MHz work
-    CUDAthreads[0] = 32 * 4 * 21 / 3;	// 2688 / 3 - need 3 blocks!
-    CUDAthreads[1] = nchans;		// 21 - fine!
-    CUDAthreads[2] = 21 * 27 / 9;	// 63 - fine!
+    CUDAthreads[0] = 7;
+    CUDAthreads[1] = 32 * 4 * 21 / 3;	// 2688 / 3 - need 3 blocks!
+    CUDAthreads[2] = nchans;		// 21 - fine!
+    CUDAthreads[3] = 21 * 27 / 9;	// 63 - fine!
 
-    CUDAblocks[0] = 3;
-    CUDAblocks[1] = 1;
+    CUDAblocks[0] = 48;
+    CUDAblocks[1] = 3;
     CUDAblocks[2] = 1;
+    CUDAblocks[3] = 1;
 
     /* CUDAthreads[0] = fftpoint * timeavg * nchans;
     CUDAthreads[1] = nchans;
@@ -140,6 +145,33 @@ void GPUpool::execute(void)
     CUDAblocks[2] = 1;
     */
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
+    cout << "Preparing the memory..." << endl;
+
+    cdesc = cudaCreateChannelDesc<int2>();
+    cudaCheckError(cudaPeekAtLastError());
+
+    d_array2Dp = new cudaArray*[nostreams];
+    texObj = new cudaTextureObject_t[nostreams];
+    rdesc = new cudaResourceDesc[nostreams];
+    tdesc = new cudaTextureDesc[3];
+
+    for (int ii = 0; ii < nostreams; ii++) {
+        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, XSIZE * YSIZE * ZSIZE));
+
+        memset(&(rdesc[ii]), 0, sizeof(cudaResourceDesc));
+        rdesc[ii].resType = cudaResourceTypeArray;
+        rdesc[ii].res.array.array = d_array2Dp[ii];
+
+        memset(&(tdesc[ii]), 0, sizeof(cudaTextureDesc));
+        tdesc[ii].addressMode[0] = cudaAddressModeClamp;
+        tdesc[ii].addressMode[1] = cudaAddressModeClamp;
+        tdesc[ii].filterMode = cudaFilterModePoint;
+        tdesc[ii].readMode = cudaReadModeElementType;
+
+        texObj[ii] = 0;
+        cudaCheckError(cudaCreateTextureObject(&(texObj[ii]), &(rdesc[ii]), &(tdesc[ii]), NULL));
+    }
+
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
@@ -183,6 +215,7 @@ void GPUpool::execute(void)
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
+    cout << "Setting up dedispersion and single pulse search..." << endl;
     set_search_params(params, _config);
     //commented out for the filterbank dump mode
     //hd_create_pipeline(&pipeline, params);
@@ -216,8 +249,62 @@ void GPUpool::execute(void)
     mythreads.push_back(thread(&GPUpool::receive_thread, this));
     std::this_thread::sleep_for(std::chrono::seconds(1));
     //ios->run();
+    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[0]));
     mythreads.push_back(thread([this]{ios->run();}));
     //mythreads[mythreads.size() - 1].join();
+
+    cout << "Setting up networking..." << endl;
+
+    int netrv;
+    addrinfo hints, *servinfo, tryme;
+    char s[INET6_ADDRSTRLEN];
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    sfds = new int[PORTS];
+
+    std::ostringstream oss;
+    std::string strport;
+
+    // all the magic happens here
+    for (int ii = 0; ii < PORTS; ii++) {
+
+        oss.str("");
+        oss << 17100 + ii;
+        strport = oss.str();
+        cout << "Binding to port " << strport << "..." << endl;
+        cout.flush();
+
+        if((netrv = getaddrinfo("10.17.0.1", strport.c_str(), &hints, &servinfo)) != 0) {
+            cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
+        }
+
+        for (tryme = servinfo; tryme != NULL; tryme->ai_next) {
+            if((sfds[ii] = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
+                cout << "Socke error\n";
+                continue;
+            }
+
+            if(bind(sfds[ii], tryme->ai_addr, tryme->ai_addrlen) == -1) {
+                close(sfds[ii]);
+                cout << "Bind error\n";
+                continue;
+            }
+            break;
+        }
+
+        if (tryme == NULL) {
+            cout << "Failed to bind to the socket\n";
+        }
+    }
+
+    for (int ii = 0; ii < PORTS; ii++)
+        receive_threads.push_back(threads(&GPUpool::receive_thread, this, ii));
+
+    std::this_threads::sleep_for(std::chrono::seconds(1));
+    // let the receive threads know they can work
 }
 
 GPUpool::~GPUpool(void)
@@ -227,6 +314,10 @@ GPUpool::~GPUpool(void)
     cout.flush();
     for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
+
+    for (int ii = 0; ii < nostreams; ii++) {
+        cudaFreeArray(d_array2Dp[ii]);
+    }
 }
 
 void GPUpool::worker(int stream)
@@ -235,23 +326,30 @@ void GPUpool::worker(int stream)
 
     unsigned int skip = stream * d_in_size;
 
+    int idx;
+
     float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
 
     while(working) {
         unsigned int index{0};
-        datamutex.lock();
-        if(!mydata.empty()) {
-            std::copy((mydata.front()).first.begin(), (mydata.front()).first.end(), h_in + skip);
-            obs_time framte_time = mydata.front().second;
-            mydata.pop();
+        workermutex.lock();
+        if(worker_ready[0] || worker_ready[1]) {
+            if(worker_ready[0])
+                index = 0;
+            else
+                index = 1;
+            workermutex.unlock();
+            idx = 
+            std::copy(h_pol + ,  h_pol + + d_in_size, h_in + skip);
             datamutex.unlock();
-            cudaCheckError(cudaMemcpyAsync(d_in + skip, h_in + skip, d_in_size * sizeof(cufftComplex), cudaMemcpyHostToDevice, mystreams[stream]));
+            cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[ii], 0, 0, h_in + skip, 8 * XSIZE * YSIZE * ZSIZE, mystreams[stream]));
+            rearrange<<<CUDAblock[0], CUDAthreads[0], mystreams[stream]>>>(texObj[ii], d_fft + skip);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
-            powerscale<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
-            addtime<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
-            addchannel<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
+            powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
+            addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
+            addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
@@ -303,15 +401,61 @@ void GPUpool::dedisp_thread(int dstream)
     }
 }
 
-void GPUpool::receive_thread(void)
+void GPUpool::receive_thread(int ii)
 {
-    sockets[0].async_receive_from(boost::asio::buffer(rec_buffer), *sender_endpoints[0], boost::bind(&GPUpool::receive_handler, this, boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred, *sender_endpoints[0]));
+    sockaddr_storage their_addr;
+    memset(&their_addr, 0, sizeof(their_addr));
+    socklen_t addr_len;
+    memset(&addr_len, 0, sizeof(addr_len));
+    int numbytes{0};
+    int long_ip;
+    short fpga;
+    short bufidx;
+    int frame;
+    // WAIT UNTIL YOU CAN WORK
+    // I want this thread to worry only about savign the data
+    // TODO: make worker thread worry about picking the data up
+    while(working) {
+        if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
+            cout << "Error of recvfrom on port " << 17100 + ii << endl;
+            // possible race condition here
+            cout << "Errno " << errno << endl;
+        }
+
+        // TODO: CHANGE FOR BSD SOCKETS!!!!
+        long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
+        fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
+
+        frame = head + (ref_s - start_time.start_second) / 27 * 250000;
+
+        // looking at how much stuff we are not missing - remove a lot of checking for now
+        // TODO: add some mininal checks later anyway
+
+        bufidx = (frame % 2) * pack_per_buf + fpga;
+        std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
+        buffer_ready[(int)(bufidx / (pack_per_buf / 2)] = true;
+
+        buffermutex.lock();
+        if(buffer_ready[0] && bufidx >= 3 * (pack_per_buf / 4) ) {
+            workermutex.lock();
+                worker_ready[0] = true;
+            workermutex.unlock();
+            buffer_ready[0] = false;
+        } else if (buffer_ready[1] && bufidx >= (pack_per_buf /4)) {
+            workermutex.lock();
+                worker_ready[1] = true;
+            workermutex.unlock();
+            buffer_ready[0] = false;
+        }
+        buffermutex.unlock();
+    }
 }
 
 void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint)
 {
-    header_s head;
+	receive_thread();
 
+    header_s head;
     // I don't want to call this every single time - preferably only once
     get_header(rec_buffer.data(), head);
     static obs_time start_time{head.epoch, head.ref_s};
@@ -319,10 +463,12 @@ void GPUpool::receive_handler(const boost::system::error_code& error, std::size_
     int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
     int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
 
+    int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
+    size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
+
     get_data(rec_buffer.data(), fpga, start_time, head);
     packcount++;
     if (packcount > 0)
-	receive_thread();
 }
 
 void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time, header_s head)
@@ -338,6 +484,15 @@ void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time, he
     // for this test use fpga_id % 2, because at the end of the day I only care about their relative positions
     int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
     size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
+
+    // ####################################
+    // NEW SHINY CODE FOR GPU REARRANGEMENT
+    // ####################################
+
+    std::copy(data + 64, data + 64 + WORDS_PER_PACKET * 8, h_pol /*## + some index ##*/);
+
+    // THE GPU pool worker can just pick it up
+    // avoid the ridiculous double copy
 
     // I have missed the position in the buffer that allows me to dump the previous buffer
     // but I also end up back i nthe previous buffer

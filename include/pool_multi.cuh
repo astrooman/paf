@@ -80,20 +80,27 @@ class GPUpool
         vector<thrust::device_vector<float>> dv_time_scrunch;   //!< Time scrunched buffer, addtime() kernel output, addchannel() kernel input; holds GPUpool::nostreams device vectors, each holding GPUpool::d_time_scrunch_size * GPUpool::stokes elements
         vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GPUpool::nostreams device vectors, each holding GPUpool::d_freq_scrunch_size * GPUpool::stokes elements
 
-        udp::endpoint sender_endpoint;
-	    vector<std::shared_ptr<udp::endpoint>> sender_endpoints;        //!< Stores udp::endpoint objects containing information on the sender
-        vector<udp::socket> sockets;                                    //!< Stores sockets
-        boost::array<unsigned char, 7168 + 64> rec_buffer;              //!< Buffer used to store the received data in
+        // networking
+        int *sfds;
 
-        std::shared_ptr<boost::asio::io_service> ios;                   //!< io_service that makes the asynchronous networking possible
 /*
         float *pdv_power;
         float *pdv_time_scrunch;
         float *pdv_freq_scrunch;
 */
+        cudaChannelFormatDesc cdesc;
+        cudaArray **d_array2Dp;
+        cudaResourceDesc *rdesc;
+        cudaTextureDesc *tdesc;
+        cudaTextureObject_t *texObj;
+
+        mutex buffermutex;
+        mutex workermutex;
+
         config_s _config;
         bool working;
         bool buffer_ready[2];
+        bool worker_ready[2];
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
         const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
