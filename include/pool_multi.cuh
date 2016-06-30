@@ -97,12 +97,15 @@ class GPUpool
         mutex buffermutex;
         mutex workermutex;
 
+        obs_time start_time;
         config_s _config;
         bool working;
         bool buffer_ready[2];
         bool worker_ready[2];
+        int worker_frame[2];
         // const to be safe
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
+        const unsigned int d_rearrange_size;
         const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_fft_size;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_power_size;            //!< d_fft_size / # polarisations
@@ -119,13 +122,13 @@ class GPUpool
         // one buffer
         unsigned int filsize;
         // polarisations buffer
-        cufftComplex *h_pol;            //!< Buffer for complex, dual-polarisation signal for the whole bandwidth and 128 time samples
+        unsigned char *h_pol;            //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples
         int gpuid;                      //!< Self-explanatory
         int pol_begin;
         // GPU and thread stuff
         // raw voltage buffers
         // d_in is a cufftExecC2C() input
-        cufftComplex *h_in = 0;         //!< Raw voltage host buffer, async copied to d_in in the GPUpool::worker()
+        unsigned char *h_in = 0;         //!< Raw voltage host buffer, async copied to d_in in the GPUpool::worker()
         cufftComplex *d_in = 0;         //!< Raw voltage device buffer, cufftExecC2C() input, holds GPUpool::d_in_size * GPUpool::nostreams elements
         // the ffted signal buffer
         // cufftExecC2C() output

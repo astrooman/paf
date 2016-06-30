@@ -77,6 +77,7 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(id),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
                                         npol(config.npol),
+                                        d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg),
                                         d_in_size(config.batch * config.fftsize * config.timesavg * config.npol),
                                         d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol),
                                         d_power_size(config.batch * config.fftsize * config.timesavg),
@@ -117,10 +118,6 @@ void GPUpool::execute(void)
     myplans = new cufftHandle[4];
 
     int nkernels = 4;
-    // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
-    CUDAthreads = new unsigned int[nkernels];
-    CUDAblocks = new unsigned int[nkernels];
-    // [0] - powerscale() kernel, [1] - addtime() kernel, [2] - addchannel() kernel
     CUDAthreads = new unsigned int[nkernels];
     CUDAblocks = new unsigned int[nkernels];
     // TODO: make a private const data memmber and put in the initializer list!!
@@ -156,7 +153,7 @@ void GPUpool::execute(void)
     tdesc = new cudaTextureDesc[3];
 
     for (int ii = 0; ii < nostreams; ii++) {
-        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, XSIZE * YSIZE * ZSIZE));
+        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, batchsize * fftpoint * timesavg));
 
         memset(&(rdesc[ii]), 0, sizeof(cudaResourceDesc));
         rdesc[ii].resType = cudaResourceTypeArray;
@@ -175,12 +172,10 @@ void GPUpool::execute(void)
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
     // this buffer takes two full bandwidths, 48 packets per bandwidth
-    // TEST
-    //pack_per_buf = 12;
-    pack_per_buf = 4;
-    h_pol = new cufftComplex[d_in_size * 2];
+    pack_per_buf = batchsize / 7 * 2;
+    h_pol = new unsigned char[d_rearrange_size * 2];
 
-    cudaCheckError(cudaHostAlloc((void**)&h_in, d_in_size * nostreams * sizeof(cufftComplex), cudaHostAllocDefault));
+    cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex)));
     // need to store all 4 Stoke parameters
@@ -255,6 +250,7 @@ void GPUpool::execute(void)
 
     cout << "Setting up networking..." << endl;
 
+    start_time = 0;
     int netrv;
     addrinfo hints, *servinfo, tryme;
     char s[INET6_ADDRSTRLEN];
@@ -300,10 +296,23 @@ void GPUpool::execute(void)
         }
     }
 
+    int bufres{9000};
+
+    for (int ii = 0; ii < PORTS; ii++) {
+        if(setsockopt(sfds[ii], SOL_SOCKET, SO_RECVBUF, &bufres, sizeof(int)) != 0) {
+            cout << "Setsockopt error on port " << 17100 + ii << endl;
+            cout << "Errno " << errno << endl;
+        }
+    }
+
     for (int ii = 0; ii < PORTS; ii++)
         receive_threads.push_back(threads(&GPUpool::receive_thread, this, ii));
 
-    std::this_threads::sleep_for(std::chrono::seconds(1));
+    for (int ii = 0; ii < PORTS; ii++)
+        receive_threads[ii].join();
+
+    cout << "Done receiving..." << endl;
+    cout.flush();
     // let the receive threads know they can work
 }
 
@@ -327,6 +336,7 @@ void GPUpool::worker(int stream)
     unsigned int skip = stream * d_in_size;
 
     int idx;
+    int current_frame;
 
     float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
@@ -336,16 +346,21 @@ void GPUpool::worker(int stream)
         unsigned int index{0};
         workermutex.lock();
         if(worker_ready[0] || worker_ready[1]) {
-            if(worker_ready[0])
+            if(worker_ready[0]) {
                 index = 0;
-            else
+                worker_ready[0] = false;
+                current_frame = worker_frame[0];
+            } else {
                 index = 1;
+                worker_ready[1] = false;
+                current_frame = worker_frame[1];
+            }
+            obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
-            idx = 
-            std::copy(h_pol + ,  h_pol + + d_in_size, h_in + skip);
-            datamutex.unlock();
-            cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[ii], 0, 0, h_in + skip, 8 * XSIZE * YSIZE * ZSIZE, mystreams[stream]));
-            rearrange<<<CUDAblock[0], CUDAthreads[0], mystreams[stream]>>>(texObj[ii], d_fft + skip);
+            index = index * d_rearrange_size;
+            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + skip);
+            cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[ii], 0, 0, h_in + skip, 8 * batchsize * fftpoint * timesavg, mystreams[stream]));
+            rearrange<<<CUDAblock[0], CUDAthreads[0], mystreams[stream]>>>(texObj[ii], d_in + skip);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
             addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
@@ -355,10 +370,10 @@ void GPUpool::worker(int stream)
             cudaCheckError(cudaPeekAtLastError());
             cudaThreadSynchronize();
 
-            p_mainbuffer->write(pdv_freq_scrunch, framte_time, d_freq_scrunch_size, mystreams[stream]);
+            p_mainbuffer->write(pdv_freq_scrunch, frame_time, d_freq_scrunch_size, mystreams[stream]);
 
         } else {
-            datamutex.unlock();
+            workermutex.unlock();
             std::this_thread::yield();
         }
     }
@@ -408,25 +423,28 @@ void GPUpool::receive_thread(int ii)
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
     int numbytes{0};
-    int long_ip;
-    short fpga;
-    short bufidx;
-    int frame;
-    // WAIT UNTIL YOU CAN WORK
-    // I want this thread to worry only about savign the data
+    short fpga{0};
+    short bufidx{0};
+    int frame{0};
+    int ref_s;
+    // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
+    if (ii == 0) {
+        unsigned char *temp_buf = rec_bufs[0];
+        numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1);
+        start_time.start_epoch = (int)(temp_buf[12] >> 2);
+        start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
+    }
     while(working) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
             cout << "Errno " << errno << endl;
         }
-
-        // TODO: CHANGE FOR BSD SOCKETS!!!!
-        long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
-        fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
-
-        frame = head + (ref_s - start_time.start_second) / 27 * 250000;
+        ref_s = (int)(rec_bufs[ii][3] | (rec_bufs[ii][2] << 8) | (rec_bufs[1]) << 16) | ((rec_bufs[ii][0] & 0x3f) << 24));
+        frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
+        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 8 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+        frame = frame + (ref_s - start_time.start_second) / 27 * 250000;
 
         // looking at how much stuff we are not missing - remove a lot of checking for now
         // TODO: add some mininal checks later anyway
@@ -439,122 +457,16 @@ void GPUpool::receive_thread(int ii)
         if(buffer_ready[0] && bufidx >= 3 * (pack_per_buf / 4) ) {
             workermutex.lock();
                 worker_ready[0] = true;
+                worker_frame[0] = frame - 1;
             workermutex.unlock();
             buffer_ready[0] = false;
         } else if (buffer_ready[1] && bufidx >= (pack_per_buf /4)) {
             workermutex.lock();
                 worker_ready[1] = true;
+                worker_frame[1] = frame - 1;
             workermutex.unlock();
             buffer_ready[0] = false;
         }
         buffermutex.unlock();
     }
-}
-
-void GPUpool::receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint)
-{
-	receive_thread();
-
-    header_s head;
-    // I don't want to call this every single time - preferably only once
-    get_header(rec_buffer.data(), head);
-    static obs_time start_time{head.epoch, head.ref_s};
-    // this is ugly, but I don't have a better solution at the moment
-    int long_ip = boost::asio::ip::address_v4::from_string((endpoint.address()).to_string()).to_ulong();
-    int fpga = ((int)((long_ip >> 8) & 0xff) - 1) * 8 + ((int)(long_ip & 0xff) - 1) / 2;
-
-    int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
-    size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
-
-    get_data(rec_buffer.data(), fpga, start_time, head);
-    packcount++;
-    if (packcount > 0)
-}
-
-void GPUpool::get_data(unsigned char* data, int fpga_id, obs_time start_time, header_s head)
-{
-    // REMEMBER - d_in_size is the size of the single buffer (2 polarisations, 336 channels, 128 time samples)
-    unsigned int idx = 0;
-    unsigned int idx2 = 0;
-
-    // there are 250,000 frames per 27s period
-    int frame = head.frame_no + (head.ref_s - start_time.start_second) / 27 * 250000;
-    // even-numbered frames saved in the first half of the buffer
-    // odd-numbered frames saved in the second half of the buffer
-    // for this test use fpga_id % 2, because at the end of the day I only care about their relative positions
-    int bufidx = fpga_id % 2 + (frame % 2) * 2;                                    // received packet number in the current buffer
-    size_t buftot = (size_t)frame * (size_t)(pack_per_buf / 2) + (size_t)fpga_id;
-
-    // ####################################
-    // NEW SHINY CODE FOR GPU REARRANGEMENT
-    // ####################################
-
-    std::copy(data + 64, data + 64 + WORDS_PER_PACKET * 8, h_pol /*## + some index ##*/);
-
-    // THE GPU pool worker can just pick it up
-    // avoid the ridiculous double copy
-
-    // I have missed the position in the buffer that allows me to dump the previous buffer
-    // but I also end up back i nthe previous buffer
-    if (((buftot - highest_buf) > pack_per_buf / 4) && (frame != highest_frame)) {
-        // need to save the data from the previous buffer, before I start overwriting it and lose it
-        if((frame - highest_frame) > 1) {
-            // if I manage to lose few more frames - need to send the previous frame and also the one I started saving into
-            if (buffer_ready[highest_frame % 2]) {
-                add_data(h_pol + d_in_size * (highest_frame % 2), {start_time.start_epoch, start_time.start_second, highest_frame});
-                buffer_ready[highest_frame % 2] = false;
-            }
-            if (buffer_ready[(highest_frame - 1) % 2]) {
-                add_data(h_pol + d_in_size * ((highest_frame - 1) % 2), {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-                buffer_ready[(highest_frame - 1) % 2] = false;
-            }
-        } else {
-            // OK, I've only skipped to the next frame
-            add_data(h_pol + d_in_size * ((highest_frame - 1) % 2), {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-            buffer_ready[(highest_frame - 1) % 2] = false;
-        }
-    }
-
-    if (frame > highest_frame) {
-        highest_frame = frame;
-    }
-
-    if (buftot > highest_buf) {
-        highest_buf = buftot;
-    }
-
-    if (buffer_ready[0] && (bufidx >= (3 * pack_per_buf / 4))) {                     // if 1 sample or more into the second buffer - send first one
-        add_data(h_pol, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-        buffer_ready[0] = false;
-    } else if(buffer_ready[1] && (bufidx >= pack_per_buf / 4)) {        // if 1 sample or more into the first buffer and second buffer has been filled - send second one
-        add_data(h_pol + d_in_size, {start_time.start_epoch, start_time.start_second, highest_frame - 1});
-        buffer_ready[1] = false;
-    }
-
-    int startidx = ((int)(bufidx / pack_per_buf) * pack_per_buf + bufidx) * WORDS_PER_PACKET;       // starting index for the packet in the buffer
-										// used to skip second polarisation data
-
-    // I don't care about the data that is more than half a single buffer late
-    if ((highest_buf - buftot) < pack_per_buf / 4 ) {
-        #pragma unroll
-        for (int chan = 0; chan < 7; chan++) {
-            for (int sample = 0; sample < 128; sample++) {
-                idx = (sample * 7 + chan) * BYTES_PER_WORD;    // get the  start of the word in the received data array
-                idx2 = chan * 128 + sample + startidx;        // get the position in the buffer
-                h_pol[idx2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 7] | (data[HEADER + idx + 6] << 8)));
-                h_pol[idx2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 5] | (data[HEADER + idx + 4] << 8)));
-                h_pol[idx2 + d_in_size / 2].x = static_cast<float>(static_cast<short>(data[HEADER + idx + 3] | (data[HEADER + idx + 2] << 8)));
-                h_pol[idx2 + d_in_size / 2].y = static_cast<float>(static_cast<short>(data[HEADER + idx + 1] | (data[HEADER + idx + 0] << 8)));
-            }
-        }
-        buffer_ready[(int)(bufidx / pack_per_buf)] = true;
-    }
-}
-
-void GPUpool::add_data(cufftComplex *buffer, obs_time frame_time)
-{
-    std::lock_guard<mutex> addguard(datamutex);
-    // TODO: is it possible to simplify this messy line?
-    mydata.push(pair<vector<cufftComplex>, obs_time>(vector<cufftComplex>(buffer, buffer + d_in_size), frame_time));
-    //cout << "Pushed the data to the queue of current length of " << mydata.size() << endl;
 }

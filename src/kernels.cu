@@ -2,8 +2,9 @@
 
 #include <kernels.cuh>
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
-// jump take care of all Stoke paramters
- {
+
+__global__ void rearrange(cudaTextureObject_t texObj, cufftComplex * __restrict__ out)
+{
     // this is currently the ugliest solution I can think of
     // xidx is the channel number
     int xidx = blockIdx.x * blockDim.x + threadIdx.x;
