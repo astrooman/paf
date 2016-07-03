@@ -1,6 +1,11 @@
 #include <stdio.h>
 
 #include <kernels.cuh>
+
+#define XSIZE 7
+#define YSIZE 128
+#define ZSIZE 48
+
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
 
 __global__ void rearrange(cudaTextureObject_t texObj, cufftComplex * __restrict__ out)

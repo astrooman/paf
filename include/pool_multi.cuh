@@ -81,6 +81,7 @@ class GPUpool
         vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GPUpool::nostreams device vectors, each holding GPUpool::d_freq_scrunch_size * GPUpool::stokes elements
 
         // networking
+        unsigned char **rec_bufs;
         int *sfds;
 
 /*
@@ -165,6 +166,7 @@ class GPUpool
         queue<pair<vector<cufftComplex>, obs_time>> mydata;
         //queue<vector<cufftComplex>> mydata;
         vector<thread> mythreads;
+        vector<thread> receive_threads;
         unsigned int dedisp_buffno;
         int pack_per_buf;
         size_t dedisp_buffsize;
@@ -243,7 +245,7 @@ class GPUpool
         */
         void receive_handler(const boost::system::error_code& error, std::size_t bytes_transferred, udp::endpoint endpoint);
         //! Calls async_receive_from() on the UDP socket.
-        void receive_thread(void);
+        void receive_thread(int ii);
         //! Single pulse search thread worker.
         /*! Responsible for picking up the dedispersed data buffer and dispatching it to the single pulse search pipeline.
             Calls hd_execute() and saves the filterbank if the appropriate single pulse has been detected.
