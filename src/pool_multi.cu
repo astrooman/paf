@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <bitset>
 #include <iostream>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -24,6 +25,7 @@
 #include "filterbank.hpp"
 #include "heimdall/pipeline.hpp"
 #include "kernels.cuh"
+#include "paf_metadata.hpp"
 #include "pdif.hpp"
 #include "pool_multi.cuh"
 
@@ -130,7 +132,6 @@ void GPUpool::execute(void)
     // TODO: make a private const data memmber and put in the initializer list!!
     nchans = _config.nchans;
 
-    // HASK: very quick solution to making the 21MHz work
     CUDAthreads[0] = 7;
     CUDAthreads[1] = 32 * 4 * 21 / 3;	// 2688 / 3 - need 3 blocks!
     CUDAthreads[2] = nchans;		// 21 - fine!
@@ -273,7 +274,7 @@ void GPUpool::execute(void)
 
         for (tryme = servinfo; tryme != NULL; tryme->ai_next) {
             if((sfds[ii] = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
-                cout << "Socke error\n";
+                cout << "Socket error\n";
                 continue;
             }
 
@@ -305,6 +306,69 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < PORTS; ii++)
         receive_threads[ii].join();
 
+    // TODO: this thread does nothing at this point so might as well make it listen to metadata
+
+    cout << "Setting up metadata logger..." << endl;
+
+    int metabytes, sock_meta;
+    addrinfo hints_meta, *servinfo_meta, *tryme_meta;
+    memset(&hints_meta, 0, sizeof(hints_meta));
+    hints_meta.ai_family = AF_INET;
+    hints_meta.ai_socktype = SOCK_DGRAM;
+    hints_meta.ai_flags = AI_PASSIVE;
+    sockaddr_storage meta_addr;
+    memset(&meta_addr, 0, sizeof(meta_addr));
+    socklen_t meta_len;
+    memset(&meta_len, 0, sizeof(meta_len));
+
+    if ((netrv = getaddrinfo("130.155.182.74", "26666", &hints_meta, &servinfo_meta)) != 0) {
+        cout << "gettaddrinfo() error on metadata socket 26666" << endl;
+
+        for (tryme_meta = servinfo_meta; tryme_meta != NULL; tryme_meta=tryme_meta->ai_next) {
+            if ((sock_meta = socket(tryme_meta->ai_family, tryme_meta->ai_socktype, tryme_meta->ai_protocol)) == -1) {
+                cout << "Metadata socket error\n";
+                continue;
+            }
+
+            if (bind(sock_meta, tryme_meta->ai_addr, tryme_meta->ai_addrlen) == -1) {
+                cout << "Metadata bind error\n";
+                continue;
+            }
+            break;
+        }
+
+        if (tryme_meta == NULL) {
+            cout << "Failed to bind to the metadata socket\n";
+        }
+    }
+
+    metadata paf_meta;
+    std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
+
+    if (metalog) {
+        while(working) {
+            metabytes = recvfrom(sock_meta, meta_buffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
+
+            string metastr(buf);
+            paf_meta.getMetaData(metastr, 0);
+            cout << paf_meta.timestamp << "\t";
+            cout << paf_meta.beam_num << "\t";
+            cout << paf_meta.beam_ra << "\t";
+            cout << paf_meta.beam_dec << "\t";
+            cout << paf_meta.target_name << endl;
+            cout.flush();
+
+            metalog << paf_meta.timestamp << "\t";
+            metalog << paf_meta.beam_num << "\t";
+            metalog << paf_meta.beam_ra << "\t";
+            metalog << paf_meta.beam_dec << "\t";
+            metalog << paf_meta.target_name << endl << endl;
+        }
+
+        metalog.close();
+    } else {
+        cout << "Metadata log file error!!" << endl;
+    }
     cout << "Done receiving..." << endl;
     cout.flush();
     // let the receive threads know they can work

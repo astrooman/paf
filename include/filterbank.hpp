@@ -32,164 +32,168 @@ struct header_f
     int nifs;                       // something, something, something, DAAARK SIIIDEEEE
     int telescope_id;
 
-
 };
 //! Function that actually saves the filterbank file to the disk
 /*!
     \param *ph_filterbank pointer to the data host vector - currently onyl first Stokes in the dump mode
     \param nsamsp number of time samples to save
     \param head structure with all the information require for the filterbank header
-    \param saved number of the filterbank files saved so far 
+    \param saved number of the filterbank files saved so far
 */
 inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
 {
 
     std::ostringstream oss;
-    oss.str("");
-    oss << saved;
     std::string filename;
-    filename = "stokes1" + oss.str() + ".fil";
-    std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
     int length{0};
     char field[60];
 
-    // save only when the stream has been opened correctly
-    if(outfile) {
+    for (int ii = 0; ii < stokes; ii++) {
 
-        length = 12;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "HEADER_START");
-        outfile.write(field, length * sizeof(char));
+        oss.str("");
+        oss << ii << "_" << saved;
+        filename = "stokes_" + oss.str() + ".fil";
+        std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "telescope_id");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.telescope_id, sizeof(int));
+        // save only when the stream has been opened correctly
+        if(outfile) {
 
-        length = 11;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "rawdatafile");
-        outfile.write(field, length * sizeof(char));
-        length = head.raw_file.size();
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, head.raw_file.c_str());
-        outfile.write(field, length * sizeof(char));
+            length = 12;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "HEADER_START");
+            outfile.write(field, length * sizeof(char));
 
-        length = 11;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "source_name");
-        outfile.write(field, length * sizeof(char));
-        length = head.source_name.size();
-        strcpy(field, head.source_name.c_str());
-        outfile.write((char*)&length, sizeof(int));
-        outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "telescope_id");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.telescope_id, sizeof(int));
 
-        length = 10;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "machine_id");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.machine_id, sizeof(int));
+            length = 11;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "rawdatafile");
+            outfile.write(field, length * sizeof(char));
+            length = head.raw_file.size();
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, head.raw_file.c_str());
+            outfile.write(field, length * sizeof(char));
 
-        length = 9;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "data_type");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.data_type, sizeof(int));
+            length = 11;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "source_name");
+            outfile.write(field, length * sizeof(char));
+            length = head.source_name.size();
+            strcpy(field, head.source_name.c_str());
+            outfile.write((char*)&length, sizeof(int));
+            outfile.write(field, length * sizeof(char));
 
-        length = 8;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "az_start");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.az, sizeof(double));
+            length = 10;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "machine_id");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.machine_id, sizeof(int));
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "za_start");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.za, sizeof(double));
+            length = 9;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "data_type");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.data_type, sizeof(int));
 
-        length = 7;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "src_raj");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.ra, sizeof(double));
+            length = 8;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "az_start");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.az, sizeof(double));
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "src_dej");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.dec, sizeof(double));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "za_start");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.za, sizeof(double));
 
-        length = 6;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "tstart");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.tstart, sizeof(double));
+            length = 7;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "src_raj");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.ra, sizeof(double));
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "nchans");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.nchans, sizeof(int));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "src_dej");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.dec, sizeof(double));
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "nbeams");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.nbeams, sizeof(int));
+            length = 6;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "tstart");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.tstart, sizeof(double));
 
-        length = 5;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "tsamp");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.tsamp, sizeof(double));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "nchans");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.nchans, sizeof(int));
 
-        // bits per time sample
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "nbits");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.nbits, sizeof(int));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "nbeams");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.nbeams, sizeof(int));
 
-        // reference dm - not really sure what it does
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "refdm");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.rdm, sizeof(double));
+            length = 5;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "tsamp");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.tsamp, sizeof(double));
 
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "ibeam");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.ibeam, sizeof(int));
+            // bits per time sample
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "nbits");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.nbits, sizeof(int));
 
-        length = 4;
-        // the frequency of the top channel
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "fch1");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.fch1, sizeof(double));
+            // reference dm - not really sure what it does
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "refdm");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.rdm, sizeof(double));
 
-        // channel bandwidth
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "foff");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.foff, sizeof(double));
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "ibeam");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.ibeam, sizeof(int));
 
-        // number of if channels
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "nifs");
-        outfile.write(field, length * sizeof(char));
-        outfile.write((char*)&head.nifs, sizeof(int));
+            length = 4;
+            // the frequency of the top channel
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "fch1");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.fch1, sizeof(double));
 
-        length = 10;
-        outfile.write((char*)&length, sizeof(int));
-        strcpy(field, "HEADER_END");
-        outfile.write(field, length * sizeof(char));
+            // channel bandwidth
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "foff");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.foff, sizeof(double));
 
-        size_t to_save = nsamps * head.nchans * head.nbits / 8;
-        outfile.write(reinterpret_cast<char*>(&ph_filterbank[start]), to_save);
+            // number of if channels
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "nifs");
+            outfile.write(field, length * sizeof(char));
+            outfile.write((char*)&head.nifs, sizeof(int));
+
+            length = 10;
+            outfile.write((char*)&length, sizeof(int));
+            strcpy(field, "HEADER_END");
+            outfile.write(field, length * sizeof(char));
+
+            size_t to_save = nsamps * head.nchans * head.nbits / 8;
+            outfile.write(reinterpret_cast<char*>(&ph_filterbank[ii][start]), to_save);
+
+        }
+
+        std::cout << "Saved filterbank " << saved << std::endl;
+
+        outfile.close();
 
     }
-
-    std::cout << "Saved filterbank " << saved << std::endl;
-
-    outfile.close();
 }
 
 
