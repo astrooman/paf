@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -52,14 +53,14 @@ inline void default_config(config_s &config) {
     config.beamno = 1;
     config.chunks = 32;
     config.fftsize = 32;
-    config.freqavg = 9;
+    config.freqavg = 16;
     config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
     //config.gulp = 16384;        // 2^24, equivalent to ~1.75s for 108us sampling time (for testing purposes)
     config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
     // TEST
     //config.nchans = 42;
-    config.nchans = 14;
-    config.ngpus = 3;
+    config.nchans = 336;
+    config.ngpus = 1;
     config.npol = 2;
     config.stokes = 4;
     config.streamno = 4;
@@ -72,11 +73,54 @@ inline void default_config(config_s &config) {
          (config.killmask).push_back((int)1);
 }
 
-inline void read_config(string file, config_s config) {
+inline void read_config(string filename, config_s config) {
 
-}
+    std::fstream inconfig(filename.c_str(), std::ios_base::in);
+    string line;
+    string paraname;
+    double paravalue;
 
-inline void set_search_params(hd_params &params, config_s config)
+    if(inconfig) {
+        while(std::getline(inconfig, line)) {
+            std::istringstream ossline(ossline);
+            oss >> paraname >> paravalue;
+            cout << paraname << ": " << paravalue;
+
+            if (paraname == "DM_END") {
+                config.dend = (double)paravalue;
+            } else if (paraname == "DM_START") {
+                config.dstart = (double)paravalue;
+            } else if (paraname == "FFT_SIZE") {
+                config.fftsize = (unsigned int)paravalue;
+            } else if (paraname == "FREQ_AVERAGE") {
+                config.freqavg = (unsigned int)paravalue;
+            } else if (paraname == "DEDISP_GULP") {
+                config.gulp = (unsigned int)paravalue;
+            } else if (paraname == "NO_1MHZ_CHANS") {
+                config.nchans = (unsigned int)paravalue;
+                config.batch = config.nchans;
+            } else if (paraname == "NO_BEAMS") {
+                config.beamno = (unsigned int)paravalue;
+            } else if (paraname == "NO_GPUS") {
+                config.ngpus = (unsigned int)paravalue;
+            } else if (paraname == "NO_POLS") {
+                config.npol = (int)paravalue;
+            } else if (paraname == "NO_STOKES") {
+                config.stokes = (int)paravalue;
+            } else if (paraname == "NO_STREAMS") {
+                config.streamno = (unsigned int)paravalue;
+            } else if (paraname == "TIME_AVERAGE") {
+                config.timesavg = (unsigned int)paravalue;
+            } else {
+                cout << "Error: unrecognised parameter: " << paraname << endl;
+            }
+        }
+    } else {
+        cout << "Error opening the configuration file!!\n Will use default configuration instead." << endl;
+    }
+)}
+
+inline void set_search_params(hd_params &params, config_s config);
 {
     params.verbosity       = 0;
     #ifdef HAVE_PSRDADA
