@@ -133,14 +133,17 @@ void GPUpool::execute(void)
     nchans = _config.nchans;
 
     CUDAthreads[0] = 7;
-    CUDAthreads[1] = 32 * 4 * 21 / 3;	// 2688 / 3 - need 3 blocks!
+    CUDAthreads[1] = fftpoint * timeavg * batchsize / 42;
     CUDAthreads[2] = nchans;		// 21 - fine!
-    CUDAthreads[3] = 21 * 27 / 9;	// 63 - fine!
+    CUDAthreads[3] = batchsize * 27 / freqavg;	// 63 - fine!
 
     CUDAblocks[0] = 48;
-    CUDAblocks[1] = 3;
+    CUDAblocks[1] = 42;
     CUDAblocks[2] = 1;
     CUDAblocks[3] = 1;
+
+    for (int ii = 0; ii < nkernels; ii++)
+        cout << "Kernel " << ii << ": block - " << CUDAblocks[ii] << ", thread - " << CUDAthreads[ii] << endl;
 
     /* CUDAthreads[0] = fftpoint * timeavg * nchans;
     CUDAthreads[1] = nchans;
@@ -161,7 +164,7 @@ void GPUpool::execute(void)
     tdesc = new cudaTextureDesc[3];
 
     for (int ii = 0; ii < nostreams; ii++) {
-        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, batchsize * fftpoint * timeavg));
+        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg));
 
         memset(&(rdesc[ii]), 0, sizeof(cudaResourceDesc));
         rdesc[ii].resType = cudaResourceTypeArray;
@@ -214,6 +217,8 @@ void GPUpool::execute(void)
     p_mainbuffer->allocate(dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
+    worker_ready[0] = false;
+    worker_ready[1] = false;
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -235,7 +240,7 @@ void GPUpool::execute(void)
     }
     // dedispersion thread
     cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
-    mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
+    // mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
 
     // STAGE: networking
 
@@ -345,11 +350,13 @@ void GPUpool::execute(void)
     metadata paf_meta;
     std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
 
+    char *metabuffer = new char[4096];
+/*
     if (metalog) {
         while(working) {
-            metabytes = recvfrom(sock_meta, meta_buffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
+            metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
 
-            string metastr(buf);
+            string metastr(metabuffer);
             paf_meta.getMetaData(metastr, 0);
             cout << paf_meta.timestamp << "\t";
             cout << paf_meta.beam_num << "\t";
@@ -369,6 +376,9 @@ void GPUpool::execute(void)
     } else {
         cout << "Metadata log file error!!" << endl;
     }
+*/
+    delete [] metabuffer;
+
     cout << "Done receiving..." << endl;
     cout.flush();
     // let the receive threads know they can work
@@ -379,6 +389,7 @@ GPUpool::~GPUpool(void)
     // TODO: clear the memory properly
     cout << "Calling destructor" << endl;
     cout.flush();
+    working = false;
     for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
 
@@ -389,6 +400,12 @@ GPUpool::~GPUpool(void)
 
 void GPUpool::worker(int stream)
 {
+
+    printmutex.lock();
+    cout << "Starting worker " << gpuid << ":" << stream << endl;
+    cout.flush();
+    printmutex.unlock();
+
     cudaSetDevice(gpuid);
 
     unsigned int skip = stream * d_in_size;
@@ -415,13 +432,17 @@ void GPUpool::worker(int stream)
             }
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
+            cout << "Got the data on stream " << stream << endl;
+            cout.flush();
             index = index * d_rearrange_size;
-            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + skip);
-            cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + skip, 8 * batchsize * fftpoint * timeavg, cudaMemcpyHostToDevice, mystreams[stream]));
-            rearrange<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
+            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);
+            cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
+            //rearrange<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
+            rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
-            powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
-            addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
+            //powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
+            powertime<<<336, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
+            //addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
@@ -485,6 +506,7 @@ void GPUpool::receive_thread(int ii)
     short bufidx{0};
     int frame{0};
     int ref_s;
+    int packcount;
     // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
     if (ii == 0) {
@@ -493,7 +515,7 @@ void GPUpool::receive_thread(int ii)
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
     }
-    while(working) {
+    while(packcount < 20) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
@@ -526,5 +548,6 @@ void GPUpool::receive_thread(int ii)
             buffer_ready[0] = false;
         }
         buffermutex.unlock();
+        packcount++;
     }
 }

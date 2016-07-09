@@ -130,7 +130,7 @@ void Buffer<T>::dump(int idx, header_f header)
 {
         // idx will be use to tell which part of the buffer to dump
         std::cout << std::endl;
-        save_filterbank(ph_filterbank[0], gulp + extra, (gulp + extra) * nchans * idx, header, fil_saved);
+        save_filterbank(ph_filterbank, gulp + extra, (gulp + extra) * nchans * idx, header, stokes, fil_saved);
         fil_saved++;
         // need info from the telescope
 }

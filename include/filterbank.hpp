@@ -40,7 +40,7 @@ struct header_f
     \param head structure with all the information require for the filterbank header
     \param saved number of the filterbank files saved so far
 */
-inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int saved)
+inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved)
 {
 
     std::ostringstream oss;
@@ -185,7 +185,8 @@ inline void save_filterbank(float *ph_filterbank, size_t nsamps, size_t start, h
             outfile.write(field, length * sizeof(char));
 
             size_t to_save = nsamps * head.nchans * head.nbits / 8;
-            outfile.write(reinterpret_cast<char*>(&ph_filterbank[ii][start]), to_save);
+            float *ph_filsave = ph_filterbank[ii];
+            outfile.write(reinterpret_cast<char*>(&ph_filsave[start]), to_save);
 
         }
 

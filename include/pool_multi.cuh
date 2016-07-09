@@ -96,6 +96,7 @@ class GPUpool
         cudaTextureObject_t *texObj;
 
         mutex buffermutex;
+        mutex printmutex;
         mutex workermutex;
 
         obs_time start_time;

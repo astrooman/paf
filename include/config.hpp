@@ -3,12 +3,15 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include <heimdall/params.hpp>
 
+using std::cout;
+using std::endl;
 using std::string;
 
 struct config_s {
@@ -82,8 +85,8 @@ inline void read_config(string filename, config_s config) {
 
     if(inconfig) {
         while(std::getline(inconfig, line)) {
-            std::istringstream ossline(ossline);
-            oss >> paraname >> paravalue;
+            std::istringstream ossline(line);
+            ossline >> paraname >> paravalue;
             cout << paraname << ": " << paravalue;
 
             if (paraname == "DM_END") {
@@ -118,9 +121,9 @@ inline void read_config(string filename, config_s config) {
     } else {
         cout << "Error opening the configuration file!!\n Will use default configuration instead." << endl;
     }
-)}
+}
 
-inline void set_search_params(hd_params &params, config_s config);
+inline void set_search_params(hd_params &params, config_s config)
 {
     params.verbosity       = 0;
     #ifdef HAVE_PSRDADA
