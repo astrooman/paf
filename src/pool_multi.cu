@@ -161,7 +161,7 @@ void GPUpool::execute(void)
     d_array2Dp = new cudaArray*[nostreams];
     texObj = new cudaTextureObject_t[nostreams];
     rdesc = new cudaResourceDesc[nostreams];
-    tdesc = new cudaTextureDesc[3];
+    tdesc = new cudaTextureDesc[nostreams];
 
     for (int ii = 0; ii < nostreams; ii++) {
         cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg));
@@ -239,7 +239,7 @@ void GPUpool::execute(void)
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
     // dedispersion thread
-    cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
+    // cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
     // mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
 
     // STAGE: networking
