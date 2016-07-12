@@ -15,6 +15,7 @@
 #include <boost/bind.hpp>
 #include <cufft.h>
 #include <cuda.h>
+#include <pthread.h>
 #include <thrust/device_vector.h>
 
 #include "buffer.cuh"
@@ -52,13 +53,19 @@ using std::vector;
 #define HEADER 64
 #define WORDS_PER_PACKET 896
 #define BUFLEN 7168 + 64
-#define PORTS 6
+#define PORTS 8 
 
 mutex cout_guard;
 
 /* ########################################################
 TODO: Too many copies - could I use move in certain places?
 #########################################################*/
+
+/*##############################################
+IMPORTANT: from what I seen in the system files:
+eth3, gpu0, gpu1 - NUMA node 0, CPUs 0-7 
+eth2, gpu2, gpu3 - NUMA node 1, CPUs 8-15
+##############################################*/
 
 Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
 {
@@ -79,7 +86,7 @@ Oberpool::~Oberpool(void)
     }
 }
 
-GPUpool::GPUpool(int id, config_s config) : gpuid(id),
+GPUpool::GPUpool(int id, config_s config) : gpuid(2),
                                         highest_frame(-1),
                                         highest_buf(0),
                                         batchsize(config.batch),
@@ -277,7 +284,7 @@ void GPUpool::execute(void)
             cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
         }
 
-        for (tryme = servinfo; tryme != NULL; tryme->ai_next) {
+        for (tryme = servinfo; tryme != NULL; tryme=tryme->ai_next) {
             if((sfds[ii] = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
                 cout << "Socket error\n";
                 continue;
@@ -401,8 +408,16 @@ GPUpool::~GPUpool(void)
 void GPUpool::worker(int stream)
 {
 
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(10 + stream, &cpuset);
+    int retaff = pthread_setaffinity_np(mythreads[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
+
+    if (retaff != 0)
+        cout<< "Error setting thread affinity for stream " << stream << endl;
+
     printmutex.lock();
-    cout << "Starting worker " << gpuid << ":" << stream << endl;
+    cout << "Starting worker " << gpuid << ":" << stream << " on CPU " << sched_getcpu() << endl;
     cout.flush();
     printmutex.unlock();
 
@@ -432,8 +447,6 @@ void GPUpool::worker(int stream)
             }
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
-            cout << "Got the data on stream " << stream << endl;
-            cout.flush();
             index = index * d_rearrange_size;
             std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
@@ -441,7 +454,8 @@ void GPUpool::worker(int stream)
             rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             //powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
-            powertime<<<336, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
+            //powertime<<<336, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
+            powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
             //addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
@@ -515,7 +529,7 @@ void GPUpool::receive_thread(int ii)
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
     }
-    while(packcount < 20) {
+    while(packcount < 200) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here

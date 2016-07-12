@@ -137,7 +137,7 @@ __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out
     out[outidx + 3 * jump] = (float)0.0;
 
     for (int ii = 0; ii < factort; ii++) {
-        idx2 = idx2 + factort * 32;
+        idx2 = threadIdx.x + ii * 32;
 	power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
         power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
 	out[outidx] += (power1 + power2);
@@ -146,7 +146,35 @@ __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out
         out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x));
 
     }
-	
 
+}
+
+__global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort) {
+
+    int idx1;
+    int idx2;
+    int outidx;
+    float power1, power2;
+
+    for (int ii = 0; ii < 7; ii++) {
+        
+        outidx = 7 * 27 * blockIdx.x + ii * 27 + threadIdx.x;
+        out[outidx] = (float)0.0;
+        out[outidx + jump] = (float)0.0;
+        out[outidx + 2 * jump] = (float)0.0;
+        out[outidx + 3 * jump] = (float)0.0;
+
+        idx1 = (blockIdx.x * 7 + ii) * 256;
+        
+        for (int jj = 0; jj < factort; jj++) {
+            idx2 = threadIdx.x + jj * 32;
+            power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
+            power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
+    	    out[outidx] += (power1 + power2);
+            out[outidx + jump] += (power1 - power2);
+            out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y));
+            out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x));
+        }
+    }
 
 }

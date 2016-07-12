@@ -13,4 +13,5 @@ __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump);
 
 __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort);
 
+__global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort);
 #endif
