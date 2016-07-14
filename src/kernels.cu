@@ -44,7 +44,7 @@ __global__ void rearrange2(cudaTextureObject_t texObj, cufftComplex * __restrict
          out[chanidx * YSIZE * 2 + YSIZE + sample].y = static_cast<float>(static_cast<short>(((word.x & 0xff00) >> 8) | ((word.x & 0xff) << 8)));
     }
 
-} 
+}
 
 
 __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
@@ -78,7 +78,7 @@ __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int
 
 } */
 
-__global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc) {
+__global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     //if (idx == 0) printf("In the channel kernel\n");
@@ -96,6 +96,39 @@ __global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned 
     }
 
     //printf("S1 freq sum %f\n", out[idx]);
+}
+__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int saveidx = (framet % totsize) * nchans + idx;
+
+    out[0][saveidx] = (float)0.0;
+    out[1][saveidx] = (float)0.0;
+    out[2][saveidx] = (float)0.0;
+    out[3][saveidx] = (float)0.0;
+
+    // not a problem - earch thread in a warp uses the same branch
+    if ((framet % totsize) < gulpno * gulp) {
+        for (int ch = 0; ch < factorc; ch++) {
+            out[0][saveidx] += in[idx * factorc + ch];
+            out[1][saveidx] += in[idx * factorc + ch + jumpin];
+            out[2][saveidx] += in[idx * factorc + ch + 2 * jumpin];
+            out[3][saveidx] += in[idx * factorc + ch + 3 * jumpin];
+        }
+    } else {
+        for (int ch = 0; ch < factorc; ch++) {
+            out[0][saveidx] += in[idx * factorc + ch];
+            out[1][saveidx] += in[idx * factorc + ch + jumpin];
+            out[2][saveidx] += in[idx * factorc + ch + 2 * jumpin];
+            out[3][saveidx] += in[idx * factorc + ch + 3 * jumpin];
+        }
+        // save in two places - wrap wround to the start of the buffer
+        out[0][saveidx - (gulpno * gulp * nchans)] = out[0][saveidx];
+        out[1][saveidx - (gulpno * gulp * nchans)] = out[1][saveidx];
+        out[2][saveidx - (gulpno * gulp * nchans)] = out[2][saveidx];
+        out[3][saveidx - (gulpno * gulp * nchans)] = out[3][saveidx];
+    }
 }
 
 __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
@@ -121,7 +154,7 @@ __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
 
 __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort)
 {
-    // 1MHz channel ID	
+    // 1MHz channel ID
     int idx1 = blockIdx.x;
     // 'small' channel ID
     int idx2 = threadIdx.x;
@@ -157,7 +190,7 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
     float power1, power2;
 
     for (int ii = 0; ii < 7; ii++) {
-        
+
         outidx = 7 * 27 * blockIdx.x + ii * 27 + threadIdx.x;
         out[outidx] = (float)0.0;
         out[outidx + jump] = (float)0.0;
@@ -165,7 +198,7 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
         out[outidx + 3 * jump] = (float)0.0;
 
         idx1 = (blockIdx.x * 7 + ii) * 256;
-        
+
         for (int jj = 0; jj < factort; jj++) {
             idx2 = threadIdx.x + jj * 32;
             power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;

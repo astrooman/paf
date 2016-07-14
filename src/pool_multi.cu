@@ -53,7 +53,7 @@ using std::vector;
 #define HEADER 64
 #define WORDS_PER_PACKET 896
 #define BUFLEN 7168 + 64
-#define PORTS 8 
+#define PORTS 8
 
 mutex cout_guard;
 
@@ -63,7 +63,7 @@ TODO: Too many copies - could I use move in certain places?
 
 /*##############################################
 IMPORTANT: from what I seen in the system files:
-eth3, gpu0, gpu1 - NUMA node 0, CPUs 0-7 
+eth3, gpu0, gpu1 - NUMA node 0, CPUs 0-7
 eth2, gpu2, gpu3 - NUMA node 1, CPUs 8-15
 ##############################################*/
 
@@ -426,11 +426,13 @@ void GPUpool::worker(int stream)
     unsigned int skip = stream * d_in_size;
 
     int idx;
-    int current_frame;
+    unsigned int current_frame;
 
     float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
+
+    float **pd_fil = p_mainbuffer->get_pfil();
 
     while(working) {
         unsigned int index{0};
@@ -457,13 +459,15 @@ void GPUpool::worker(int stream)
             //powertime<<<336, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
             //addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
-            addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
+            //addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
+            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config.filchans, _config.gulp, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaPeekAtLastError());
             cudaThreadSynchronize();
+            p_mainbuffer->update(frame_time);
 
-            p_mainbuffer->write(pdv_freq_scrunch, frame_time, d_freq_scrunch_size, mystreams[stream]);
+            //p_mainbuffer->write(pdv_freq_scrunch, frame_time, d_freq_scrunch_size, mystreams[stream]);
 
         } else {
             workermutex.unlock();
