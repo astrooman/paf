@@ -139,9 +139,9 @@ void GPUpool::execute(void)
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
     // every thread will be associated with its own CUDA streams
-    mystreams = new cudaStream_t[4];
+    mystreams = new cudaStream_t[avt];
     // each stream will have its own cuFFT plan
-    myplans = new cufftHandle[4];
+    myplans = new cufftHandle[nostreams];
 
     int nkernels = 4;
     CUDAthreads = new unsigned int[nkernels];
@@ -256,8 +256,8 @@ void GPUpool::execute(void)
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
     // dedispersion thread
-    // cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
-    // mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
+    cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
+    mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
 
     // STAGE: networking
 
@@ -351,7 +351,6 @@ void GPUpool::execute(void)
                 cout << "Metadata socket error\n";
                 continue;
             }
-
             if (bind(sock_meta, tryme_meta->ai_addr, tryme_meta->ai_addrlen) == -1) {
                 cout << "Metadata bind error\n";
                 continue;
@@ -368,8 +367,8 @@ void GPUpool::execute(void)
     std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
 
     char *metabuffer = new char[4096];
-/*
-    if (metalog) {
+
+/*    if (metalog) {
         while(working) {
             metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
 
@@ -442,7 +441,11 @@ void GPUpool::worker(int stream)
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
 
-    float **pd_fil = p_mainbuffer->get_pfil();
+    float **p_fil = p_mainbuffer->get_pfil();
+
+    float **pd_fil;
+    cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
+    cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
 
     while(working) {
         unsigned int index{0};
@@ -457,6 +460,8 @@ void GPUpool::worker(int stream)
                 worker_ready[1] = false;
                 current_frame = worker_frame[1];
             }
+            //cout << "Got some stuff!!" << endl;
+            //cout.flush();
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
             index = index * d_rearrange_size;
@@ -470,14 +475,12 @@ void GPUpool::worker(int stream)
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
             //addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
             //addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
-            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config.filchans, _config.gulp, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame);
+            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)_config.filchans, _config.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame);
             // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
             // used to check for any possible errors in the kernel execution
-            cudaCheckError(cudaPeekAtLastError());
+            cudaCheckError(cudaGetLastError());
             cudaThreadSynchronize();
             p_mainbuffer->update(frame_time);
-
-            //p_mainbuffer->write(pdv_freq_scrunch, frame_time, d_freq_scrunch_size, mystreams[stream]);
 
         } else {
             workermutex.unlock();
@@ -551,7 +554,7 @@ void GPUpool::receive_thread(int ii)
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
     }
-    while(packcount < 200) {
+    while(working) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
@@ -584,6 +587,6 @@ void GPUpool::receive_thread(int ii)
             buffer_ready[0] = false;
         }
         buffermutex.unlock();
-        packcount++;
+        //packcount++;
     }
 }

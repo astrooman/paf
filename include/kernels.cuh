@@ -9,7 +9,7 @@ __global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int
 
 __global__ void addchannel(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc);
 
-__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, unsigned int gulp, unsigned int gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet)
+__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize, short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet);
 
 __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump);
 

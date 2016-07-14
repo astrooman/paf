@@ -97,7 +97,7 @@ __global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsi
 
     //printf("S1 freq sum %f\n", out[idx]);
 }
-__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet) {
+__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 

@@ -65,7 +65,7 @@ class Buffer
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
-        void update(int index);
+        void update(obs_time frame_time);
         void write(T *d_data, obs_time frame_time, unsigned int amount, cudaStream_t stream);
         // add deleted copy, move, etc constructors
 };
@@ -206,14 +206,15 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
 }
 
 template<class T>
-void Buffer<T>::update(int index)
+void Buffer<T>::update(obs_time frame_time)
 {
     statemutex.lock();
+    int index = frame_time.framet % totsize;
     sample_state[index] = 1;
     if((index % gulp) == 0)
         gulp_times[index / gulp] = frame_time;
     if (index >= gulpno * gulp)
-        saple_state[index - (gulpno * gulp)] = 1;
+        sample_state[index - (gulpno * gulp)] = 1;
     statemutex.unlock();
 
 }
