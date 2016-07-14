@@ -125,6 +125,16 @@ void GPUpool::execute(void)
 {
     cudaCheckError(cudaSetDevice(gpuid));
 
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(8, &cpuset);
+    int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+    if (retaff != 0)
+        cout << "Error setting thread affinity for the GPU pool " << gpuid << endl;
+
+    cout << "GPU pool for device " << gpuid << " running on CPU " << sched_getcpu() << endl;
+
     p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
@@ -511,6 +521,14 @@ void GPUpool::dedisp_thread(int dstream)
 
 void GPUpool::receive_thread(int ii)
 {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(ii, &cpuset);
+    int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (retaff != 0)
+        cout << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
+    cout << "Receive thread on port " << 17000 + ii << " running on CPU " << sched_getcpu() << endl;
+
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
     socklen_t addr_len;
