@@ -27,6 +27,7 @@ struct config_s {
 
     std::vector<int> killmask;
 
+    unsigned int accumulate;    // number of 108us complete chunks to process on the GPU at once
     unsigned int batch;
     unsigned int beamno;        // number of beams per card
     unsigned int chunks;        // time chunks to process - testing only
@@ -48,6 +49,7 @@ inline void default_config(config_s &config) {
     config.test = false;
     config.verbose = false;
 
+    config.accumulate = 16;
     config.band = 1.185;
     config.dstart = 0.0;
     config.dend = 4000.0;

@@ -86,7 +86,8 @@ Oberpool::~Oberpool(void)
     }
 }
 
-GPUpool::GPUpool(int id, config_s config) : gpuid(2),
+GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
+                                        gpuid(2),
                                         highest_frame(-1),
                                         highest_buf(0),
                                         batchsize(config.batch),
@@ -95,16 +96,15 @@ GPUpool::GPUpool(int id, config_s config) : gpuid(2),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
                                         npol(config.npol),
-                                        d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg),
-                                        d_in_size(config.batch * config.fftsize * config.timesavg * config.npol),
-                                        d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol),
-                                        d_power_size(config.batch * config.fftsize * config.timesavg),
-                                        d_time_scrunch_size((config.fftsize - 5) * config.batch),
-                                        d_freq_scrunch_size((config.fftsize - 5) * config.batch / config.freqavg),
+                                        d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg * config.accumulate),
+                                        d_in_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
+                                        d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
+                                        d_time_scrunch_size((config.fftsize - 5) * config.batch * config.accumulate),
+                                        d_freq_scrunch_size((config.fftsize - 5) * config.batch  * config.accumulate / config.freqavg),
                                         gulps_sent(0),
                                         gulps_processed(0),
                                         working(true),
-					packcount(0)
+					                    packcount(0)
 
 {
     cout << "New pool" << endl;
@@ -138,9 +138,10 @@ void GPUpool::execute(void)
     p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
+    frame_times = new int[2 * accumulate];
     // every thread will be associated with its own CUDA streams
     mystreams = new cudaStream_t[avt];
-    // each stream will have its own cuFFT plan
+    // each worker stream will have its own cuFFT plan
     myplans = new cufftHandle[nostreams];
 
     int nkernels = 4;
@@ -162,13 +163,6 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < nkernels; ii++)
         cout << "Kernel " << ii << ": block - " << CUDAblocks[ii] << ", thread - " << CUDAthreads[ii] << endl;
 
-    /* CUDAthreads[0] = fftpoint * timeavg * nchans;
-    CUDAthreads[1] = nchans;
-    CUDAthreads[2] = nchans * (fftpoint - 5) / freqavg;
-    CUDAblocks[0] = 1;
-    CUDAblocks[1] = 1;
-    CUDAblocks[2] = 1;
-    */
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     cout << "Preparing the memory..." << endl;
 
@@ -181,7 +175,7 @@ void GPUpool::execute(void)
     tdesc = new cudaTextureDesc[nostreams];
 
     for (int ii = 0; ii < nostreams; ii++) {
-        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg));
+        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg * accumulate));
 
         memset(&(rdesc[ii]), 0, sizeof(cudaResourceDesc));
         rdesc[ii].resType = cudaResourceTypeArray;
@@ -199,21 +193,19 @@ void GPUpool::execute(void)
 
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
-    // this buffer takes two full bandwidths, 48 packets per bandwidth
-    pack_per_buf = batchsize / 7 * 2;
+
+    pack_per_buf = batchsize / 7 * accumulate * 2;
     h_pol = new unsigned char[d_rearrange_size * 2];
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex)));
     // need to store all 4 Stoke parameters
-    dv_power.resize(nostreams);
     dv_time_scrunch.resize(nostreams);
     dv_freq_scrunch.resize(nostreams);
     // TODO: make a private const data memmber and put in the initializer list!!
     stokes = _config.stokes;
     for (int ii = 0; ii < nostreams; ii++) {
-        dv_power[ii].resize(d_power_size * stokes);
         dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
         dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
     }
@@ -222,8 +214,6 @@ void GPUpool::execute(void)
     // generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-
-    //dedisp.generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
     dedisp_totsamples = (size_t)_config.gulp + 0; //p_dedisp->get_max_delay();
@@ -251,7 +241,7 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < nostreams; ii++) {
             cudaCheckError(cudaStreamCreate(&mystreams[ii]));
             // TODO: add separate error checking for cufft functions
-            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol));
+            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol * accumulate));
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
@@ -437,12 +427,10 @@ void GPUpool::worker(int stream)
     int idx;
     unsigned int current_frame;
 
-    float *pdv_power = thrust::raw_pointer_cast(dv_power[stream].data());
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
 
     float **p_fil = p_mainbuffer->get_pfil();
-
     float **pd_fil;
     cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
     cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
@@ -465,18 +453,19 @@ void GPUpool::worker(int stream)
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
             index = index * d_rearrange_size;
-            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);
+            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);;
+            for (int frameidx = 0; frameidx < acculumate; frameidx++) {
+                if (thread_frames[frameidx] != 0) {
+                    current_frame = frame_times[frameidx];
+                    break;
+                }
+            }
+            obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
-            //rearrange<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
-            rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip);
+            rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
-            //powerscale<<<CUDAblocks[1], CUDAthreads[1], 0, mystreams[stream]>>>(d_fft + skip, pdv_power, d_power_size);
-            //powertime<<<336, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
-            powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg);
-            //addtime<<<CUDAblocks[2], CUDAthreads[2], 0, mystreams[stream]>>>(pdv_power, pdv_time_scrunch, d_power_size, d_time_scrunch_size, timeavg);
-            //addchannel<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pdv_freq_scrunch, d_time_scrunch_size, d_freq_scrunch_size, freqavg);
-            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)_config.filchans, _config.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame);
-            // cudaPeekAtLastError does not reset the error to cudaSuccess like cudaGetLastError()
+            powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
+            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)_config.filchans, _config.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
             cudaThreadSynchronize();
@@ -534,15 +523,21 @@ void GPUpool::receive_thread(int ii)
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         cout << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
+    printmutex.lock();
     cout << "Receive thread on port " << 17000 + ii << " running on CPU " << sched_getcpu() << endl;
+    printmutex.unlock();
 
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
+
     int numbytes{0};
     short fpga{0};
     short bufidx{0};
+    // this will always be an integer
+    short intofirst = (short)(0.5 * (double)pack_per_buf + 0.5 * (double)pack_per_buf / (double)accumulate);
+    short intosecond = (short)(0.5 * (double)pack_per_buf / (double)accumulate);
     int frame{0};
     int ref_s;
     int packcount;
@@ -568,18 +563,24 @@ void GPUpool::receive_thread(int ii)
         // looking at how much stuff we are not missing - remove a lot of checking for now
         // TODO: add some mininal checks later anyway
 
-        bufidx = (frame % 2) * pack_per_buf + fpga;
+        // which half of the buffer to put the data in
+        bufidx = ((int)(frame / accumulate) % 2) * (pack_per_buf / 2);
+        // frame position in the half
+        bufidx += (frame % accumulate) * 48;
+        frame_times[frame % (2 * accumulate)] = frame;
+        // frequency chunk in the frame
+        bufidx += fpgaid;
         std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
         buffer_ready[(int)(bufidx / (pack_per_buf / 2))] = true;
 
         buffermutex.lock();
-        if(buffer_ready[0] && bufidx >= 3 * (pack_per_buf / 4) ) {
+        if(buffer_ready[0] && bufidx >= intosecond ) {
             workermutex.lock();
                 worker_ready[0] = true;
                 worker_frame[0] = frame - 1;
             workermutex.unlock();
             buffer_ready[0] = false;
-        } else if (buffer_ready[1] && bufidx >= (pack_per_buf /4)) {
+        } else if (buffer_ready[1] && bufidx >= intofirst) {
             workermutex.lock();
                 worker_ready[1] = true;
                 worker_frame[1] = frame - 1;

@@ -76,7 +76,6 @@ class GPUpool
         hd_pipeline pipeline;
         hd_params params;
         int packcount;
-        vector<thrust::device_vector<float>> dv_power;          //!< Power buffer, powerscale() kernel output, addtime() kernel input; holds GPUpool::nostreams device vectors, each holding GPUpool::d_power_size * GPUpool::stokes elements
         vector<thrust::device_vector<float>> dv_time_scrunch;   //!< Time scrunched buffer, addtime() kernel output, addchannel() kernel input; holds GPUpool::nostreams device vectors, each holding GPUpool::d_time_scrunch_size * GPUpool::stokes elements
         vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GPUpool::nostreams device vectors, each holding GPUpool::d_freq_scrunch_size * GPUpool::stokes elements
 
@@ -109,11 +108,10 @@ class GPUpool
         // keep d_in_size and d_fft_size separate just in case the way the fft is done changes
         const unsigned int d_rearrange_size;
         const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int d_fft_size;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int d_power_size;            //!< d_fft_size / # polarisations
-        const unsigned int d_time_scrunch_size;     //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int d_fft_size;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations        const unsigned int d_time_scrunch_size;     //!< (size of single fft - 5) * # 1MHz channels
         const unsigned int d_freq_scrunch_size;     //!< d_time_scrunch_size / # frequency channels to average
-        const unsigned int batchsize;               //!< Currently slightly pointless
+        const unsigned int accumulate;              //!< The number of 108us chunks to accumulate for the GPU processing
+        const unsigned int batchsize;               //!< The number of 1MHz channels to process
         const unsigned int fftpoint;                //!< Size of the single FFT
         const unsigned int nostreams;               //!< Number of CUDA streams to use
         const unsigned int timeavg;                 //!< Number of post-FFT time samples to average
@@ -124,13 +122,14 @@ class GPUpool
         // one buffer
         unsigned int filsize;
         // polarisations buffer
-        unsigned char *h_pol;            //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples
+        unsigned char *h_pol;           //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples
         int gpuid;                      //!< Self-explanatory
         int pol_begin;
+        int *frame_times;               //!< Array for the absolute frame numbers for given buffers
         // GPU and thread stuff
         // raw voltage buffers
         // d_in is a cufftExecC2C() input
-        unsigned char *h_in = 0;         //!< Raw voltage host buffer, async copied to d_in in the GPUpool::worker()
+        unsigned char *h_in = 0;        //!< Raw voltage host buffer, async copied to d_in in the GPUpool::worker()
         cufftComplex *d_in = 0;         //!< Raw voltage device buffer, cufftExecC2C() input, holds GPUpool::d_in_size * GPUpool::nostreams elements
         // the ffted signal buffer
         // cufftExecC2C() output
