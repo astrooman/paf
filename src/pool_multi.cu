@@ -137,7 +137,7 @@ void GPUpool::execute(void)
     p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
-    frame_times = new int[2 * accumulate];
+    frame_times = new int[accumulate * nostreams];
     // every thread will be associated with its own CUDA streams
     mystreams = new cudaStream_t[avt];
     // each worker stream will have its own cuFFT plan
@@ -182,7 +182,6 @@ void GPUpool::execute(void)
 
         memset(&(tdesc[ii]), 0, sizeof(cudaTextureDesc));
         tdesc[ii].addressMode[0] = cudaAddressModeClamp;
-        tdesc[ii].addressMode[1] = cudaAddressModeClamp;
         tdesc[ii].filterMode = cudaFilterModePoint;
         tdesc[ii].readMode = cudaReadModeElementType;
 
@@ -193,8 +192,10 @@ void GPUpool::execute(void)
     // it has to be an array and I can't do anything about that
     sizes[0] = (int)fftpoint;
 
-    pack_per_buf = batchsize / 7 * accumulate * 2;
-    h_pol = new unsigned char[d_rearrange_size * 2];
+    // each stream will have its own incoming buffeer to read from
+    pack_per_buf = batchsize / 7 * accumulate * nostreams;
+    h_pol = new unsigned char[d_rearrange_size * nostreams];
+    bufidx_array = new bool[pack_per_buf];
 
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
@@ -430,31 +431,31 @@ void GPUpool::worker(int stream)
     cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
     cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
 
-/*    while(working) {
+    const int skip = stream * (pack_per_buf / nostreams);
+    const int skip_to_end = (stream + 1) * (pack_per_buf / nostreams) - 1;
+    bool endready = false;
+    bool innext = false;
+    while (working) {
         unsigned int index{0};
-        workermutex.lock();
-        if(worker_ready[0] || worker_ready[1]) {
-            if(worker_ready[0]) {
-                index = 0;
-                worker_ready[0] = false;
-                current_frame = worker_frame[0];
-            } else {
-                index = 1;
-                worker_ready[1] = false;
-                current_frame = worker_frame[1];
+        for (int ii = 0; ii < 4; ii++) {
+            endready = endready || bufidx_array[skip_to_end - ii];
+            innext = innext || bufidx_array[skip_to_end + 24 - ii];
+        }
+        if (endready && innext) {
+            for (int ii = 0; ii < 4; ii++) {
+                bufidx_array[skip_to_end - ii] = false;
+                bufidx_array[skip_to_end + 24 - ii] = false;
             }
             cout << "Got some stuff!!" << endl;
             cout.flush();
-            obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
-            workermutex.unlock();
-            index = index * d_rearrange_size;
-            std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);;
+            std::copy(h_pol + index,  h_pol + stream + d_rearrange_size, h_in + stream * d_rearrange_size);;
             for (int frameidx = 0; frameidx < accumulate; frameidx++) {
-                if (frame_times[frameidx] != 0) {
-                    current_frame = frame_times[frameidx];
+                if (frame_times[stream * accumulate + frameidx] != 0) {
+                    current_frame = frame_times[stream * acculumate + frameidx];
                     break;
                 }
             }
+            obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
             rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
@@ -466,11 +467,10 @@ void GPUpool::worker(int stream)
             p_mainbuffer->update(frame_time);
 
         } else {
-            workermutex.unlock();
             std::this_thread::yield();
         }
     }
-*/
+
     cudaFree(pd_fil);
 }
 
@@ -528,6 +528,7 @@ void GPUpool::receive_thread(int ii)
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
 
+    const int pack_per_worker_buf = pack_per_buf / nostreams;
     int numbytes{0};
     short fpga{0};
     short bufidx{0};
@@ -536,7 +537,7 @@ void GPUpool::receive_thread(int ii)
     short intofirst = (short)(0.25 * (double)pack_per_buf / (double)accumulate);
     cout << "intosecond " << intosecond << endl;
     int frame{0};
-    int ref_s;
+    int ref_s{0};
     int packcount{0};
     // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
@@ -565,43 +566,14 @@ void GPUpool::receive_thread(int ii)
         // TODO: add some mininal checks later anyway
 
         // which half of the buffer to put the data in
-        bufidx = ((int)(frame / accumulate) % 2) * (pack_per_buf / 2);
+        bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
         // frame position in the half
         bufidx += (frame % accumulate) * 48;
-        frame_times[frame % (2 * accumulate)] = frame;
+        frame_times[frame % (accumulate * nostreams)] = frame;
         // frequency chunk in the frame
         bufidx += fpga;
         std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
-        buffer_ready[(int)(bufidx / (pack_per_buf / 2))] = true;
-
-        buffermutex.lock();
-        if(buffer_ready[0] && (bufidx >= intosecond)) {
-            workermutex.lock();
-                cout << "Sending the first buffer\n";
-                cout << (int)(bufidx / (pack_per_buf / 2)) << endl;
-                cout << bufidx << endl;
-                cout << frame << endl;
-                cout << fpga << endl;
-                cout.flush();
-                worker_ready[0] = true;
-                worker_frame[0] = frame - 1;
-            workermutex.unlock();
-            buffer_ready[0] = false;
-        } else if (buffer_ready[1] && (bufidx >= intofirst) && (bufidx < pack_per_buf / 2)) {
-            workermutex.lock();
-                cout << "Sending the second buffer\n";
-                cout << (int)(bufidx / (pack_per_buf / 2)) << endl;
-                cout << bufidx << endl;
-                cout << frame << endl;
-                cout << fpga << endl;
-                cout.flush();
-                worker_ready[1] = true;
-                worker_frame[1] = frame - 1;
-            workermutex.unlock();
-            buffer_ready[1] = false;
-        }
-        buffermutex.unlock();
-        packcount++;
+        bufidx_array[bufidx] = true;
     }
     working = false;
 }
