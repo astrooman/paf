@@ -111,15 +111,16 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
     int inskip;
     int outskip;
 
-    out[0][saveidx] = (float)0.0;
-    out[1][saveidx] = (float)0.0;
-    out[2][saveidx] = (float)0.0;
-    out[3][saveidx] = (float)0.0;
-
     for (int ac = 0; ac < acc; acc++) {
         saveidx = (framet % (gulpno * gulp)) * nchans + idx + nchans;
         inskip = ac * 27 * 336;
         outskip = ac * 27 * 336 / factorc;
+        
+        out[0][saveidx] = (float)0.0;
+        out[1][saveidx] = (float)0.0;
+        out[2][saveidx] = (float)0.0;
+        out[3][saveidx] = (float)0.0;
+
         if ((framet % totsize) < gulpno * gulp) {
             for (int ch = 0; ch < factorc; ch++) {
                 out[0][saveidx] += in[inskip + idx * factorc + ch];
@@ -140,7 +141,6 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
             out[2][saveidx + (gulpno * gulp * nchans)] = out[2][outskip + saveidx];
             out[3][saveidx + (gulpno * gulp * nchans)] = out[3][outskip + saveidx];
             }
-        }
         framet++;
     }
     // not a problem - earch thread in a warp uses the same branch

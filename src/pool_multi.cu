@@ -88,7 +88,6 @@ Oberpool::~Oberpool(void)
 
 GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         gpuid(2),
-                                        highest_frame(-1),
                                         highest_buf(0),
                                         batchsize(config.batch),
                                         fftpoint(config.fftsize),
@@ -173,7 +172,7 @@ void GPUpool::execute(void)
     texObj = new cudaTextureObject_t[nostreams];
     rdesc = new cudaResourceDesc[nostreams];
     tdesc = new cudaTextureDesc[nostreams];
-
+    cout << accumulate << endl;
     for (int ii = 0; ii < nostreams; ii++) {
         cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg * accumulate));
 
@@ -256,7 +255,6 @@ void GPUpool::execute(void)
     memset(&start_time, 0, sizeof(start_time)) ;
     int netrv;
     addrinfo hints, *servinfo, *tryme;
-    char s[INET6_ADDRSTRLEN];
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -280,7 +278,7 @@ void GPUpool::execute(void)
         cout << "Binding to port " << strport << "..." << endl;
         cout.flush();
 
-        if((netrv = getaddrinfo("10.17.0.1", strport.c_str(), &hints, &servinfo)) != 0) {
+        if((netrv = getaddrinfo("10.17.1.1", strport.c_str(), &hints, &servinfo)) != 0) {
             cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
         }
 
@@ -331,10 +329,10 @@ void GPUpool::execute(void)
     sockaddr_storage meta_addr;
     memset(&meta_addr, 0, sizeof(meta_addr));
     socklen_t meta_len;
-    memset(&meta_len, 0, sizeof(meta_len));
 
-    if ((netrv = getaddrinfo("130.155.182.74", "26666", &hints_meta, &servinfo_meta)) != 0) {
+    if ((netrv = getaddrinfo(NULL, "26666", &hints_meta, &servinfo_meta)) != 0) {
         cout << "gettaddrinfo() error on metadata socket 26666" << endl;
+    }
 
         for (tryme_meta = servinfo_meta; tryme_meta != NULL; tryme_meta=tryme_meta->ai_next) {
             if ((sock_meta = socket(tryme_meta->ai_family, tryme_meta->ai_socktype, tryme_meta->ai_protocol)) == -1) {
@@ -348,34 +346,33 @@ void GPUpool::execute(void)
             break;
         }
 
-        if (tryme_meta == NULL) {
-            cout << "Failed to bind to the metadata socket\n";
-        }
+    if (tryme_meta == NULL) {
+        cout << "Failed to bind to the metadata socket\n";
     }
-
     metadata paf_meta;
     std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
 
     char *metabuffer = new char[4096];
-
+    meta_len = sizeof(meta_addr);
 /*    if (metalog) {
         while(working) {
             metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
+            if (metabytes != 0) {
+                string metastr(metabuffer);
+                paf_meta.getMetaData(metastr, 0);
+                cout << paf_meta.timestamp << "\t";
+                cout << paf_meta.beam_num << "\t";
+                cout << paf_meta.beam_ra << "\t";
+                cout << paf_meta.beam_dec << "\t";
+                cout << paf_meta.target_name << endl;
+                cout.flush();
 
-            string metastr(metabuffer);
-            paf_meta.getMetaData(metastr, 0);
-            cout << paf_meta.timestamp << "\t";
-            cout << paf_meta.beam_num << "\t";
-            cout << paf_meta.beam_ra << "\t";
-            cout << paf_meta.beam_dec << "\t";
-            cout << paf_meta.target_name << endl;
-            cout.flush();
-
-            metalog << paf_meta.timestamp << "\t";
-            metalog << paf_meta.beam_num << "\t";
-            metalog << paf_meta.beam_ra << "\t";
-            metalog << paf_meta.beam_dec << "\t";
-            metalog << paf_meta.target_name << endl << endl;
+                metalog << paf_meta.timestamp << "\t";
+                metalog << paf_meta.beam_num << "\t";
+                metalog << paf_meta.beam_ra << "\t";
+                metalog << paf_meta.beam_dec << "\t";
+                metalog << paf_meta.target_name << endl << endl;
+            }
         }
 
         metalog.close();
@@ -395,7 +392,6 @@ GPUpool::~GPUpool(void)
     // TODO: clear the memory properly
     cout << "Calling destructor" << endl;
     cout.flush();
-    working = false;
     for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
 
@@ -424,7 +420,6 @@ void GPUpool::worker(int stream)
 
     unsigned int skip = stream * d_in_size;
 
-    int idx;
     unsigned int current_frame;
 
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
@@ -435,7 +430,7 @@ void GPUpool::worker(int stream)
     cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
     cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
 
-    while(working) {
+/*    while(working) {
         unsigned int index{0};
         workermutex.lock();
         if(worker_ready[0] || worker_ready[1]) {
@@ -448,19 +443,18 @@ void GPUpool::worker(int stream)
                 worker_ready[1] = false;
                 current_frame = worker_frame[1];
             }
-            //cout << "Got some stuff!!" << endl;
-            //cout.flush();
+            cout << "Got some stuff!!" << endl;
+            cout.flush();
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             workermutex.unlock();
             index = index * d_rearrange_size;
             std::copy(h_pol + index,  h_pol + index + d_rearrange_size, h_in + stream * d_rearrange_size);;
-            for (int frameidx = 0; frameidx < acculumate; frameidx++) {
-                if (thread_frames[frameidx] != 0) {
+            for (int frameidx = 0; frameidx < accumulate; frameidx++) {
+                if (frame_times[frameidx] != 0) {
                     current_frame = frame_times[frameidx];
                     break;
                 }
             }
-            obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
             rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
@@ -476,6 +470,8 @@ void GPUpool::worker(int stream)
             std::this_thread::yield();
         }
     }
+*/
+    cudaFree(pd_fil);
 }
 
 void GPUpool::dedisp_thread(int dstream)
@@ -536,11 +532,12 @@ void GPUpool::receive_thread(int ii)
     short fpga{0};
     short bufidx{0};
     // this will always be an integer
-    short intofirst = (short)(0.5 * (double)pack_per_buf + 0.5 * (double)pack_per_buf / (double)accumulate);
-    short intosecond = (short)(0.5 * (double)pack_per_buf / (double)accumulate);
+    short intosecond = (short)(0.5 * (double)pack_per_buf + 0.25 * (double)pack_per_buf / (double)accumulate);
+    short intofirst = (short)(0.25 * (double)pack_per_buf / (double)accumulate);
+    cout << "intosecond " << intosecond << endl;
     int frame{0};
     int ref_s;
-    int packcount;
+    int packcount{0};
     // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
     if (ii == 0) {
@@ -549,12 +546,16 @@ void GPUpool::receive_thread(int ii)
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
     }
-    while(working) {
+    cout << start_time.start_epoch << " " << start_time.start_second << endl;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    while(packcount < 20) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
             cout << "Errno " << errno << endl;
         }
+        if (numbytes == 0)
+            continue;
         ref_s = (int)(rec_bufs[ii][3] | (rec_bufs[ii][2] << 8) | (rec_bufs[ii][1] << 16) | ((rec_bufs[ii][0] & 0x3f) << 24));
         frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
         fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 8 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
@@ -569,25 +570,38 @@ void GPUpool::receive_thread(int ii)
         bufidx += (frame % accumulate) * 48;
         frame_times[frame % (2 * accumulate)] = frame;
         // frequency chunk in the frame
-        bufidx += fpgaid;
+        bufidx += fpga;
         std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
         buffer_ready[(int)(bufidx / (pack_per_buf / 2))] = true;
 
         buffermutex.lock();
-        if(buffer_ready[0] && bufidx >= intosecond ) {
+        if(buffer_ready[0] && (bufidx >= intosecond)) {
             workermutex.lock();
+                cout << "Sending the first buffer\n";
+                cout << (int)(bufidx / (pack_per_buf / 2)) << endl;
+                cout << bufidx << endl;
+                cout << frame << endl;
+                cout << fpga << endl;
+                cout.flush();
                 worker_ready[0] = true;
                 worker_frame[0] = frame - 1;
             workermutex.unlock();
             buffer_ready[0] = false;
-        } else if (buffer_ready[1] && bufidx >= intofirst) {
+        } else if (buffer_ready[1] && (bufidx >= intofirst) && (bufidx < pack_per_buf / 2)) {
             workermutex.lock();
+                cout << "Sending the second buffer\n";
+                cout << (int)(bufidx / (pack_per_buf / 2)) << endl;
+                cout << bufidx << endl;
+                cout << frame << endl;
+                cout << fpga << endl;
+                cout.flush();
                 worker_ready[1] = true;
                 worker_frame[1] = frame - 1;
             workermutex.unlock();
-            buffer_ready[0] = false;
+            buffer_ready[1] = false;
         }
         buffermutex.unlock();
-        //packcount++;
+        packcount++;
     }
+    working = false;
 }

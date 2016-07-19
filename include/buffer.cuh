@@ -24,9 +24,9 @@ using std::vector;
 
 struct obs_time {
 
-    int start_epoch;            // reference epoch at the start of the observation
-    int start_second;           // seconds from the reference epoch at the start of the observation
-    int framet;                 // frame number from the start of the observation
+    unsigned int start_epoch;            // reference epoch at the start of the observation
+    unsigned int start_second;           // seconds from the reference epoch at the start of the observation
+    unsigned int framet;                 // frame number from the start of the observation
 
 };
 

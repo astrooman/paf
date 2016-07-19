@@ -63,18 +63,11 @@ struct header_s {
 inline void get_header(unsigned char* packet, header_s &head)
 {
 
-    long long word;
     long long *hword = new long long[8];
     // stuff arrives in the network order and has to be changed into host order
     for (int ii = 0; ii < 8; ii++) {
 	hword[ii] = be64toh(*(reinterpret_cast<long long*>(packet+ii*8)));
     }
-
-//    long long *word0 = reinterpret_cast<long long*>(packet);
-//    long long *word1 = reinterpret_cast<long long*>(packet+8);
-
-//    long long hword0 = be64toh(*word0);
-//    long long hword1 = be64toh(*word1);
 
     head.frame_no = (unsigned int)(hword[0] & 0xffffffff);
     head.ref_s = (unsigned int)((hword[0] >> 32) & 0xffffffff);

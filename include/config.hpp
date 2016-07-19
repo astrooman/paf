@@ -49,7 +49,7 @@ inline void default_config(config_s &config) {
     config.test = false;
     config.verbose = false;
 
-    config.accumulate = 16;
+    config.accumulate = 8;
     config.band = 1.185;
     config.dstart = 0.0;
     config.dend = 4000.0;

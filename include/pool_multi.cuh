@@ -109,6 +109,7 @@ class GPUpool
         const unsigned int d_rearrange_size;
         const unsigned int d_in_size;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int d_fft_size;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations        const unsigned int d_time_scrunch_size;     //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int d_time_scrunch_size;      //!< (size of single fft - 5) * # 1MHz channels
         const unsigned int d_freq_scrunch_size;     //!< d_time_scrunch_size / # frequency channels to average
         const unsigned int accumulate;              //!< The number of 108us chunks to accumulate for the GPU processing
         const unsigned int batchsize;               //!< The number of 1MHz channels to process
