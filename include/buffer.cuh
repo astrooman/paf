@@ -41,6 +41,7 @@ class Buffer
         size_t totsize;            // total size of the data: #gulps * gulp size + extra samples for dedispersion
         size_t gulp;            // size of the single gulp
         size_t extra;           // number of extra time samples required to process the full gulp
+        int accumulate;
         int gpuid;
         int gulpno;             // number of gulps required in the buffer
         int nchans;             // number of filterbank channels per time sample
@@ -60,7 +61,7 @@ class Buffer
         Buffer(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int id);
         ~Buffer(void);
 
-        void allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
+        void allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
         void dump(int idx, header_f head);
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
@@ -100,9 +101,10 @@ Buffer<T>::~Buffer()
 }
 
 template<class T>
-void Buffer<T>::allocate(int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u)
+void Buffer<T>::allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u)
 {
     fil_saved = 0;
+    accumulate = acc_u;
     extra = extra_u;
     gulp = gulp_u;
     gulpno = gulpno_u;
@@ -208,15 +210,16 @@ void Buffer<T>::write(T *d_data, obs_time frame_time, unsigned int amount, cudaS
 template<class T>
 void Buffer<T>::update(obs_time frame_time)
 {
-    statemutex.lock();
-    int index = frame_time.framet % totsize;
-    sample_state[index] = 1;
-    if((index % gulp) == 0)
-        gulp_times[index / gulp] = frame_time;
-    if (index >= gulpno * gulp)
-        sample_state[index - (gulpno * gulp)] = 1;
-    statemutex.unlock();
-
+    std::lock_guard<mutex> addguard(statemutex);
+    int index = frame_time.framet % (gulpno * gulp);
+    //std::cout << index << std::endl;
+    //std::cout.flush();
+    for (int ii = 0; ii < accumulate; ii++) {
+        sample_state[index + ii] = 1;
+        if ((frame_time.framet % totsize) > (gulpno * gulp)) {
+            sample_state[index + gulpno * gulp] = 1;
+        }
+    }
 }
 
 #endif

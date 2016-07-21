@@ -50,7 +50,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
     char field[60];
 
     for (int ii = 0; ii < stokes; ii++) {
-
+        std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
         oss << ii << "_" << saved;
         filename = "stokes_" + oss.str() + ".fil";

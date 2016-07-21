@@ -195,8 +195,7 @@ void GPUpool::execute(void)
     // each stream will have its own incoming buffeer to read from
     pack_per_buf = batchsize / 7 * accumulate * nostreams;
     h_pol = new unsigned char[d_rearrange_size * nostreams];
-    bufidx_array = new bool[pack_per_buf];
-
+    bufidx_array = new bool[pack_per_buf]();
     cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex)));
@@ -221,11 +220,9 @@ void GPUpool::execute(void)
     dedisp_buffsize = dedisp_buffno * _config.gulp + 0; //p_dedisp->get_max_delay();
     cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    p_mainbuffer->allocate(accumulate, dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
-    worker_ready[0] = false;
-    worker_ready[1] = false;
     p_dedisp->set_killmask(&_config.killmask[0]);
     // everything should be ready for dedispersion after this point
 
@@ -279,7 +276,7 @@ void GPUpool::execute(void)
         cout << "Binding to port " << strport << "..." << endl;
         cout.flush();
 
-        if((netrv = getaddrinfo("10.17.1.1", strport.c_str(), &hints, &servinfo)) != 0) {
+        if((netrv = getaddrinfo("10.17.0.1", strport.c_str(), &hints, &servinfo)) != 0) {
             cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
         }
 
@@ -431,27 +428,36 @@ void GPUpool::worker(int stream)
     cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
     cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
 
-    const int skip = stream * (pack_per_buf / nostreams);
-    const int skip_to_end = (stream + 1) * (pack_per_buf / nostreams) - 1;
+    int skip_read = stream * (pack_per_buf / nostreams);
+    int skip_to_end = (stream + 1) * (pack_per_buf / nostreams) - 1;
+    int next_start;
+    if (stream != 3) {
+        next_start = skip_to_end + 24;
+    } else {
+        next_start = 23;
+    }
     bool endready = false;
     bool innext = false;
     while (working) {
         unsigned int index{0};
+        endready = false;
+        endready = false;
         for (int ii = 0; ii < 4; ii++) {
+            //cout << bufidx_array[skip_to_end - ii] << " " << bufidx_array[skip_to_end + 24 - ii] << endl;
             endready = endready || bufidx_array[skip_to_end - ii];
-            innext = innext || bufidx_array[skip_to_end + 24 - ii];
+            innext = innext || bufidx_array[next_start - ii];
         }
         if (endready && innext) {
             for (int ii = 0; ii < 4; ii++) {
                 bufidx_array[skip_to_end - ii] = false;
-                bufidx_array[skip_to_end + 24 - ii] = false;
+                bufidx_array[next_start - ii] = false;
             }
-            cout << "Got some stuff!!" << endl;
+            cout << "Got stream " << stream << endl;
             cout.flush();
-            std::copy(h_pol + index,  h_pol + stream + d_rearrange_size, h_in + stream * d_rearrange_size);;
+            std::copy(h_pol + stream * d_rearrange_size,  h_pol + stream * d_rearrange_size + d_rearrange_size, h_in + stream * d_rearrange_size);;
             for (int frameidx = 0; frameidx < accumulate; frameidx++) {
                 if (frame_times[stream * accumulate + frameidx] != 0) {
-                    current_frame = frame_times[stream * acculumate + frameidx];
+                    current_frame = frame_times[stream * accumulate + frameidx];
                     break;
                 }
             }
@@ -464,8 +470,9 @@ void GPUpool::worker(int stream)
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
             cudaThreadSynchronize();
+            //cout << current_frame << endl;
+            //cout.flush();
             p_mainbuffer->update(frame_time);
-
         } else {
             std::this_thread::yield();
         }
@@ -478,6 +485,8 @@ void GPUpool::dedisp_thread(int dstream)
 {
 
     cudaCheckError(cudaSetDevice(gpuid));
+    cout << "Dedisp thread up and running..." << endl;
+    int ready{0};
     while(working) {
         int ready = p_mainbuffer->ready();
         if (ready) {
@@ -533,9 +542,6 @@ void GPUpool::receive_thread(int ii)
     short fpga{0};
     short bufidx{0};
     // this will always be an integer
-    short intosecond = (short)(0.5 * (double)pack_per_buf + 0.25 * (double)pack_per_buf / (double)accumulate);
-    short intofirst = (short)(0.25 * (double)pack_per_buf / (double)accumulate);
-    cout << "intosecond " << intosecond << endl;
     int frame{0};
     int ref_s{0};
     int packcount{0};
@@ -547,9 +553,9 @@ void GPUpool::receive_thread(int ii)
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
     }
-    cout << start_time.start_epoch << " " << start_time.start_second << endl;
+    // TODO: wait until frame = 0, i.e. we start recording at the 27s boundary
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    while(packcount < 20) {
+    while(working) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
@@ -573,7 +579,9 @@ void GPUpool::receive_thread(int ii)
         // frequency chunk in the frame
         bufidx += fpga;
         std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
+        //cout << bufidx << endl;
+        //cout.flush();
         bufidx_array[bufidx] = true;
+        packcount++;
     }
-    working = false;
 }

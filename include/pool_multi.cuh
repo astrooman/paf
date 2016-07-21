@@ -100,7 +100,7 @@ class GPUpool
 
         obs_time start_time;
         config_s _config;
-        bool bufidx_array;
+        bool *bufidx_array;
         bool working;
         bool buffer_ready[2];
         bool worker_ready[2];

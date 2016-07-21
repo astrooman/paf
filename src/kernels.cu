@@ -111,7 +111,7 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
     int inskip;
     int outskip;
 
-    for (int ac = 0; ac < acc; acc++) {
+    for (int ac = 0; ac < acc; ac++) {
         saveidx = (framet % (gulpno * gulp)) * nchans + idx + nchans;
         inskip = ac * 27 * 336;
         outskip = ac * 27 * 336 / factorc;
