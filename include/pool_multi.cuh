@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -173,6 +174,7 @@ class GPUpool
         int pack_per_buf;
         size_t dedisp_buffsize;
         size_t dedisp_totsamples;
+        std::string strip;
     protected:
 
     public:

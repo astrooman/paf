@@ -20,7 +20,7 @@ __global__ void rearrange(cudaTextureObject_t texObj, cufftComplex * __restrict_
     //if ((xidx == 0) && (yidx == 0)) printf("In the rearrange kernel\n");
     for (int sample = 0; sample < YSIZE; sample++) {
          word = tex2D<int2>(texObj, xidx, yidx + sample);
-         //printf("%i ", sample);
+         printf("%i ", sample);
          out[xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
          out[xidx * 128 + 7 * yidx + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
          out[336 * 128 + xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
@@ -38,10 +38,9 @@ __global__ void rearrange2(cudaTextureObject_t texObj, cufftComplex * __restrict
     int2 word;
 
     for (int ac = 0; ac < acc; ac++) {
-        skip = 338 * 128 * 2 * ac;
+        skip = 336 * 128 * 2 * ac;
         for (int sample = 0; sample < YSIZE; sample++) {
             word = tex2D<int2>(texObj, xidx, yidx + ac * 48 * 128 + sample);
-            //printf("%i ", sample);
             out[skip + chanidx * YSIZE * 2 + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
             out[skip + chanidx * YSIZE * 2 + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
             out[skip + chanidx * YSIZE * 2 + YSIZE + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
@@ -104,24 +103,22 @@ __global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsi
 __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
+    int extra = totsize - gulpno * gulp;
     // thats the starting save position for the chunk of length acc time samples
     int saveidx;
 
     int inskip;
-    int outskip;
 
     for (int ac = 0; ac < acc; ac++) {
-        saveidx = (framet % (gulpno * gulp)) * nchans + idx + nchans;
+        saveidx = (framet % (gulpno * gulp)) * nchans + idx;
         inskip = ac * 27 * 336;
-        outskip = ac * 27 * 336 / factorc;
         
         out[0][saveidx] = (float)0.0;
         out[1][saveidx] = (float)0.0;
         out[2][saveidx] = (float)0.0;
         out[3][saveidx] = (float)0.0;
 
-        if ((framet % totsize) < gulpno * gulp) {
+        if ((framet % (gulpno * gulp)) >= extra) {
             for (int ch = 0; ch < factorc; ch++) {
                 out[0][saveidx] += in[inskip + idx * factorc + ch];
                 out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
@@ -130,16 +127,16 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
             }
         } else {
             for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[idx * factorc + ch];
-                out[1][saveidx] += in[idx * factorc + ch + jumpin];
-                out[2][saveidx] += in[idx * factorc + ch + 2 * jumpin];
-                out[3][saveidx] += in[idx * factorc + ch + 3 * jumpin];
+                out[0][saveidx] += in[inskip + idx * factorc + ch];
+                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
             }
-            // save in two places - wrap wround to the start of the buffer
-            out[0][saveidx + (gulpno * gulp * nchans)] = out[0][outskip + saveidx];
-            out[1][saveidx + (gulpno * gulp * nchans)] = out[1][outskip + saveidx];
-            out[2][saveidx + (gulpno * gulp * nchans)] = out[2][outskip + saveidx];
-            out[3][saveidx + (gulpno * gulp * nchans)] = out[3][outskip + saveidx];
+            // save in two places -save in the extra bit 
+            out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
+            out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
+            out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
+            out[3][saveidx + (gulpno * gulp * nchans)] = out[3][saveidx];
             }
         framet++;
     }
@@ -222,6 +219,7 @@ __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out
 
     }
 
+   printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
 }
 
 __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
@@ -247,11 +245,13 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
                 idx2 = threadIdx.x + jj * 32;
                 power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
                 power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
-        	    out[outidx] += (power1 + power2);
+        	out[outidx] += (power1 + power2);
                 out[outidx + jump] += (power1 - power2);
                 out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y));
                 out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x));
             }
         }
     }
+
+//    printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
 }

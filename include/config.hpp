@@ -13,6 +13,8 @@
 using std::cout;
 using std::endl;
 using std::string;
+using std::stod;
+using std::stoi;
 
 struct config_s {
     bool test;
@@ -25,6 +27,8 @@ struct config_s {
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
 
+    std::vector<int> gpuids;
+    std::vector<std::string> ips;
     std::vector<int> killmask;
 
     unsigned int accumulate;    // number of 108us complete chunks to process on the GPU at once
@@ -61,7 +65,7 @@ inline void default_config(config_s &config) {
     config.freqavg = 16;
     config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
     //config.gulp = 16384;        // 2^24, equivalent to ~1.75s for 108us sampling time (for testing purposes)
-    config.gulp = 131072;       // 2^17, equivalent to ~14s for 108us sampling time
+    config.gulp = 131072;     // 2^17, equivalent to ~14s for 108us sampling time
     // TEST
     //config.nchans = 42;
     config.nchans = 336;
@@ -78,44 +82,55 @@ inline void default_config(config_s &config) {
          (config.killmask).push_back((int)1);
 }
 
-inline void read_config(string filename, config_s config) {
+inline void read_config(string filename, config_s &config) {
 
     std::fstream inconfig(filename.c_str(), std::ios_base::in);
     string line;
     string paraname;
-    double paravalue;
+    string paravalue;
 
     if(inconfig) {
         while(std::getline(inconfig, line)) {
             std::istringstream ossline(line);
             ossline >> paraname >> paravalue;
-            cout << paraname << ": " << paravalue;
+            std::stringstream svalue;
+            cout << paraname << ": " << paravalue << endl;
 
             if (paraname == "DM_END") {
-                config.dend = (double)paravalue;
+                config.dend = stod(paravalue);
             } else if (paraname == "DM_START") {
-                config.dstart = (double)paravalue;
+                config.dstart = stod(paravalue);
             } else if (paraname == "FFT_SIZE") {
-                config.fftsize = (unsigned int)paravalue;
+                config.fftsize = (unsigned int)(stoi(paravalue));
             } else if (paraname == "FREQ_AVERAGE") {
-                config.freqavg = (unsigned int)paravalue;
+                config.freqavg = (unsigned int)(stoi(paravalue));
             } else if (paraname == "DEDISP_GULP") {
-                config.gulp = (unsigned int)paravalue;
+                config.gulp = (unsigned int)(stoi(paravalue));
+            } else if (paraname == "GPU_IDS") {
+                std::stringstream svalue(paravalue);
+                string sep;
+                while(std::getline(svalue, sep, ','))
+                    config.gpuids.push_back(stoi(sep));
+            } else if (paraname == "IP") {
+                std::stringstream svalue(paravalue);
+                string sep;
+                while(std::getline(svalue, sep, ','))
+                    config.ips.push_back(sep);
             } else if (paraname == "NO_1MHZ_CHANS") {
-                config.nchans = (unsigned int)paravalue;
+                config.nchans = (unsigned int)(stoi(paravalue));
                 config.batch = config.nchans;
             } else if (paraname == "NO_BEAMS") {
-                config.beamno = (unsigned int)paravalue;
+                config.beamno = (unsigned int)(stoi(paravalue));
             } else if (paraname == "NO_GPUS") {
-                config.ngpus = (unsigned int)paravalue;
+                config.ngpus = (unsigned int)(stoi(paravalue));
             } else if (paraname == "NO_POLS") {
-                config.npol = (int)paravalue;
+                config.npol = stoi(paravalue);
             } else if (paraname == "NO_STOKES") {
-                config.stokes = (int)paravalue;
+                config.stokes = stoi(paravalue);
             } else if (paraname == "NO_STREAMS") {
-                config.streamno = (unsigned int)paravalue;
+                config.streamno = (unsigned int)(stoi(paravalue));
             } else if (paraname == "TIME_AVERAGE") {
-                config.timesavg = (unsigned int)paravalue;
+                config.timesavg = (unsigned int)(stoi(paravalue));
             } else {
                 cout << "Error: unrecognised parameter: " << paraname << endl;
             }

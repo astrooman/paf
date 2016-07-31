@@ -85,11 +85,21 @@ int main(int argc, char *argv[])
             } else if (std::string(argv[ii]) == "-n") {      // the number of GPUs to use
                 ii++;
                 config.ngpus = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "--gpuid") {
+                for (int jj = 0; jj < config.ngpus; jj++) {
+                    ii++;
+                    config.gpuids.push_back(atoi(argv[ii]));
+                }
+            } else if (std::string(argv[ii]) == "--ip") {
+                for (int jj = 0; jj < config.ngpus; jj++) {
+                    ii++;
+                    config.ips.push_back(std::string(argv[ii]));
+                }
             } else if (std::string(argv[ii]) == "-b") {     // use the test buffer
                 config.test = true;
             } else if (std::string(argv[ii]) == "-v") {
                 config.verbose = true;
-            } else if (std::string(argv[ii]) == "-h") {
+            } else if ((std::string(argv[ii]) == "-h") || (std::string(argv[ii]) == "--help")) {
                 cout << "Options:\n"
                         << "\t -v - use verbose mode\n"
                         << "\t -c - the number of chunks to process\n"
@@ -97,22 +107,32 @@ int main(int argc, char *argv[])
                         << "\t -t - the number of time samples to average\n"
                         << "\t -f - the number of frequency channels to average\n"
                         << "\t -n - the number of GPUs to use\n"
+                        << "\t --gpuid - GPU IDs to use - the number must be the same as 'n'\n"
                         << "\t -s - the number of CUDA streams per GPU to use\n"
+                        << "\t --ip - IPs to listen to - the number must be the same as 'n'\n"
                         << "\t -b - use the test buffer\n"
                         << "\t --config - configuration file\n"
-                        << "\t -h - print out this message\n\n";
+                        << "\t -h --help - print out this message\n\n";
                 exit(EXIT_SUCCESS);
             }
         }
 
     }
     cout << "Starting up. This may take few seconds..." << endl;
-
+   
+    cout << "This is the configuration used:" << endl;
+    cout << "\t - gulp size: " << config.gulp << endl;
+    cout << "\t - the number of GPUs to use: " << config.ngpus << endl;
     int devcount{0};
     cudaCheckError(cudaGetDeviceCount(&devcount));
     if (config.ngpus > devcount) {
         cout << "You can't use more GPUs than you have available!" << endl;
         config.ngpus = devcount;
+    }
+    cout << "\t - the number of worker streams per GPU: " << config.streamno << endl;
+    cout << "\t - the IP addresses to listen on:" << endl;
+    for (int ii = 0; ii < config.ips.size(); ii++) {
+        cout << "\t\t * " << config.ips[ii] << endl;
     }
 
     Oberpool mypool(config);

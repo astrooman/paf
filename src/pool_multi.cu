@@ -87,7 +87,8 @@ Oberpool::~Oberpool(void)
 }
 
 GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
-                                        gpuid(2),
+                                        gpuid(config.gpuids[id]),
+                                        strip(config.ips[id]),
                                         highest_buf(0),
                                         batchsize(config.batch),
                                         fftpoint(config.fftsize),
@@ -215,12 +216,12 @@ void GPUpool::execute(void)
     // tol is the smearing tolerance factor between two DM trials
     p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)_config.gulp + 0; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)_config.gulp + 1; //p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 0; //p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * _config.gulp + 1; //p_dedisp->get_max_delay();
     cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(accumulate, dedisp_buffno, 0, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
     p_dedisp->set_killmask(&_config.killmask[0]);
@@ -273,10 +274,10 @@ void GPUpool::execute(void)
         oss.str("");
         oss << 17100 + ii;
         strport = oss.str();
-        cout << "Binding to port " << strport << "..." << endl;
+        cout << "Listening on " << strip << ":" << strport << endl;
         cout.flush();
 
-        if((netrv = getaddrinfo("10.17.0.1", strport.c_str(), &hints, &servinfo)) != 0) {
+        if((netrv = getaddrinfo(strip.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
             cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
         }
 
@@ -352,7 +353,7 @@ void GPUpool::execute(void)
 
     char *metabuffer = new char[4096];
     meta_len = sizeof(meta_addr);
-/*    if (metalog) {
+    if (metalog) {
         while(working) {
             metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
             if (metabytes != 0) {
@@ -370,6 +371,8 @@ void GPUpool::execute(void)
                 metalog << paf_meta.beam_ra << "\t";
                 metalog << paf_meta.beam_dec << "\t";
                 metalog << paf_meta.target_name << endl << endl;
+            } else {
+                cout << "Got nothing from metadata" << endl;
             }
         }
 
@@ -377,7 +380,7 @@ void GPUpool::execute(void)
     } else {
         cout << "Metadata log file error!!" << endl;
     }
-*/
+
     delete [] metabuffer;
 
     cout << "Done receiving..." << endl;
@@ -390,6 +393,7 @@ GPUpool::~GPUpool(void)
     // TODO: clear the memory properly
     cout << "Calling destructor" << endl;
     cout.flush();
+
     for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
 
@@ -415,7 +419,8 @@ void GPUpool::worker(int stream)
     printmutex.unlock();
 
     cudaSetDevice(gpuid);
-
+    dim3 rearrange_b(1,48,1);
+    dim3 rearrange_t(7,1,1);
     unsigned int skip = stream * d_in_size;
 
     unsigned int current_frame;
@@ -439,9 +444,8 @@ void GPUpool::worker(int stream)
     bool endready = false;
     bool innext = false;
     while (working) {
-        unsigned int index{0};
         endready = false;
-        endready = false;
+        innext = false;
         for (int ii = 0; ii < 4; ii++) {
             //cout << bufidx_array[skip_to_end - ii] << " " << bufidx_array[skip_to_end + 24 - ii] << endl;
             endready = endready || bufidx_array[skip_to_end - ii];
@@ -452,8 +456,6 @@ void GPUpool::worker(int stream)
                 bufidx_array[skip_to_end - ii] = false;
                 bufidx_array[next_start - ii] = false;
             }
-            cout << "Got stream " << stream << endl;
-            cout.flush();
             std::copy(h_pol + stream * d_rearrange_size,  h_pol + stream * d_rearrange_size + d_rearrange_size, h_in + stream * d_rearrange_size);;
             for (int frameidx = 0; frameidx < accumulate; frameidx++) {
                 if (frame_times[stream * accumulate + frameidx] != 0) {
@@ -461,18 +463,24 @@ void GPUpool::worker(int stream)
                     break;
                 }
             }
+            for (int frameidx = 0; frameidx < accumulate; frameidx++)
+                frame_times[stream * accumulate + frameidx] = 0;
+            
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
+            //cout << stream << ": " << current_frame << endl;
+            //cout.flush();
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
-            rearrange2<<<CUDAblocks[0], CUDAthreads[0], 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
+            rearrange2<<<rearrange_b, rearrange_t, 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
             addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)_config.filchans, _config.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
+            cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
-            cudaThreadSynchronize();
             //cout << current_frame << endl;
             //cout.flush();
             p_mainbuffer->update(frame_time);
+            //working = false;
         } else {
             std::this_thread::yield();
         }
@@ -488,7 +496,7 @@ void GPUpool::dedisp_thread(int dstream)
     cout << "Dedisp thread up and running..." << endl;
     int ready{0};
     while(working) {
-        int ready = p_mainbuffer->ready();
+        ready = p_mainbuffer->ready();
         if (ready) {
             header_f headerfil;
             headerfil.raw_file = "tastytastytest";
@@ -511,9 +519,13 @@ void GPUpool::dedisp_thread(int dstream)
             headerfil.nifs = 1;
             headerfil.telescope_id = 2;
 
+            cout << ready - 1 << " buffer ready " << endl;
+            cout.flush();
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
+            //working = false;
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
+            //working = false;
         } else {
             std::this_thread::yield();
         }
@@ -545,6 +557,8 @@ void GPUpool::receive_thread(int ii)
     int frame{0};
     int ref_s{0};
     int packcount{0};
+    int group{0};
+    int beam{0};
     // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
     if (ii == 0) {
@@ -552,9 +566,28 @@ void GPUpool::receive_thread(int ii)
         numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len);
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
+        beam = (int)(temp_buf[23] | (temp_buf[22] << 8));
+        cout << "Beam: " << beam << endl;
+        cout.flush();
     }
     // TODO: wait until frame = 0, i.e. we start recording at the 27s boundary
     std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    while (true) {
+        if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
+            cout << "Error of recvfrom on port " << 17100 + ii << endl;
+            // possible race condition here
+            cout << "Errno " << errno << endl;
+        }
+        if (numbytes == 0)
+            continue;
+        frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
+        if (frame == 0) {
+            //cout << 17100 + ii << " starts recording" << endl;
+            break;
+        }
+    }
+
     while(working) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout << "Error of recvfrom on port " << 17100 + ii << endl;
@@ -565,12 +598,12 @@ void GPUpool::receive_thread(int ii)
             continue;
         ref_s = (int)(rec_bufs[ii][3] | (rec_bufs[ii][2] << 8) | (rec_bufs[ii][1] << 16) | ((rec_bufs[ii][0] & 0x3f) << 24));
         frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
-        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 8 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        frame = frame + (ref_s - start_time.start_second) / 27 * 250000;
+        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+        frame = frame + (ref_s - start_time.start_second - 27) / 27 * 250000;
 
         // looking at how much stuff we are not missing - remove a lot of checking for now
         // TODO: add some mininal checks later anyway
-
+        //if (frame >= 131008) {
         // which half of the buffer to put the data in
         bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
         // frame position in the half
@@ -578,10 +611,10 @@ void GPUpool::receive_thread(int ii)
         frame_times[frame % (accumulate * nostreams)] = frame;
         // frequency chunk in the frame
         bufidx += fpga;
-        std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + BUFLEN * bufidx);
+        std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + (BUFLEN - HEADER) * bufidx);
         //cout << bufidx << endl;
         //cout.flush();
         bufidx_array[bufidx] = true;
-        packcount++;
+        //}
     }
 }

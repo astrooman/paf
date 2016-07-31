@@ -11,7 +11,7 @@ INCLUDE = -I${INC_DIR}
 LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda
 
 CFLAGS = -Wall -Wextra -std=c++11
-NVCC_FLAG = -gencode=arch=compute_52,code=sm_52 --std=c++11 -lcufft -Xcompiler ${DEBUG}
+NVCC_FLAG = -gencode=arch=compute_52,code=sm_52 --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread
 
 CPPOBJECTS = ${OBJ_DIR}/DedispPlan.o ${OBJ_DIR}/paf_metadata.o
 
