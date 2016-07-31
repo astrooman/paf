@@ -87,6 +87,7 @@ Oberpool::~Oberpool(void)
 }
 
 GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
+                                        beamno{0},
                                         gpuid(config.gpuids[id]),
                                         strip(config.ips[id]),
                                         highest_buf(0),
@@ -407,7 +408,7 @@ void GPUpool::worker(int stream)
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(10 + stream, &cpuset);
+    CPU_SET((int)(gpuid / 2) * 8 + 4 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(mythreads[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
@@ -511,7 +512,7 @@ void GPUpool::dedisp_thread(int dstream)
             headerfil.tstart = 0.0;
             headerfil.za = 0.0;
             headerfil.data_type = 1;
-            headerfil.ibeam = 0;
+            headerfil.ibeam = beamno;
             headerfil.machine_id = 2;
             headerfil.nbeams = 1;
             headerfil.nbits = 32;
@@ -525,7 +526,7 @@ void GPUpool::dedisp_thread(int dstream)
             //working = false;
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
-            //working = false;
+            working = false;
         } else {
             std::this_thread::yield();
         }
@@ -536,7 +537,7 @@ void GPUpool::receive_thread(int ii)
 {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(ii, &cpuset);
+    CPU_SET((int)(gpuid /2) * 8 + (int)(ii / 2), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         cout << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
@@ -558,7 +559,6 @@ void GPUpool::receive_thread(int ii)
     int ref_s{0};
     int packcount{0};
     int group{0};
-    int beam{0};
     // I want this thread to worry only about saving the data
     // TODO: make worker thread worry about picking the data up
     if (ii == 0) {
@@ -566,8 +566,8 @@ void GPUpool::receive_thread(int ii)
         numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len);
         start_time.start_epoch = (int)(temp_buf[12] >> 2);
         start_time.start_second = (int)(temp_buf[3] | (temp_buf[2] << 8) | (temp_buf[1] << 16) | ((temp_buf[0] & 0x3f) << 24));
-        beam = (int)(temp_buf[23] | (temp_buf[22] << 8));
-        cout << "Beam: " << beam << endl;
+        beamno = (int)(temp_buf[23] | (temp_buf[22] << 8));
+        cout << "Beam: " << beamno << endl;
         cout.flush();
     }
     // TODO: wait until frame = 0, i.e. we start recording at the 27s boundary
@@ -603,7 +603,7 @@ void GPUpool::receive_thread(int ii)
 
         // looking at how much stuff we are not missing - remove a lot of checking for now
         // TODO: add some mininal checks later anyway
-        //if (frame >= 131008) {
+        if (frame >= 131008) {
         // which half of the buffer to put the data in
         bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
         // frame position in the half
@@ -615,6 +615,6 @@ void GPUpool::receive_thread(int ii)
         //cout << bufidx << endl;
         //cout.flush();
         bufidx_array[bufidx] = true;
-        //}
+        }
     }
 }

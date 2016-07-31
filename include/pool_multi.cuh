@@ -156,6 +156,7 @@ class GPUpool
         unsigned int gulps_processed;
         int sizes[1];                   //<! Used to store GPUpool::fftpoint - cufftPlanMany() requirement
         int avt;
+        int beamno;
         size_t highest_buf;
         size_t highest_frame;
         cudaStream_t *mystreams;        //<! Pointer to the array of CUDA streams

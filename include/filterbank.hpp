@@ -52,7 +52,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
     for (int ii = 0; ii < stokes; ii++) {
         std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
-        oss << ii << "_" << saved;
+        oss << ii << "_" << saved << "_beam_" << head.ibeam;
         filename = "/data/local/scratch/mat_test/stokes_" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -211,7 +211,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     for (int ii = 0; ii < 1; ii++) {
         std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
-        oss << ii << "_" << saved;
+        oss << ii << "_" << saved << "_beam_" << head.ibeam;
         filename = "/data/local/scratch/mat_test/stokes_" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
