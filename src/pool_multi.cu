@@ -128,7 +128,7 @@ void GPUpool::execute(void)
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET(8, &cpuset);
+    CPU_SET((int)(gpuid / 2) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
@@ -313,8 +313,8 @@ void GPUpool::execute(void)
     for (int ii = 0; ii < PORTS; ii++)
         receive_threads.push_back(thread(&GPUpool::receive_thread, this, ii));
 
-    for (int ii = 0; ii < PORTS; ii++)
-        receive_threads[ii].join();
+//    for (int ii = 0; ii < PORTS; ii++)
+//        receive_threads[ii].join();
 
     // TODO: this thread does nothing at this point so might as well make it listen to metadata
 
@@ -398,6 +398,10 @@ GPUpool::~GPUpool(void)
     for(int ii = 0; ii < mythreads.size(); ii++)
         mythreads[ii].join();
 
+    for (int ii = 0; ii < PORTS; ii++)
+        receive_threads[ii].join();
+
+
     for (int ii = 0; ii < nostreams; ii++) {
         cudaFreeArray(d_array2Dp[ii]);
     }
@@ -408,7 +412,7 @@ void GPUpool::worker(int stream)
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid / 2) * 8 + 4 + (int)(stream / 1), &cpuset);
+    CPU_SET((int)(gpuid / 2) * 8 + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(mythreads[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
@@ -493,6 +497,16 @@ void GPUpool::worker(int stream)
 void GPUpool::dedisp_thread(int dstream)
 {
 
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET((int)(gpuid /2) * 8, &cpuset);
+    int retaff = pthread_setaffinity_np(mythreads[nostreams].native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (retaff != 0)
+        cout << "Error setting thread affinity for dedisp thread" << endl;
+    printmutex.lock();
+    cout << "Dedisp thread running on CPU " << sched_getcpu() << endl;
+    printmutex.unlock();
+
     cudaCheckError(cudaSetDevice(gpuid));
     cout << "Dedisp thread up and running..." << endl;
     int ready{0};
@@ -526,7 +540,7 @@ void GPUpool::dedisp_thread(int dstream)
             //working = false;
             p_mainbuffer->dump((gulps_sent % 2), headerfil);
             gulps_sent++;
-            working = false;
+            //working = false;
         } else {
             std::this_thread::yield();
         }
@@ -537,7 +551,7 @@ void GPUpool::receive_thread(int ii)
 {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid /2) * 8 + (int)(ii / 2), &cpuset);
+    CPU_SET((int)(gpuid /2) * 8 + 1 + nostreams + (int)(ii / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         cout << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
@@ -603,7 +617,7 @@ void GPUpool::receive_thread(int ii)
 
         // looking at how much stuff we are not missing - remove a lot of checking for now
         // TODO: add some mininal checks later anyway
-        if (frame >= 131008) {
+        //if (frame >= 131008) {
         // which half of the buffer to put the data in
         bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
         // frame position in the half
@@ -615,6 +629,6 @@ void GPUpool::receive_thread(int ii)
         //cout << bufidx << endl;
         //cout.flush();
         bufidx_array[bufidx] = true;
-        }
+        //}
     }
 }

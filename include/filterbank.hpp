@@ -191,7 +191,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
 
         }
 
-        std::cout << "Saved filterbank " << saved << std::endl;
+        std::cout << "Saved filterbank " << saved << " on beam " << head.ibeam << std::endl;
 
         outfile.close();
 
@@ -206,7 +206,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
 
     int length{0};
     char field[60];
-
+    char stokesid[4] = {'I', 'Q', 'U', 'V'};
     // save just I for testing purposes
     for (int ii = 0; ii < 1; ii++) {
         std::cout << "Saving the filterbank" << std::endl;
@@ -350,7 +350,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
 
         }
 
-        std::cout << "Saved filterbank " << saved << std::endl;
+        std::cout << "Saved filterbank " << saved << " Stokes " << stokesid[ii] << " beam " << head.ibeam << std::endl;
 
         outfile.close();
 
