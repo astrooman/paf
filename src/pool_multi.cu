@@ -24,6 +24,7 @@
 #include "dedisp/DedispPlan.hpp"
 #include "errors.hpp"
 #include "filterbank.hpp"
+#include "get_mjd.hpp"
 #include "heimdall/pipeline.hpp"
 #include "kernels.cuh"
 #include "paf_metadata.hpp"
@@ -132,7 +133,7 @@ void GPUpool::execute(void)
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
-        cout << "Error setting thread affinity for the GPU pool " << gpuid << endl;
+        cerr << "Error setting thread affinity for the GPU pool " << gpuid << endl;
 
     cout << "GPU pool for device " << gpuid << " running on CPU " << sched_getcpu() << endl;
 
@@ -279,34 +280,34 @@ void GPUpool::execute(void)
         cout.flush();
 
         if((netrv = getaddrinfo(strip.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
-            cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
+            cerr <<  "getaddrinfo() error: " << gai_strerror(netrv) << endl;
         }
 
         for (tryme = servinfo; tryme != NULL; tryme=tryme->ai_next) {
             if((sfds[ii] = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
-                cout << "Socket error\n";
+                cerr << "Socket error\n";
                 continue;
             }
 
             if(bind(sfds[ii], tryme->ai_addr, tryme->ai_addrlen) == -1) {
                 close(sfds[ii]);
-                cout << "Bind error\n";
+                cerr << "Bind error\n";
                 continue;
             }
             break;
         }
 
         if (tryme == NULL) {
-            cout << "Failed to bind to the socket\n";
+            cerr << "Failed to bind to the socket\n";
         }
     }
 
-    int bufres{9000};
+    int bufres{4*1024*1024};    // 2MB
 
     for (int ii = 0; ii < PORTS; ii++) {
-        if(setsockopt(sfds[ii], SOL_SOCKET, SO_RCVBUF, &bufres, sizeof(int)) != 0) {
-            cout << "Setsockopt error on port " << 17100 + ii << endl;
-            cout << "Errno " << errno << endl;
+        if(setsockopt(sfds[ii], SOL_SOCKET, SO_RCVBUF, (char *)&bufres, sizeof(bufres)) != 0) {
+            cerr << "Setsockopt error on port " << 17100 + ii << endl;
+            cerr << "Errno " << errno << endl;
         }
     }
 
@@ -331,23 +332,23 @@ void GPUpool::execute(void)
     socklen_t meta_len;
 
     if ((netrv = getaddrinfo(NULL, "26666", &hints_meta, &servinfo_meta)) != 0) {
-        cout << "gettaddrinfo() error on metadata socket 26666" << endl;
+        cerr << "gettaddrinfo() error on metadata socket 26666" << endl;
     }
 
         for (tryme_meta = servinfo_meta; tryme_meta != NULL; tryme_meta=tryme_meta->ai_next) {
             if ((sock_meta = socket(tryme_meta->ai_family, tryme_meta->ai_socktype, tryme_meta->ai_protocol)) == -1) {
-                cout << "Metadata socket error\n";
+                cerr << "Metadata socket error\n";
                 continue;
             }
             if (bind(sock_meta, tryme_meta->ai_addr, tryme_meta->ai_addrlen) == -1) {
-                cout << "Metadata bind error\n";
+                cerr << "Metadata bind error\n";
                 continue;
             }
             break;
         }
 
     if (tryme_meta == NULL) {
-        cout << "Failed to bind to the metadata socket\n";
+        cerr << "Failed to bind to the metadata socket\n";
     }
     metadata paf_meta;
     std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
@@ -373,13 +374,13 @@ void GPUpool::execute(void)
                 metalog << paf_meta.beam_dec << "\t";
                 metalog << paf_meta.target_name << endl << endl;
             } else {
-                cout << "Got nothing from metadata" << endl;
+                cerr << "Got nothing from metadata" << endl;
             }
         }
 
         metalog.close();
     } else {
-        cout << "Metadata log file error!!" << endl;
+        cerr << "Metadata log file error!!" << endl;
     }
 
     delete [] metabuffer;
@@ -401,10 +402,37 @@ GPUpool::~GPUpool(void)
     for (int ii = 0; ii < PORTS; ii++)
         receive_threads[ii].join();
 
-
+    // cleaning up the stuff
     for (int ii = 0; ii < nostreams; ii++) {
         cudaFreeArray(d_array2Dp[ii]);
     }
+
+    // need deallocation in the dedisp buffer destructor as well
+    // this stuff is deleted in order it appears in the code
+    delete [] frame_times;
+    delete [] mystreams;
+    delete [] CUDAthreads;
+    delete [] CUDAblocks;
+    delete [] d_array2Dp;
+    delete [] texObj;
+    delete [] rdesc;
+    delete [] tdesc;
+    delete [] h_pol;
+    delete [] bufidx_array;
+    delete [] sfds;
+    for (int ii = 0; ii < PORTS; ii++) {
+        delete [] rec_bufs[ii];
+    }
+    delete [] rec_bufs;
+
+    cudaCheckError(cudaFree(d_in));
+    cudaCheckError(cudaFree(d_fft));
+    cudaCheckError(cudaFreeHost(h_in));
+
+    for (int ii = 0; ii < nostreams; ii++) {
+        cufftCheckError(cufftDestroy(myplans[ii]));
+    }
+    delete [] myplans;
 }
 
 void GPUpool::worker(int stream)
@@ -416,7 +444,7 @@ void GPUpool::worker(int stream)
     int retaff = pthread_setaffinity_np(mythreads[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
-        cout<< "Error setting thread affinity for stream " << stream << endl;
+        cerr << "Error setting thread affinity for stream " << stream << endl;
 
     printmutex.lock();
     cout << "Starting worker " << gpuid << ":" << stream << " on CPU " << sched_getcpu() << endl;
@@ -523,7 +551,7 @@ void GPUpool::dedisp_thread(int dstream)
             headerfil.ra = 0.0;
             headerfil.rdm = 0.0;
             headerfil.tsamp = _config.tsamp;
-            headerfil.tstart = 0.0;
+            headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second);
             headerfil.za = 0.0;
             headerfil.data_type = 1;
             headerfil.ibeam = beamno;
@@ -554,7 +582,7 @@ void GPUpool::receive_thread(int ii)
     CPU_SET((int)(gpuid /2) * 8 + 1 + nostreams + (int)(ii / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
-        cout << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
+        cerr << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
     printmutex.lock();
     cout << "Receive thread on port " << 17000 + ii << " running on CPU " << sched_getcpu() << endl;
     printmutex.unlock();
@@ -589,9 +617,9 @@ void GPUpool::receive_thread(int ii)
 
     while (true) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-            cout << "Error of recvfrom on port " << 17100 + ii << endl;
+            cerr << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
-            cout << "Errno " << errno << endl;
+            cerr << "Errno " << errno << endl;
         }
         if (numbytes == 0)
             continue;
@@ -604,9 +632,9 @@ void GPUpool::receive_thread(int ii)
 
     while(working) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-            cout << "Error of recvfrom on port " << 17100 + ii << endl;
+            cerr << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here
-            cout << "Errno " << errno << endl;
+            cerr << "Errno " << errno << endl;
         }
         if (numbytes == 0)
             continue;
