@@ -551,7 +551,7 @@ void GPUpool::dedisp_thread(int dstream)
             headerfil.ra = 0.0;
             headerfil.rdm = 0.0;
             headerfil.tsamp = _config.tsamp;
-            headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second);
+            headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + gulps_sent * _config.gulp * _config.tsamp);
             headerfil.za = 0.0;
             headerfil.data_type = 1;
             headerfil.ibeam = beamno;

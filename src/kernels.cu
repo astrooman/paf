@@ -100,6 +100,7 @@ __global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsi
 
     //printf("S1 freq sum %f\n", out[idx]);
 }
+
 __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -254,4 +255,44 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
     }
 
 //    printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
+}
+
+__global__ void scale(float* in, float* out, unsigned int nchans, unsigned int time_samples)
+{
+    // call one block with 32 threads
+    // be careful when processing total sizes that cannot be divided by 32
+    // or make sure the total size can be divided by 32 when allocating
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float nrec = 1.0f / (float)nchans;
+    float mean;
+    float std;
+
+    unsigned int threads = blockDim.x * gridDim.x;
+    unsigned int start = 0;
+    float nrec1 = 1.0f / (float)(nchans -1.0f);
+    for (int chunk = 0; chunk < (time_samples / threads); chunk++) {
+        mean = 0.0f;
+        std = 0.0f;
+        start = chunk * threads * nchans;
+
+        for (int ii = 0; ii < nchans; ii++) {
+            mean += in[start + idx * nchans + ii] * nrec;
+            //printf("%d\n", mean);
+        }
+
+        for (int jj = 0; jj < nchans; jj++) {
+            std += (in[start + idx * nchans + jj] - mean) * (in[start + idx * nchans + jj] - mean);
+        }
+        std *= nrec1;
+
+        //printf("%i: %i, %f, %f, %f\n", idx, nchans, nrec, mean, std);
+
+        float stdrec = rsqrtf(std);
+
+        for (int kk = 0; kk < nchans; kk++) {
+            out[start + idx * nchans + kk] = ((in[start + idx * nchans + kk] - mean) * stdrec) * 32.0f + 64.0f;
+            if (out[start + idx * nchans + kk] < 0.0f)
+                out[start + idx * nchans + kk] = 0.0f;
+        }
+    }
 }

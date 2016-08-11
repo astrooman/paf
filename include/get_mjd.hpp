@@ -15,10 +15,11 @@ inline double get_mjd(int ref_epoch, size_t ref_second) {
     short month = 0 + 6 * (ref_epoch % 2);
     short day = (int)(ref_second / 86400);
     int rem = ref_second - 86400 * day;
+    day++;
     for (int ii = 0; ii < 6; ii++) {
-        if((day - dinm[month + ii]) >= 0) {
+        if((day - dinm[month + ii]) > 0) {
+            day -= dinm[month];
             month++;
-            day -= dinm[month + ii];
             continue;
         }
         break;

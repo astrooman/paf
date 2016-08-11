@@ -28,7 +28,7 @@ using std::vector;
 
 mutex printmutex;
 
-void receive_thread(int ii) {
+void receive_thread(int ii, std::string strip) {
 
     printmutex.lock();
     cout << "Starting receive on port " << 17100 + ii << endl;
@@ -48,8 +48,8 @@ void receive_thread(int ii) {
     strport = oss.str();
     
 
-    if((netrv = getaddrinfo("10.17.0.1", strport.c_str(), &hints, &servinfo)) != 0) {
-            cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
+    if((netrv = getaddrinfo(strip.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
+        cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
     }
 
     for (tryme = servinfo; tryme != NULL; tryme=tryme->ai_next) {
@@ -100,8 +100,12 @@ int main(int argc, char *argv[])
 
     vector<thread> mythreads;    
 
+    printmutex.lock();
+    cout << "Recording data on " << argv[1] << endl;
+    printmutex.unlock();
+
     for (int ii = 0; ii < PORTS; ii++) {
-        mythreads.push_back(thread(receive_thread, ii));
+        mythreads.push_back(thread(receive_thread, ii, std::string(argv[1])));
     }
 
     for (int ii = 0; ii < PORTS; ii++) {
