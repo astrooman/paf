@@ -56,7 +56,7 @@ class Oberpool
         Oberpool(Oberpool &&inpool) = delete;
         Oberpool& operator=(Oberpool &&inpool) = delete;
         ~Oberpool(void);
-
+        static void signal_handler(int signum);
 };
 
 // TODO: clean this mess up!!
@@ -100,9 +100,10 @@ class GPUpool
         mutex workermutex;
 
         obs_time start_time;
-        config_s _config;
+        config_s config_;
         bool *bufidx_array;
         bool working;
+        static bool working_;
         bool buffer_ready[2];
         bool worker_ready[2];
         int worker_frame[2];
@@ -157,6 +158,7 @@ class GPUpool
         int sizes[1];                   //<! Used to store GPUpool::fftpoint - cufftPlanMany() requirement
         int avt;
         int beamno;
+        int poolid_;
         size_t highest_buf;
         size_t highest_frame;
         cudaStream_t *mystreams;        //<! Pointer to the array of CUDA streams
@@ -235,6 +237,11 @@ class GPUpool
             \param start_time structure containing the information when the current observation started (reference epoch and seconds from the reference epoch)
         */
         void get_data(unsigned char* data, int fpga_id, obs_time start_time, header_s head);
+        //! Handles the SIGINT signal. Must be static.
+        /*!
+            \param signum signal number - should be 2 for SIGINT
+        */
+        static void HandleSignal(int signum);
         //! Thread responsible for running the FFT.
         /*! There are 4 such threads per GPU - 4 streams per GPU used.
             Each thread is responsible for picking up the data from the queue (the thread yields if the is no data available), running the FFT and power, time scrunch and frequency scrunch kernels.

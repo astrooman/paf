@@ -53,7 +53,7 @@ using std::vector;
 #define BYTES_PER_WORD 8
 #define HEADER 64
 #define WORDS_PER_PACKET 896
-#define BUFLEN 7168 + 64
+#define BUFLEN 7232
 #define PORTS 8
 
 mutex cout_guard;
@@ -87,6 +87,8 @@ Oberpool::~Oberpool(void)
     }
 }
 
+bool GPUpool::working_ = true;
+
 GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         beamno{0},
                                         gpuid(config.gpuids[id]),
@@ -98,6 +100,7 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
                                         npol(config.npol),
+                                        poolid_(id),
                                         d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg * config.accumulate),
                                         d_in_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
                                         d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
@@ -113,7 +116,7 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
 
     avt = min(nostreams + 2, thread::hardware_concurrency());
 
-    _config = config;
+    config_ = config;
 
     if (config.verbose) {
         cout_guard.lock();
@@ -125,11 +128,12 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
 
 void GPUpool::execute(void)
 {
-    cudaCheckError(cudaSetDevice(gpuid));
+    signal(SIGINT, GPUpool::HandleSignal);
+    cudaCheckError(cudaSetDevice(poolid_));
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid / 2) * 8, &cpuset);
+    CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
@@ -137,7 +141,7 @@ void GPUpool::execute(void)
 
     cout << "GPU pool for device " << gpuid << " running on CPU " << sched_getcpu() << endl;
 
-    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(_config.filchans, _config.tsamp, _config.ftop, _config.foff, gpuid));
+    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(config_.filchans, config_.tsamp, config_.ftop, config_.foff, gpuid));
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
     frame_times = new int[accumulate * nostreams];
@@ -150,7 +154,7 @@ void GPUpool::execute(void)
     CUDAthreads = new unsigned int[nkernels];
     CUDAblocks = new unsigned int[nkernels];
     // TODO: make a private const data memmber and put in the initializer list!!
-    nchans = _config.nchans;
+    nchans = config_.nchans;
 
     CUDAthreads[0] = 7;
     CUDAthreads[1] = fftpoint * timeavg * batchsize / 42;
@@ -206,7 +210,7 @@ void GPUpool::execute(void)
     dv_time_scrunch.resize(nostreams);
     dv_freq_scrunch.resize(nostreams);
     // TODO: make a private const data memmber and put in the initializer list!!
-    stokes = _config.stokes;
+    stokes = config_.stokes;
     for (int ii = 0; ii < nostreams; ii++) {
         dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
         dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
@@ -216,22 +220,22 @@ void GPUpool::execute(void)
     // generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-    p_dedisp->generate_dm_list(_config.dstart, _config.dend, 64.0f, 1.10f);
+    p_dedisp->generate_dm_list(config_.dstart, config_.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)_config.gulp + 1; //p_dedisp->get_max_delay();
-    dedisp_buffno = (dedisp_totsamples - 1) / _config.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * _config.gulp + 1; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)config_.gulp + 1; //p_dedisp->get_max_delay();
+    dedisp_buffno = (dedisp_totsamples - 1) / config_.gulp + 1;
+    dedisp_buffsize = dedisp_buffno * config_.gulp + 1; //p_dedisp->get_max_delay();
     cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, _config.gulp, dedisp_buffsize, _config.filchans, stokes);
+    p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, config_.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
-    p_dedisp->set_killmask(&_config.killmask[0]);
+    p_dedisp->set_killmask(&config_.killmask[0]);
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
     cout << "Setting up dedispersion and single pulse search..." << endl;
-    set_search_params(params, _config);
+    set_search_params(params, config_);
     //commented out for the filterbank dump mode
     //hd_create_pipeline(&pipeline, params);
     // everything should be ready for single pulse search after this point
@@ -350,15 +354,24 @@ void GPUpool::execute(void)
     if (tryme_meta == NULL) {
         cerr << "Failed to bind to the metadata socket\n";
     }
+
     metadata paf_meta;
-    std::fstream metalog("metadata_log.dat", std::ios_base::out | std::ios_base::trunc);
+    ostringstream ossmeta;
+    ossmeta << "metadata_log_" << beamno << ".log";
+    string metafile = config_.outdir + "/" + ossmeta.str(); 
+    std::fstream metalog(metafile.c_str(), std::ios_base::out | std::ios_base::trunc);
 
     char *metabuffer = new char[4096];
     meta_len = sizeof(meta_addr);
-    if (metalog) {
-        while(working) {
+    /*if (metalog) {
+        cout << "Metalog receive..." << endl;
+        cout.flush();
+        while(working_) {
             metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
+            cout << metabytes << endl;
+            cout.flush();
             if (metabytes != 0) {
+                cout << "Got something from metadata" << endl;
                 string metastr(metabuffer);
                 paf_meta.getMetaData(metastr, 0);
                 cout << paf_meta.timestamp << "\t";
@@ -382,12 +395,11 @@ void GPUpool::execute(void)
     } else {
         cerr << "Metadata log file error!!" << endl;
     }
-
+    */
     delete [] metabuffer;
 
     cout << "Done receiving..." << endl;
     cout.flush();
-    // let the receive threads know they can work
 }
 
 GPUpool::~GPUpool(void)
@@ -435,12 +447,18 @@ GPUpool::~GPUpool(void)
     delete [] myplans;
 }
 
+void GPUpool::HandleSignal(int signum) {
+
+    cout << "Captured the signal\nWill now terminate!\n";
+    working_ = false;
+}
+
 void GPUpool::worker(int stream)
 {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid / 2) * 8 + 1 + (int)(stream / 1), &cpuset);
+    CPU_SET((int)(poolid_) * 8 + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(mythreads[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0)
@@ -476,7 +494,7 @@ void GPUpool::worker(int stream)
     }
     bool endready = false;
     bool innext = false;
-    while (working) {
+    while (working_) {
         endready = false;
         innext = false;
         for (int ii = 0; ii < 4; ii++) {
@@ -506,14 +524,14 @@ void GPUpool::worker(int stream)
             rearrange2<<<rearrange_b, rearrange_t, 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
-            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)_config.filchans, _config.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
+            addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
             cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
             //cout << current_frame << endl;
             //cout.flush();
             p_mainbuffer->update(frame_time);
-            //working = false;
+            //working_ = false;
         } else {
             std::this_thread::yield();
         }
@@ -527,7 +545,7 @@ void GPUpool::dedisp_thread(int dstream)
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid /2) * 8, &cpuset);
+    CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(mythreads[nostreams].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         cout << "Error setting thread affinity for dedisp thread" << endl;
@@ -538,7 +556,7 @@ void GPUpool::dedisp_thread(int dstream)
     cudaCheckError(cudaSetDevice(gpuid));
     cout << "Dedisp thread up and running..." << endl;
     int ready{0};
-    while(working) {
+    while(working_) {
         ready = p_mainbuffer->ready();
         if (ready) {
             header_f headerfil;
@@ -546,19 +564,20 @@ void GPUpool::dedisp_thread(int dstream)
             headerfil.source_name = "J1641-45";
             headerfil.az = 0.0;
             headerfil.dec = 0.0;
-            headerfil.fch1 = _config.ftop;
-            headerfil.foff = _config.foff;
+            headerfil.fch1 = config_.ftop;
+            headerfil.foff = config_.foff;
             headerfil.ra = 0.0;
             headerfil.rdm = 0.0;
-            headerfil.tsamp = _config.tsamp;
-            headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + gulps_sent * _config.gulp * _config.tsamp);
+            headerfil.tsamp = config_.tsamp;
+            // TODO: this totally doesn't work when something is skipped
+            headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + gulps_sent * config_.gulp * config_.tsamp);
             headerfil.za = 0.0;
             headerfil.data_type = 1;
             headerfil.ibeam = beamno;
             headerfil.machine_id = 2;
             headerfil.nbeams = 1;
             headerfil.nbits = 32;
-            headerfil.nchans = _config.filchans;
+            headerfil.nchans = config_.filchans;
             headerfil.nifs = 1;
             headerfil.telescope_id = 2;
 
@@ -566,7 +585,7 @@ void GPUpool::dedisp_thread(int dstream)
             cout.flush();
             p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
             //working = false;
-            p_mainbuffer->dump((gulps_sent % 2), headerfil);
+            p_mainbuffer->dump((gulps_sent % 2), headerfil, config_.outdir);
             gulps_sent++;
             //working = false;
         } else {
@@ -579,7 +598,7 @@ void GPUpool::receive_thread(int ii)
 {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(gpuid /2) * 8 + 1 + nostreams + (int)(ii / 3), &cpuset);
+    CPU_SET((int)(poolid_) * 8 + 1 + nostreams + (int)(ii / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         cerr << "Error setting thread affinity for receive thread on port " << 17000 + ii << endl;
@@ -630,7 +649,7 @@ void GPUpool::receive_thread(int ii)
         }
     }
 
-    while(working) {
+    while(working_) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cerr << "Error of recvfrom on port " << 17100 + ii << endl;
             // possible race condition here

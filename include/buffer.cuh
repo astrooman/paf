@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <thrust/host_vector.h>
@@ -64,7 +65,7 @@ class Buffer
         ~Buffer(void);
 
         void allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
-        void dump(int idx, header_f head);
+        void dump(int idx, header_f head, std::string outdir);
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
         void rescale(int idx, cudaStream_t &stream);
@@ -134,11 +135,11 @@ void Buffer<T>::allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u,
 }
 
 template<class T>
-void Buffer<T>::dump(int idx, header_f header)
+void Buffer<T>::dump(int idx, header_f header, std::string outdir)
 {
         // idx will be use to tell which part of the buffer to dump
         std::cout << std::endl;
-        save_filterbank2(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved);
+        save_filterbank2(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved, outdir);
         fil_saved++; 
         // need info from the telescope
 }

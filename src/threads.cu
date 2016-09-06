@@ -28,10 +28,12 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 using boost::asio::ip::udp;
+using std::cerr;
 using std::cout;
 using std::endl;
 using std::mutex;
@@ -82,9 +84,21 @@ int main(int argc, char *argv[])
             } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
                 ii++;
                 config.freqavg = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-n") {      // the number of GPUs to use
+            } else if (std::string(argv[ii]) == "-n") {    // the number of GPUs to use
                 ii++;
                 config.ngpus = atoi(argv[ii]);
+            } else if (std::string(argv[ii]) == "-o") {    // output directory for the filterbank files
+                ii++;
+                struct stat chkdir;
+                if (stat(argv[ii], &chkdir) == -1) {
+                    cerr << "Stat error" << endl;
+                } else {
+                    bool isdir = S_ISDIR(chkdir.st_mode);
+                    if (isdir)
+                        config.outdir = std::string(argv[ii]);
+                    else
+                        cout << "Output directory does not exist! Will use default directory!";
+                }
             } else if (std::string(argv[ii]) == "--gpuid") {
                 for (int jj = 0; jj < config.ngpus; jj++) {
                     ii++;

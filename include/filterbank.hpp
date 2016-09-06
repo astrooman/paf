@@ -198,7 +198,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
     }
 }
 
-inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved)
+inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved, std::string outdir)
 {
 
     std::ostringstream oss;
@@ -208,11 +208,12 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     char field[60];
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
     // save just I for testing purposes
-    for (int ii = 0; ii < 1; ii++) {
+    for (int ii = 0; ii < stokes; ii++) {
         std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
+        //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
         oss << stokesid[ii] << "_chunk_" << saved << "_beam_" << head.ibeam;
-        filename = "/data/local/scratch/mat_test/stokes_" + oss.str() + ".fil";
+        filename = outdir + "/" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 

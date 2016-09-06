@@ -27,6 +27,8 @@ struct config_s {
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
 
+    std::string outdir;
+
     std::vector<int> gpuids;
     std::vector<std::string> ips;
     std::vector<int> killmask;
@@ -71,6 +73,7 @@ inline void default_config(config_s &config) {
     config.nchans = 336;
     config.ngpus = 1;
     config.npol = 2;
+    config.outdir = "/data/local/scratch/mat_test/";
     config.stokes = 4;
     config.streamno = 4;
     config.timesavg = 4;
