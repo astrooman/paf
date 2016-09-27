@@ -141,6 +141,8 @@ inline void read_config(string filename, config_s &config) {
     } else {
         cout << "Error opening the configuration file!!\n Will use default configuration instead." << endl;
     }
+
+    inconfig.close();
 }
 
 inline void set_search_params(hd_params &params, config_s config)

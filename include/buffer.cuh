@@ -65,6 +65,7 @@ class Buffer
         ~Buffer(void);
 
         void allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
+        void deallocate(void);
         void dump(int idx, header_f head, std::string outdir);
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
@@ -101,7 +102,6 @@ template<class T>
 Buffer<T>::~Buffer()
 {
     end = 0;
-    cudaCheckError(cudaFree(d_buf));
 }
 
 template<class T>
@@ -132,6 +132,18 @@ void Buffer<T>::allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u,
     sample_state = new unsigned int[(int)totsize];
     cudaCheckError(cudaHostAlloc((void**)&ph_fil, (gulp + extra) * nchans * stokes * 2 * sizeof(float), cudaHostAllocDefault));
     std::fill(sample_state, sample_state + totsize, 0);
+}
+
+template<class T>
+void Buffer<T>::deallocate(void)
+{
+    std::cout << "Deallocating the buffer memory!" << std::endl;
+    cudaCheckError(cudaFreeHost(ph_fil));
+    cudaCheckError(cudaFree(d_buf));
+    delete [] sample_state;
+    delete [] gulp_times;
+    delete [] pd_filterbank;
+    delete [] ph_filterbank;
 }
 
 template<class T>
