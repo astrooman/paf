@@ -349,6 +349,8 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
             //float *ph_filsave = ph_filterbank[ii];
             outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);
 
+        } else {
+            std::cerr << "Problems with saving the filterbank file" << std::endl;
         }
 
         std::cout << "Saved filterbank " << saved << " Stokes " << stokesid[ii] << " beam " << head.ibeam << std::endl;

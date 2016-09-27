@@ -10,7 +10,7 @@ import socket
 def worker(num, cmdstr):
     """thread worker function"""
     node=("pkbe-gpu%d")%num
-    chkstr = ["ssh", "-o","ConnectTimeout=3",node, cmdstr, "--config /data/local/scratch/mat_test/config_" + str(num) + ".conf"]
+    chkstr = ["ssh", "-o","ConnectTimeout=3",node, cmdstr, "--config /data/local/scratch/mat_test/config_" + str(num) + ".conf -o /data/local/scratch/mat_test/FRB121002/"]
     output =  Popen(chkstr, stdout=PIPE, stderr=PIPE)
     while output.poll() is None:
         line = output.stdout.readline()

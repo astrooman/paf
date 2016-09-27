@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
                 ii++;
                 config_file = std::string(argv[ii]);
                 read_config(config_file, config);
-                break;      // configuration file should have everything included
+                //break;      // configuration file should have everything included
             }
             if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
                 ii++;
