@@ -15,6 +15,7 @@
 #include <boost/bind.hpp>
 #include <cufft.h>
 #include <cuda.h>
+#include <numa.h>
 #include <pthread.h>
 #include <thrust/device_vector.h>
 
@@ -78,6 +79,7 @@ Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
     for (int ii = 0; ii < ngpus; ii++) {
         threadvector.push_back(thread(&GPUpool::execute, std::move(gpuvector[ii])));
     }
+
 }
 
 Oberpool::~Oberpool(void)
@@ -85,6 +87,7 @@ Oberpool::~Oberpool(void)
     for (int ii = 0; ii < ngpus; ii++) {
         threadvector[ii].join();
     }
+
 }
 
 bool GPUpool::working_ = true;
@@ -112,6 +115,8 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
 					                    packcount(0)
 
 {
+    
+
     cout << "New pool" << endl;
 
     avt = min(nostreams + 2, thread::hardware_concurrency());
@@ -128,6 +133,9 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
 
 void GPUpool::execute(void)
 {
+    struct bitmask *mask = numa_parse_nodestring((std::to_string(poolid_)).c_str());
+    numa_bind(mask);
+    
     signal(SIGINT, GPUpool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
 
@@ -249,6 +257,7 @@ void GPUpool::execute(void)
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GPUpool::worker, this, ii));
     }
+
     // dedispersion thread
     cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
     mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
@@ -363,10 +372,10 @@ void GPUpool::execute(void)
 
     char *metabuffer = new char[4096];
     meta_len = sizeof(meta_addr);
-    /*if (metalog) {
+    if (metalog) {
         cout << "Metalog receive..." << endl;
         cout.flush();
-        while(working_) {
+        /*while(working_) {
             metabytes = recvfrom(sock_meta, metabuffer, 4096, 0, (struct sockaddr*)&meta_addr, &meta_len);
             cout << metabytes << endl;
             cout.flush();
@@ -390,12 +399,11 @@ void GPUpool::execute(void)
                 cerr << "Got nothing from metadata" << endl;
             }
         }
-
+       */ 
         metalog.close();
     } else {
         cerr << "Metadata log file error!!" << endl;
     }
-    */
     delete [] metabuffer;
 
     cout << "Done receiving..." << endl;
@@ -416,10 +424,12 @@ GPUpool::~GPUpool(void)
 
     // cleaning up the stuff
     for (int ii = 0; ii < nostreams; ii++) {
-        cudaFreeArray(d_array2Dp[ii]);
+        cudaCheckError(cudaDestroyTextureObject(texObj[ii]));
+        cudaCheckError(cudaFreeArray(d_array2Dp[ii]));
     }
 
     // need deallocation in the dedisp buffer destructor as well
+    p_mainbuffer->deallocate();
     // this stuff is deleted in order it appears in the code
     delete [] frame_times;
     delete [] mystreams;
@@ -444,8 +454,10 @@ GPUpool::~GPUpool(void)
     for (int ii = 0; ii < nostreams; ii++) {
         cufftCheckError(cufftDestroy(myplans[ii]));
     }
+
     delete [] myplans;
-}
+
+} 
 
 void GPUpool::HandleSignal(int signum) {
 
