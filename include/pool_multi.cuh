@@ -89,16 +89,24 @@ class GPUpool
         float *pdv_time_scrunch;
         float *pdv_freq_scrunch;
 */
+        // TEXTURING
         cudaChannelFormatDesc cdesc;
         cudaArray **d_array2Dp;
         cudaResourceDesc *rdesc;
         cudaTextureDesc *tdesc;
         cudaTextureObject_t *texObj;
 
+        // MUTEXES
         mutex buffermutex;
         mutex printmutex;
         mutex workermutex;
 
+        // SCALING
+        float **h_means_;
+        float **h_stdevs_;
+        float **d_means_;
+        float **d_rstdevs_;
+        
         obs_time start_time;
         config_s config_;
         bool *bufidx_array;
