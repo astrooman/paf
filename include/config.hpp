@@ -97,7 +97,6 @@ inline void read_config(string filename, config_s &config) {
             std::istringstream ossline(line);
             ossline >> paraname >> paravalue;
             std::stringstream svalue;
-            cout << paraname << ": " << paravalue << endl;
 
             if (paraname == "DM_END") {
                 config.dend = stod(paravalue);

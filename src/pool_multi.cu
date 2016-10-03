@@ -472,8 +472,7 @@ GPUpool::~GPUpool(void)
 
 void GPUpool::HandleSignal(int signum) {
 
-    if (verbose_)
-        cout << "Captured the signal\nWill now terminate!\n";
+    cout << "Captured the signal\nWill now terminate!\n";
     working_ = false;
 }
 

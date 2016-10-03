@@ -55,7 +55,6 @@ int main(int argc, char *argv[])
                 ii++;
                 config_file = std::string(argv[ii]);
                 read_config(config_file, config);
-                //break;      // configuration file should have everything included
             }
             if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
                 ii++;
@@ -101,18 +100,18 @@ int main(int argc, char *argv[])
                 config.verbose = true;
             } else if ((std::string(argv[ii]) == "-h") || (std::string(argv[ii]) == "--help")) {
                 cout << "Options:\n"
-                        << "\t -h --help - print out this message\n\n";
-                        << "\t --config <file name> - configuration file"
+                        << "\t -h --help - print out this message\n"
+                        << "\t --config <file name> - configuration file\n"
                         << "\t -b - the number of beams to process\n"
                         << "\t -c - the number of chunks to process\n"
                         << "\t -f - the number of frequency channels to average\n"
                         << "\t -n - the number of GPUs to use\n"
-                        << "\t -o - output directory "
+                        << "\t -o <directory> - output directory\n"
                         << "\t -s - the number of CUDA streams per GPU to use\n"
                         << "\t -t - the number of time samples to average\n"
                         << "\t -v - use verbose mode\n"
                         << "\t --gpuid - GPU IDs to use - the number must be the same as 'n'\n"
-                        << "\t --ip - IPs to listen to - the number must be the same as 'n'\n"
+                        << "\t --ip - IPs to listen to - the number must be the same as 'n'\n\n";
                 exit(EXIT_SUCCESS);
             }
         }
