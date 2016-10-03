@@ -329,7 +329,6 @@ __global__ void initscalefactors(float **means, float **rstdevs, int stokes) {
     for (int ii = 0; ii < stokes; ii++) {
         means[ii][idx] = 64.0f;
         rstdevs[ii][idx] = 1.0f;
-        printf("id: %i, stokes: %i, mean: %f, stdev: %f\n", idx, ii, means[ii][idx], rstdevs[ii][idx]);
     }
 }
 
@@ -374,6 +373,9 @@ __global__ void scale_factors(float *in, float **means, float **rstdevs, unsigne
     // multiplied by the desired standard deviation of the scaled data
     // reduces the number of operations that have to be done on the GPU
     rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
+    // to avoid inf when there is no data in the channel
+    if (means[param][idx] == 0)
+        rstdevs[param][idx] = 0;
 }
 
 __global__ void bandpass() {

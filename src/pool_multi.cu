@@ -445,6 +445,25 @@ GPUpool::~GPUpool(void)
     for (int ii = 0; ii < PORTS; ii++)
         receive_threads[ii].join();
 
+    //save the scaling factors before quitting
+    if (scaled_) {
+        string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno) + ".dat"; 
+        std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
+        
+        if (scalefile) {
+            float *means = new float[filchans_];
+            float *stdevs = new float[filchans_];
+            for (int ii = 0; ii < stokes; ii++) {
+                cudaCheckError(cudaMemcpy(means, h_means_[ii], filchans_ * sizeof(float), cudaMemcpyDeviceToHost));
+                cudaCheckError(cudaMemcpy(stdevs, h_stdevs_[ii], filchans_ * sizeof(float), cudaMemcpyDeviceToHost));
+                for (int jj = 0; jj < filchans_; jj++) {
+                    scalefile << means[jj] << " " << stdevs[jj] << endl;
+                }
+                scalefile << endl << endl;
+            }   
+        }
+        scalefile.close();
+    }
     // cleaning up the stuff
     for (int ii = 0; ii < nostreams; ii++) {
         cudaCheckError(cudaDestroyTextureObject(texObj[ii]));
@@ -470,6 +489,17 @@ GPUpool::~GPUpool(void)
     }
     delete [] rec_bufs;
 
+    for (int ii = 0; ii < stokes; ii++) {
+        cudaCheckError(cudaFree(h_means_[ii]));
+        cudaCheckError(cudaFree(h_stdevs_[ii]));
+    }
+
+    delete [] h_means_;
+    delete [] h_stdevs_;
+    cudaCheckError(cudaFree(d_means_));
+    cudaCheckError(cudaFree(d_rstdevs_));
+   
+    
     cudaCheckError(cudaFree(d_in));
     cudaCheckError(cudaFree(d_fft));
     cudaCheckError(cudaFreeHost(h_in));
