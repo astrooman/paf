@@ -50,11 +50,9 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
     char field[60];
 
     for (int ii = 0; ii < stokes; ii++) {
-        std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
         oss << ii << "_" << saved << "_beam_" << head.ibeam;
         filename = "/data/local/scratch/mat_test/stokes_" + oss.str() + ".fil";
-        //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
         // save only when the stream has been opened correctly
@@ -209,7 +207,6 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
     // save just I for testing purposes
     for (int ii = 0; ii < stokes; ii++) {
-        std::cout << "Saving the filterbank" << std::endl;
         oss.str("");
         //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
         oss << stokesid[ii] << "_chunk_" << saved << "_beam_" << head.ibeam;
@@ -353,11 +350,13 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
             std::cerr << "Problems with saving the filterbank file" << std::endl;
         }
 
-        std::cout << "Saved filterbank " << saved << " Stokes " << stokesid[ii] << " beam " << head.ibeam << std::endl;
 
         outfile.close();
 
     }
+
+    std::cout << "Saved filterbank " << saved << " for beam " << head.ibeam << std::endl;
+
 }
 
 #endif

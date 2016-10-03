@@ -103,6 +103,7 @@ class GPUpool
         config_s config_;
         bool *bufidx_array;
         bool working;
+        bool verbose_;
         static bool working_;
         bool buffer_ready[2];
         bool worker_ready[2];
