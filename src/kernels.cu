@@ -180,6 +180,8 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
     // thats the starting save position for the chunk of length acc time samples
     int saveidx;
 
+    
+
     int inskip;
 
     for (int ac = 0; ac < acc; ac++) {
@@ -196,7 +198,7 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
         // rstdev = (1 / stdev) * 32 to reduce the number of operations
         if ((framet % (gulpno * gulp)) >= extra) {
             for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ch] - means[0][idx];
+                out[0][saveidx] += in[inskip + idx * factorc + ch];
                 out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
                 out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
                 out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
@@ -205,7 +207,7 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
             out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
             out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
             out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
-            out[2][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
         } else {
             for (int ch = 0; ch < factorc; ch++) {
                 out[0][saveidx] += in[inskip + idx * factorc + ch];
@@ -217,13 +219,13 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
             out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
             out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
             out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
-            out[2][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
             // save in two places -save in the extra bit
             out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
             out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
             out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
             out[3][saveidx + (gulpno * gulp * nchans)] = out[3][saveidx];
-            }
+        }
         framet++;
     }
 
@@ -327,6 +329,7 @@ __global__ void initscalefactors(float **means, float **rstdevs, int stokes) {
     for (int ii = 0; ii < stokes; ii++) {
         means[ii][idx] = 64.0f;
         rstdevs[ii][idx] = 1.0f;
+        printf("id: %i, stokes: %i, mean: %f, stdev: %f\n", idx, ii, means[ii][idx], rstdevs[ii][idx]);
     }
 }
 
@@ -373,7 +376,7 @@ __global__ void scale_factors(float *in, float **means, float **rstdevs, unsigne
     rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
 }
 
-__global__ void bandpass {
+__global__ void bandpass() {
 
 
 

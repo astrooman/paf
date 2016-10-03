@@ -69,7 +69,7 @@ class Buffer
         void dump(int idx, header_f head, std::string outdir);
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
-        void rescale(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs, int param);
+        void rescale(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
         void update(obs_time frame_time);
         void write(T *d_data, obs_time frame_time, unsigned int amount, cudaStream_t stream);
@@ -174,10 +174,14 @@ void Buffer<T>::rescale(int idx, cudaStream_t &stream, float **d_means, float **
     float *d_transpose;
     cudaMalloc((void**)&d_transpose, (gulp + extra) * nchans * sizeof(float));
     for (int ii = 0; ii < stokes; ii++) {
-        transpose<<<1,nchans,0,0>>>(pd_filterbank[stokes] + (idx - 1) * gulp * nchans, d_transpose, nchans, gulp + extra);
-        scale_factors<<<1,nchans,0,0>>>(d_transpose, d_means[stokes], d_rstdevs[stokes], nchans, gulp + extra, ii);
+        transpose<<<1,nchans,0,stream>>>(pd_filterbank[ii] + (idx - 1) * gulp * nchans, d_transpose, nchans, gulp + extra);
+        scale_factors<<<1,nchans,0,stream>>>(d_transpose, d_means, d_rstdevs, nchans, gulp + extra, ii);
     }
     cudaFree(d_transpose);
+    // need this so I don't save this buffer
+    statemutex.lock();
+    sample_state[idx * gulp + extra - 1] = 0;   
+    statemutex.unlock();
 }
 
 

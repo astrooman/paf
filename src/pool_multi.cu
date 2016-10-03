@@ -94,6 +94,7 @@ bool GPUpool::working_ = true;
 
 GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         beamno{0},
+                                        filchans_(config.filchans), 
                                         gpuid(config.gpuids[id]),
                                         strip(config.ips[id]),
                                         highest_buf(0),
@@ -112,7 +113,8 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         gulps_sent(0),
                                         gulps_processed(0),
                                         working(true),
-					                    packcount(0)
+		                        packcount(0),
+                                        scaled_(false)
 
 {
 
@@ -167,7 +169,7 @@ void GPUpool::execute(void)
     CUDAthreads[0] = 7;
     CUDAthreads[1] = fftpoint * timeavg * batchsize / 42;
     CUDAthreads[2] = nchans;
-    CUDAthreads[3] = batchsize * 27 / freqavg;
+    CUDAthreads[3] = filchans_;
 
     CUDAblocks[0] = 48;
     CUDAblocks[1] = 42;
@@ -233,18 +235,18 @@ void GPUpool::execute(void)
 
 
     for (int ii = 0; ii < stokes; ii++) {
-        cudaCheckError(cudaMalloc((void**)&h_means_[ii], nchans * sizeof(float)));
-        cudaCheckError(cudaMalloc((void**)&h_stdevs_[ii], nchans * sizeof(float)));
+        cudaCheckError(cudaMalloc((void**)&h_means_[ii], filchans_ * sizeof(float)));
+        cudaCheckError(cudaMalloc((void**)&h_stdevs_[ii], filchans_ * sizeof(float)));
     }
 
     cudaCheckError(cudaMalloc((void**)&d_means_, stokes * sizeof(float*)));
     cudaCheckError(cudaMalloc((void**)&d_rstdevs_, stokes * sizeof(float*)));
-    cudaChecError(cudaMemcpy(d_means_, h_means_, 4 * sizeof(float*), cudaMemcpyHostToDevice));
-    cudaChecError(cudaMemcpy(d_rstdevs_, h_stdevs_, 4 * sizeof(float*), cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpy(d_means_, h_means_, 4 * sizeof(float*), cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpy(d_rstdevs_, h_stdevs_, 4 * sizeof(float*), cudaMemcpyHostToDevice));
 
-    // TODO: make 567 a variable 
-    initscalefactors<<<1,567,0,0,>>>(d_means_, d_rstdevs_, stokes);
-
+    initscalefactors<<<1,filchans_,0,0>>>(d_means_, d_rstdevs_, stokes);
+    cudaCheckError(cudaDeviceSynchronize());
+    cudaCheckError(cudaGetLastError());
     // STAGE: PREPARE THE DEDISPERSION
     // generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
@@ -558,7 +560,7 @@ void GPUpool::worker(int stream)
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
             //addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
-            addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+            addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)filchans_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
             cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
@@ -593,7 +595,7 @@ void GPUpool::dedisp_thread(int dstream)
     while(working_) {
         ready = p_mainbuffer->ready();
         if (ready) {
-            if (scaled) {
+            if (scaled_) {
                 header_f headerfil;
                 headerfil.raw_file = "tastytastytest";
                 headerfil.source_name = "J1641-45";
@@ -625,11 +627,12 @@ void GPUpool::dedisp_thread(int dstream)
                 //working = false;
             } else {
                 // perform the scaling
-                scaled = true;
                 p_mainbuffer->rescale(ready, mystreams[dstream], d_means_, d_rstdevs_);
-
+                cudaCheckError(cudaGetLastError());
+                scaled_ = true;
+                ready = 0;
+                cout << "Scaling factors have been obtained" << endl;
             }
-        }
         } else {
             std::this_thread::yield();
         }
