@@ -37,16 +37,11 @@ inline double get_mjd(int ref_epoch, size_t ref_second) {
     double extra = ((double)hour + (((double)minute + (double)second/60.0)/60.0))/ 24.0;
     mjd += extra;
 
-    cout << extra << endl;
     std::ofstream mydate("mjd.txt", std::ios_base::out | std::ios_base::trunc);
     mydate.precision(6);
     mydate.setf(std::ios::fixed);
-    cout << std::fixed << std::setprecision(6);
     mydate << mjd <<  " " << extra << endl;
     mydate.close();
-
-    cout << year << ":" << month << ":" << day << ":" << hour << ":" << minute << ":" << second << endl;
-    cout << "MJD: " << mjd << endl;
 
     return mjd;
 }

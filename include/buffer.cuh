@@ -137,7 +137,6 @@ void Buffer<T>::allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u,
 template<class T>
 void Buffer<T>::deallocate(void)
 {
-    std::cout << "Deallocating the buffer memory!" << std::endl;
     cudaCheckError(cudaFreeHost(ph_fil));
     cudaCheckError(cudaFree(d_buf));
     delete [] sample_state;
@@ -149,8 +148,6 @@ void Buffer<T>::deallocate(void)
 template<class T>
 void Buffer<T>::dump(int idx, header_f header, std::string outdir)
 {
-        // idx will be use to tell which part of the buffer to dump
-        std::cout << std::endl;
         save_filterbank2(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved, outdir);
         fil_saved++;
         // need info from the telescope
