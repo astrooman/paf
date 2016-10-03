@@ -69,7 +69,7 @@ class Buffer
         void dump(int idx, header_f head, std::string outdir);
         float **get_pfil(void) {return this->pd_filterbank;};
         int ready();
-        void rescale(int idx, cudaStream_t &stream);
+        void rescale(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
         void update(obs_time frame_time);
         void write(T *d_data, obs_time frame_time, unsigned int amount, cudaStream_t stream);
@@ -152,7 +152,7 @@ void Buffer<T>::dump(int idx, header_f header, std::string outdir)
         // idx will be use to tell which part of the buffer to dump
         std::cout << std::endl;
         save_filterbank2(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved, outdir);
-        fil_saved++; 
+        fil_saved++;
         // need info from the telescope
 }
 
@@ -169,12 +169,19 @@ int Buffer<T>::ready()
 }
 
 template<class T>
-void Buffer<T>::rescale(int idx, cudaStream_t &stream)
+void Buffer<T>::rescale(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs)
 {
-    scale<<<2,32,0,stream>>>(pd_filterbank[0] + (idx - 1) * gulp * nchans, pd_filterbank[0] + (idx - 1) * gulp * nchans, nchans, gulp + extra);
-    scale<<<2,32,0,stream>>>(pd_filterbank[1] + (idx - 1) * gulp * nchans, pd_filterbank[1] + (idx - 1) * gulp * nchans, nchans, gulp + extra);
-    scale<<<2,32,0,stream>>>(pd_filterbank[2] + (idx - 1) * gulp * nchans, pd_filterbank[2] + (idx - 1) * gulp * nchans, nchans, gulp + extra);
-    scale<<<2,32,0,stream>>>(pd_filterbank[3] + (idx - 1) * gulp * nchans, pd_filterbank[3] + (idx - 1) * gulp * nchans, nchans, gulp + extra);
+    float *d_transpose;
+    cudaMalloc((void**)&d_transpose, (gulp + extra) * nchans * sizeof(float));
+    for (int ii = 0; ii < stokes; ii++) {
+        transpose<<<1,nchans,0,stream>>>(pd_filterbank[ii] + (idx - 1) * gulp * nchans, d_transpose, nchans, gulp + extra);
+        scale_factors<<<1,nchans,0,stream>>>(d_transpose, d_means, d_rstdevs, nchans, gulp + extra, ii);
+    }
+    cudaFree(d_transpose);
+    // need this so I don't save this buffer
+    statemutex.lock();
+    sample_state[idx * gulp + extra - 1] = 0;   
+    statemutex.unlock();
 }
 
 

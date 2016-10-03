@@ -113,7 +113,7 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
     for (int ac = 0; ac < acc; ac++) {
         saveidx = (framet % (gulpno * gulp)) * nchans + idx;
         inskip = ac * 27 * 336;
-        
+
         out[0][saveidx] = (float)0.0;
         out[1][saveidx] = (float)0.0;
         out[2][saveidx] = (float)0.0;
@@ -133,7 +133,7 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
                 out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
                 out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
             }
-            // save in two places -save in the extra bit 
+            // save in two places -save in the extra bit
             out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
             out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
             out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
@@ -171,6 +171,65 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
 */
 }
 
+__global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc, float **means, float **rstdevs) {
+
+    // the number of threads is equal to the number of output channels
+    // each 'idx' is responsible for one output frequency channel
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int extra = totsize - gulpno * gulp;
+    // thats the starting save position for the chunk of length acc time samples
+    int saveidx;
+
+    
+
+    int inskip;
+
+    for (int ac = 0; ac < acc; ac++) {
+        saveidx = (framet % (gulpno * gulp)) * nchans + idx;
+        inskip = ac * 27 * 336;
+
+        out[0][saveidx] = (float)0.0;
+        out[1][saveidx] = (float)0.0;
+        out[2][saveidx] = (float)0.0;
+        out[3][saveidx] = (float)0.0;
+
+        // use scaling of the form
+        // out = (in - mean) / stdev * 32 + 64;
+        // rstdev = (1 / stdev) * 32 to reduce the number of operations
+        if ((framet % (gulpno * gulp)) >= extra) {
+            for (int ch = 0; ch < factorc; ch++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ch];
+                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            }
+            // scaling
+            out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
+            out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
+            out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+        } else {
+            for (int ch = 0; ch < factorc; ch++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ch];
+                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            }
+            // scaling
+            out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
+            out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
+            out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            // save in two places -save in the extra bit
+            out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
+            out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
+            out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
+            out[3][saveidx + (gulpno * gulp * nchans)] = out[3][saveidx];
+        }
+        framet++;
+    }
+
+}
 __global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
 {
 
@@ -257,42 +316,70 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
 //    printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
 }
 
-__global__ void scale(float* in, float* out, unsigned int nchans, unsigned int time_samples)
-{
-    // call one block with 32 threads
-    // be careful when processing total sizes that cannot be divided by 32
-    // or make sure the total size can be divided by 32 when allocating
+// initialise the scale factors
+// memset is slower than custom kernels and not safe for anything else than int
+__global__ void initscalefactors(float **means, float **rstdevs, int stokes) {
+    // the scaling is (in - mean) * rstdev + 64.0f
+    // and I want to get the original in back in the first running
+    // will therefore set the mean to 64.0f and rstdev to 1.0f
+
+    // each thread responsible for one channel
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float nrec = 1.0f / (float)nchans;
-    float mean;
-    float std;
 
-    unsigned int threads = blockDim.x * gridDim.x;
-    unsigned int start = 0;
-    float nrec1 = 1.0f / (float)(nchans -1.0f);
-    for (int chunk = 0; chunk < (time_samples / threads); chunk++) {
-        mean = 0.0f;
-        std = 0.0f;
-        start = chunk * threads * nchans;
-
-        for (int ii = 0; ii < nchans; ii++) {
-            mean += in[start + idx * nchans + ii] * nrec;
-            //printf("%d\n", mean);
-        }
-
-        for (int jj = 0; jj < nchans; jj++) {
-            std += (in[start + idx * nchans + jj] - mean) * (in[start + idx * nchans + jj] - mean);
-        }
-        std *= nrec1;
-
-        //printf("%i: %i, %f, %f, %f\n", idx, nchans, nrec, mean, std);
-
-        float stdrec = rsqrtf(std);
-
-        for (int kk = 0; kk < nchans; kk++) {
-            out[start + idx * nchans + kk] = ((in[start + idx * nchans + kk] - mean) * stdrec) * 32.0f + 64.0f;
-            if (out[start + idx * nchans + kk] < 0.0f)
-                out[start + idx * nchans + kk] = 0.0f;
-        }
+    for (int ii = 0; ii < stokes; ii++) {
+        means[ii][idx] = 64.0f;
+        rstdevs[ii][idx] = 1.0f;
     }
+}
+
+// filterbank data saved in the format t1c1,t1c2,t1c3,...
+// need to transpose to t1c1,t2c1,t3c1,... for easy and efficient scaling kernel
+__global__ void transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes) {
+
+    // very horrible implementation or matrix transpose
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int start = idx * ntimes;
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        out[start + tsamp] = in[idx + tsamp * nchans];
+    }
+}
+
+__global__ void scale_factors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
+    // calculates mean and standard deviation in every channel
+    // assumes the data has been transposed
+
+    // for now have one thread per frequency channel
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float mean;
+    float variance;
+
+    float ntrec = 1.0f / (float)ntimes;
+    float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
+
+    unsigned int start = idx * ntimes;
+    mean = 0.0f;
+    variance = 0.0;
+    // two-pass solution for now
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        mean += in[start + tsamp] * ntrec;
+    }
+    means[param][idx] = mean;
+
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
+    }
+    variance *= ntrec1;
+    // reciprocal of standard deviation
+    // multiplied by the desired standard deviation of the scaled data
+    // reduces the number of operations that have to be done on the GPU
+    rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
+    // to avoid inf when there is no data in the channel
+    if (means[param][idx] == 0)
+        rstdevs[param][idx] = 0;
+}
+
+__global__ void bandpass() {
+
+
+
 }

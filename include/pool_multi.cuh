@@ -89,16 +89,25 @@ class GPUpool
         float *pdv_time_scrunch;
         float *pdv_freq_scrunch;
 */
+        // TEXTURING
         cudaChannelFormatDesc cdesc;
         cudaArray **d_array2Dp;
         cudaResourceDesc *rdesc;
         cudaTextureDesc *tdesc;
         cudaTextureObject_t *texObj;
 
+        // MUTEXES
         mutex buffermutex;
         mutex printmutex;
         mutex workermutex;
 
+        // SCALING
+        bool scaled_;
+        float **h_means_;
+        float **h_stdevs_;
+        float **d_means_;
+        float **d_rstdevs_;
+        
         obs_time start_time;
         config_s config_;
         bool *bufidx_array;
@@ -117,6 +126,7 @@ class GPUpool
         const unsigned int accumulate;              //!< The number of 108us chunks to accumulate for the GPU processing
         const unsigned int batchsize;               //!< The number of 1MHz channels to process
         const unsigned int fftpoint;                //!< Size of the single FFT
+        const unsigned int filchans_;                //!< Number of output filterbank channels
         const unsigned int nostreams;               //!< Number of CUDA streams to use
         const unsigned int timeavg;                 //!< Number of post-FFT time samples to average
         const unsigned int freqavg;                 //!< Number of post-FFT frequency channels to average
