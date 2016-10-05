@@ -114,6 +114,7 @@ class GPUpool
         bool working;
         bool verbose_;
         static bool working_;
+        int record_;
         bool buffer_ready[2];
         bool worker_ready[2];
         int worker_frame[2];

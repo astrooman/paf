@@ -45,6 +45,7 @@ struct config_s {
     unsigned int ngpus;         // number of GPUs to use
     unsigned int npol;
     unsigned int port;
+    unsigned int record;        // number of seconds to record
     unsigned int stokes;        // number of Stokes parameters to output
     unsigned int streamno;      // number of CUDA streams for filterbanking
     unsigned int timesavg;         // number of time samples to average
@@ -74,6 +75,7 @@ inline void default_config(config_s &config) {
     config.ngpus = 1;
     config.npol = 2;
     config.outdir = "/data/local/scratch/mat_test/";
+    config.record = 600;        // record ~10 minutes of data
     config.stokes = 4;
     config.streamno = 4;
     config.timesavg = 4;

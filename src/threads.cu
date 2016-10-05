@@ -55,10 +55,12 @@ int main(int argc, char *argv[])
                 ii++;
                 config_file = std::string(argv[ii]);
                 read_config(config_file, config);
-            }
-            if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
+            } else if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
                 ii++;
                 config.chunks = atoi(argv[ii]);
+	    } else if (std::string(argv[ii]) == "-r") {
+                ii++;
+                config.record = atoi(argv[ii]);
             } else if (std::string(argv[ii]) == "-s") {     // the number of streams to use
                 ii++;
                 config.streamno = atoi(argv[ii]);
@@ -107,6 +109,7 @@ int main(int argc, char *argv[])
                         << "\t -f - the number of frequency channels to average\n"
                         << "\t -n - the number of GPUs to use\n"
                         << "\t -o <directory> - output directory\n"
+                        << "\t -r - the number of seconds to record\n"
                         << "\t -s - the number of CUDA streams per GPU to use\n"
                         << "\t -t - the number of time samples to average\n"
                         << "\t -v - use verbose mode\n"

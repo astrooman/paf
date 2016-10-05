@@ -113,9 +113,10 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         gulps_sent(0),
                                         gulps_processed(0),
                                         working(true),
-                                        scaled_(false)
-                                        verbose_(config.verbose)
-					                    packcount(0),
+                                        scaled_(false),
+                                        verbose_(config.verbose),
+                                        record_(config.record),
+					packcount(0)
 
 {
     avt = min(nostreams + 2, thread::hardware_concurrency());
@@ -667,7 +668,8 @@ void GPUpool::dedisp_thread(int dstream)
                 p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
                 p_mainbuffer->dump((gulps_sent % 2), headerfil, config_.outdir);
                 gulps_sent++;
-                //working = false;
+                if ((int)(gulps_sent * dedisp_totsamples * config_.tsamp) >= record_)
+                    working_ = false;
             } else {
                 // perform the scaling
                 p_mainbuffer->rescale(ready, mystreams[dstream], d_means_, d_rstdevs_);
