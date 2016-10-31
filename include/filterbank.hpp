@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -35,7 +36,7 @@ struct header_f
 };
 //! Function that actually saves the filterbank file to the disk
 /*!
-    \param *ph_filterbank pointer to the data host vector - currently onyl first Stokes in the dump mode
+    \param *ph_filterbank pointer to the data host vector
     \param nsamsp number of time samples to save
     \param head structure with all the information require for the filterbank header
     \param saved number of the filterbank files saved so far
@@ -202,6 +203,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     std::ostringstream oss;
     std::string filename;
 
+    unsigned char* tmpstore = new unsigned char[nsamps * head.nchans];
     int length{0};
     char field[60];
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
@@ -209,7 +211,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     for (int ii = 0; ii < stokes; ii++) {
         oss.str("");
         //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
-        oss << stokesid[ii] << "_chunk_" << saved << "_beam_" << head.ibeam;
+        oss << stokesid[ii] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
         filename = outdir + "/" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -344,7 +346,11 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
 
             size_t to_save = nsamps * head.nchans * head.nbits / 8;
             //float *ph_filsave = ph_filterbank[ii];
-            outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);
+	    for (int sample = 0; sample < nsamps * head.nchans; sample++) {
+                tmpstore[sample] = static_cast<unsigned char>(ph_filterbank[start + ii * nsamps * head.nchans + sample]);
+            }
+            //outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);
+            outfile.write(reinterpret_cast<char*>(&tmpstore[0]), nsamps * head.nchans);
 
         } else {
             std::cerr << "Problems with saving the filterbank file" << std::endl;
@@ -352,9 +358,8 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
 
 
         outfile.close();
-
     }
-
+    delete [] tmpstore;
     std::cout << "Saved filterbank " << saved << " for beam " << head.ibeam << std::endl;
 
 }

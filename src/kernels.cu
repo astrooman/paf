@@ -177,15 +177,19 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
     // each 'idx' is responsible for one output frequency channel
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int extra = totsize - gulpno * gulp;
+    float avgfactor = 1.0f / factorc;
     // thats the starting save position for the chunk of length acc time samples
     int saveidx;
 
-    
+    float tmp0, tmp1, tmp2, tmp3;   
 
     int inskip;
 
     for (int ac = 0; ac < acc; ac++) {
-        saveidx = (framet % (gulpno * gulp)) * nchans + idx;
+        // channels in increasing order
+        // saveidx = (framet % (gulpno * gulp)) * nchans + idx;
+        // channels in decreasing order
+        saveidx = (framet % (gulpno * gulp)) * nchans + nchans - (idx + 1);
         inskip = ac * 27 * 336;
 
         out[0][saveidx] = (float)0.0;
@@ -204,10 +208,10 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
                 out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
             }
             // scaling
-            out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
-            out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
-            out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
-            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            out[0][saveidx] = (out[0][saveidx] * avgfactor - means[0][idx]) * rstdevs[0][idx] + 64.0f;
+            out[1][saveidx] = (out[1][saveidx] * avgfactor - means[1][idx]) * rstdevs[1][idx] + 64.0f;
+            out[2][saveidx] = (out[2][saveidx] * avgfactor - means[2][idx]) * rstdevs[2][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] * avgfactor - means[3][idx]) * rstdevs[3][idx] + 64.0f;
         } else {
             for (int ch = 0; ch < factorc; ch++) {
                 out[0][saveidx] += in[inskip + idx * factorc + ch];
@@ -216,10 +220,20 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
                 out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
             }
             // scaling
-            out[0][saveidx] = (out[0][saveidx] - means[0][idx]) * rstdevs[0][idx] + 64.0f;
-            out[1][saveidx] = (out[1][saveidx] - means[1][idx]) * rstdevs[1][idx] + 64.0f;
-            out[2][saveidx] = (out[2][saveidx] - means[2][idx]) * rstdevs[2][idx] + 64.0f;
-            out[3][saveidx] = (out[3][saveidx] - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            out[0][saveidx] = (out[0][saveidx] * avgfactor - means[0][idx]) * rstdevs[0][idx] + 64.0f;
+            out[1][saveidx] = (out[1][saveidx] * avgfactor - means[1][idx]) * rstdevs[1][idx] + 64.0f;
+            out[2][saveidx] = (out[2][saveidx] * avgfactor - means[2][idx]) * rstdevs[2][idx] + 64.0f;
+            out[3][saveidx] = (out[3][saveidx] * avgfactor - means[3][idx]) * rstdevs[3][idx] + 64.0f;
+            tmp0 = rintf(fminf(fmaxf(0.0, out[0][saveidx]), 255.0));
+            out[0][saveidx] = tmp0;
+            //out[0][saveidx] = fminf(255, out[0][saveidx]);
+            out[1][saveidx] = fmaxf(0.0, out[0][saveidx]);
+            out[1][saveidx] = fminf(255, out[0][saveidx]);
+            out[2][saveidx] = fmaxf(0.0, out[0][saveidx]);
+            out[2][saveidx] = fminf(255, out[0][saveidx]);
+            out[3][saveidx] = fmaxf(0.0, out[0][saveidx]);
+            out[3][saveidx] = fminf(255, out[0][saveidx]);
+
             // save in two places -save in the extra bit
             out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
             out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
@@ -288,6 +302,7 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
     int outidx;
     int skip1, skip2;
     float power1, power2;
+    float avgfactor= 1.0f / factort;
 
     for (int ac = 0; ac < acc; ac++) {
         skip1 = ac * 336 * 128 * 2;
@@ -305,10 +320,10 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
                 idx2 = threadIdx.x + jj * 32;
                 power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
                 power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
-        	out[outidx] += (power1 + power2);
-                out[outidx + jump] += (power1 - power2);
-                out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y));
-                out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x));
+        	out[outidx] += (power1 + power2) * avgfactor;
+                out[outidx + jump] += (power1 - power2) * avgfactor;
+                out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y)) * avgfactor;
+                out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x)) * avgfactor;
             }
         }
     }

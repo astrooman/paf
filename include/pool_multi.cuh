@@ -83,7 +83,7 @@ class GPUpool
         // networking
         unsigned char **rec_bufs;
         int *sfds;
-
+        int filchansd4_;
 /*
         float *pdv_power;
         float *pdv_time_scrunch;

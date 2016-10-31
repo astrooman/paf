@@ -68,6 +68,7 @@ class Buffer
         void deallocate(void);
         void dump(int idx, header_f head, std::string outdir);
         float **get_pfil(void) {return this->pd_filterbank;};
+        obs_time gettime(int index);
         int ready();
         void rescale(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);
         void send(unsigned char *out, int idx, cudaStream_t &stream, int host_jump);
@@ -244,8 +245,11 @@ void Buffer<T>::update(obs_time frame_time)
     int index = frame_time.framet % (gulpno * gulp);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
+
     for (int ii = 0; ii < accumulate; ii++) {
         index = framet % (gulpno * gulp);
+        if((index % gulp) == 0)
+            gulp_times[index / gulp] = frame_time;
         sample_state[index] = 1;
         //std::cout << framet << " " << index << " " << framet % totsize << std::endl;
         //std::cout.flush();
@@ -256,6 +260,10 @@ void Buffer<T>::update(obs_time frame_time)
     }
 }
 
+template<class T>
+obs_time Buffer<T>::gettime(int index) {
+    return gulp_times[index];
+}
 
 /*template<class T>
 void Buffer<T>::update(obs_time frame_time)
@@ -265,6 +273,9 @@ void Buffer<T>::update(obs_time frame_time)
     int index = frame_time.framet % (gulpno * gulp);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
+    if((index % gulp) == 0)
+        gulp_times[index / gulp] = frame_time;
+
     for (int ii = 0; ii < accumulate; ii++) {
         index = framet % (gulpno * gulp);
         sample_state[index] = 1;

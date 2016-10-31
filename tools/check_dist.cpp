@@ -210,6 +210,7 @@ void GPUpool::receive_thread(int ii)
     char huh[INET6_ADDRSTRLEN];
     int numbytes{0};
     int fpga{0};
+    int thread{0};
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
     while(wait) {}
@@ -236,6 +237,9 @@ void GPUpool::receive_thread(int ii)
         if (numbytes == 0)
             continue;
         frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
+        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+	thread = (int)(rec_bufs[ii][21] | (rec_bufs[ii][20] << 8));
+	cout << "FPGA: " << fpga << " thread " << thread << endl;
         if (frame == 0) {
             break;
         }

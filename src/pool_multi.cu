@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <bitset>
+#include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -139,6 +141,9 @@ void GPUpool::execute(void)
     signal(SIGINT, GPUpool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
 
+    filchansd4_ = 1 << (int)log2f(filchans_);
+    //filchansd4_ = (int)(filchans_ / 4) * 4;
+
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
@@ -156,7 +161,7 @@ void GPUpool::execute(void)
         cout_guard.unlock();
     }
 
-    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(config_.filchans, config_.tsamp, config_.ftop, config_.foff, gpuid));
+    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(filchansd4_, config_.tsamp, config_.ftop, config_.foff, gpuid));
     p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
     frame_times = new int[accumulate * nostreams];
@@ -174,7 +179,8 @@ void GPUpool::execute(void)
     CUDAthreads[0] = 7;
     CUDAthreads[1] = fftpoint * timeavg * batchsize / 42;
     CUDAthreads[2] = nchans;
-    CUDAthreads[3] = filchans_;
+    CUDAthreads[3] = filchansd4_;
+    //CUDAthreads[3] = filchans_;
 
     CUDAblocks[0] = 48;
     CUDAblocks[1] = 42;
@@ -255,13 +261,15 @@ void GPUpool::execute(void)
     // tol is the smearing tolerance factor between two DM trials
     p_dedisp->generate_dm_list(config_.dstart, config_.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)config_.gulp + 1; //p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)config_.gulp + p_dedisp->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / config_.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * config_.gulp + 1; //p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * config_.gulp + p_dedisp->get_max_delay();
     if (verbose_)
         cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, config_.filchans, stokes);
+    p_mainbuffer->allocate(accumulate, dedisp_buffno, p_dedisp->get_max_delay(), config_.gulp, dedisp_buffsize, filchansd4_, stokes);
+    //p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, filchansd4_, stokes);
+    //p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, config_.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
     p_dedisp->set_killmask(&config_.killmask[0]);
@@ -435,8 +443,8 @@ void GPUpool::execute(void)
             } else {
                 cerr << "Got nothing from metadata" << endl;
             }
-        }
-       */
+        } */
+       
         metalog.close();
     } else {
         cout_guard.lock();
@@ -604,7 +612,12 @@ void GPUpool::worker(int stream)
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
             powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
             //addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
-            addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)filchans_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+            //addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)filchans_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+            if (scaled_) {
+                addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+            } else {
+                addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
+            }
             cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
@@ -633,6 +646,10 @@ void GPUpool::dedisp_thread(int dstream)
         cout_guard.unlock();
     }
 
+    obs_time sendtime;
+
+  
+
     cudaCheckError(cudaSetDevice(gpuid));
     if (verbose_)
         cout << "Dedisp thread up and running..." << endl;
@@ -646,20 +663,28 @@ void GPUpool::dedisp_thread(int dstream)
                 headerfil.source_name = "J1641-45";
                 headerfil.az = 0.0;
                 headerfil.dec = 0.0;
-                headerfil.fch1 = config_.ftop;
-                headerfil.foff = config_.foff;
+                // for channels in decreasing order 
+                headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchansd4_ * config_.foff;
+                headerfil.foff = -1.0 * abs(config_.foff);
+                // for channels in increasing order
+                // headerfil.fch1 = 1173.0 - (16.0 / 27.0);
+                // headerfil.foff = config_.foff;
                 headerfil.ra = 0.0;
                 headerfil.rdm = 0.0;
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
-                headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + gulps_sent * config_.gulp * config_.tsamp);
+                headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + 27 + (gulps_sent + 1)* config_.gulp * config_.tsamp);
+                // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
+                sendtime = p_mainbuffer->gettime(ready-1);
+                headerfil.tstart = get_mjd(sendtime.start_epoch, sendtime.start_second + 27 + sendtime.framet * config_.tsamp);
+                // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno;
                 headerfil.machine_id = 2;
                 headerfil.nbeams = 1;
-                headerfil.nbits = 32;
-                headerfil.nchans = config_.filchans;
+                headerfil.nbits = 8;
+                headerfil.nchans = filchansd4_;
                 headerfil.nifs = 1;
                 headerfil.telescope_id = 2;
 
@@ -670,7 +695,7 @@ void GPUpool::dedisp_thread(int dstream)
                 gulps_sent++;
                 if ((int)(gulps_sent * dedisp_totsamples * config_.tsamp) >= record_)
                     working_ = false;
-            } else {
+            }   else {
                 // perform the scaling
                 p_mainbuffer->rescale(ready, mystreams[dstream], d_means_, d_rstdevs_);
                 cudaCheckError(cudaGetLastError());
@@ -679,6 +704,7 @@ void GPUpool::dedisp_thread(int dstream)
                 if (verbose_)
                     cout << "Scaling factors have been obtained" << endl;
             }
+
         } else {
             std::this_thread::yield();
         }
