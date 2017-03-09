@@ -1,3 +1,6 @@
+ifneq ("$(wildcard Makefile.inc)","")
+include Makefile.inc
+else
 SRC_DIR = ./src
 INC_DIR = ./include
 OBJ_DIR = ./obj
@@ -6,6 +9,7 @@ DEDISP_DIR = ./dedisp_paf
 CC=g++
 NVCC=/usr/bin/nvcc
 DEBUG=#-g -G
+endif
 
 INCLUDE = -I${INC_DIR}
 LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
