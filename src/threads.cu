@@ -15,8 +15,8 @@
 #include "dedisp/DedispPlan.hpp"
 #include "errors.hpp"
 #include "network.hpp"
+#include "ober_pool.cuh"
 #include "pdif.hpp"
-#include "pool_multi.cuh"
 
 // Heimdall headers - including might be a bit messy
 #include <heimdall/params.hpp>
@@ -38,69 +38,69 @@ using std::cout;
 using std::endl;
 using std::mutex;
 using std::queue;
-using std::string;
+using string;
 using std::thread;
 using std::vector;
 
 int main(int argc, char *argv[])
 {
-    std::string config_file;
-    config_s config;
-    default_config(config);
+    string config_file;
+    InConfig config;
+    SetDefaultConfig(config);
 
     // too many parameters to load as arguments - use config file
     if (argc >= 2) {
-        for (int ii = 0; ii < argc; ii++) {
-            if (std::string(argv[ii]) == "--config") {      // configuration file
-                ii++;
-                config_file = std::string(argv[ii]);
-                read_config(config_file, config);
-            } else if (std::string(argv[ii]) == "-c") {      // the number of chunks to process
-                ii++;
-                config.chunks = atoi(argv[ii]);
-	    } else if (std::string(argv[ii]) == "-r") {
-                ii++;
-                config.record = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-s") {     // the number of streams to use
-                ii++;
-                config.streamno = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-b") {     // the number of beams to accept the data from
-                ii++;
-                config.beamno = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-t") {     // the number of time sample to average
-                ii++;
-                config.timesavg = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-f") {     // the number of frequency channels to average
-                ii++;
-                config.freqavg = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-n") {    // the number of GPUs to use
-                ii++;
-                config.ngpus = atoi(argv[ii]);
-            } else if (std::string(argv[ii]) == "-o") {    // output directory for the filterbank files
-                ii++;
+        for (int iarg = 0; iarg < argc; iarg  ++) {
+            if (string(argv[iarg]) == "--config") {      // configuration file
+                iarg++;
+                config_file = string(argv[iarg]);
+                ReadConfig(config_file, config);
+            } else if (string(argv[iarg]) == "-c") {      // the number of chunks to process
+                iarg++;
+                config.chunks = atoi(argv[iarg]);
+	    } else if (string(argv[iarg]) == "-r") {
+                iarg++;
+                config.record = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-s") {     // the number of streams to use
+                iarg++;
+                config.streamno = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-b") {     // the number of beams to accept the data from
+                iarg++;
+                config.beamno = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-t") {     // the number of time sample to average
+                iarg++;
+                config.timeavg = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-f") {     // the number of frequency channels to average
+                iarg++;
+                config.freqavg = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-n") {    // the number of GPUs to use
+                iarg++;
+                config.ngpus = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "-o") {    // output directory for the filterbank files
+                iarg++;
                 struct stat chkdir;
-                if (stat(argv[ii], &chkdir) == -1) {
+                if (stat(argv[iarg], &chkdir) == -1) {
                     cerr << "Stat error" << endl;
                 } else {
                     bool isdir = S_ISDIR(chkdir.st_mode);
                     if (isdir)
-                        config.outdir = std::string(argv[ii]);
+                        config.outdir = string(argv[iarg]);
                     else
                         cout << "Output directory does not exist! Will use default directory!";
                 }
-            } else if (std::string(argv[ii]) == "--gpuid") {
-                for (int jj = 0; jj < config.ngpus; jj++) {
-                    ii++;
-                    config.gpuids.push_back(atoi(argv[ii]));
+            } else if (string(argv[iarg]) == "--gpuid") {
+                for (int igpu = 0; igpu < config.ngpus; igpu++) {
+                    iarg++;
+                    config.gpuids.push_back(atoi(argv[iarg]));
                 }
-            } else if (std::string(argv[ii]) == "--ip") {
-                for (int jj = 0; jj < config.ngpus; jj++) {
-                    ii++;
-                    config.ips.push_back(std::string(argv[ii]));
+            } else if (string(argv[iarg]) == "--ip") {
+                for (int iip = 0; iip < config.ngpus; iip++) {
+                    iarg++;
+                    config.ips.push_back(string(argv[iarg]));
                 }
-            } else if (std::string(argv[ii]) == "-v") {
+            } else if (string(argv[iarg]) == "-v") {
                 config.verbose = true;
-            } else if ((std::string(argv[ii]) == "-h") || (std::string(argv[ii]) == "--help")) {
+            } else if ((string(argv[iarg]) == "-h") || (string(argv[iarg]) == "--help")) {
                 cout << "Options:\n"
                         << "\t -h --help - print out this message\n"
                         << "\t --config <file name> - configuration file\n"
@@ -125,7 +125,6 @@ int main(int argc, char *argv[])
         cout << "Starting up. This may take few seconds..." << endl;
 
         cout << "This is the configuration used:" << endl;
-        cout << "\t - gulp size: " << config.gulp << endl;
         cout << "\t - the number of GPUs to use: " << config.ngpus << endl;
         int devcount{0};
         cudaCheckError(cudaGetDeviceCount(&devcount));
@@ -135,12 +134,15 @@ int main(int argc, char *argv[])
         }
         cout << "\t - the number of worker streams per GPU: " << config.streamno << endl;
         cout << "\t - the IP addresses to listen on:" << endl;
-        for (int ii = 0; ii < config.ips.size(); ii++) {
-            cout << "\t\t * " << config.ips[ii] << endl;
+        for (int iip = 0; iip < config.ips.size(); iip++) {
+            cout << "\t\t * " << config.ips[iip] << endl;
         }
+        cout << "\t - gulp size: " << config.gulp << endl;
+        cout << "\t - frequency averaging: " << config.freqavg << endl;
+        cout << "\t - time averaging: " << config.timeavg << endl;
     }
-    
-    Oberpool mypool(config);
+
+    OberPool mypool(config);
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
 

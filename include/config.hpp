@@ -16,7 +16,7 @@ using std::string;
 using std::stod;
 using std::stoi;
 
-struct config_s {
+struct InConfig {
     bool test;
     bool verbose;
 
@@ -42,17 +42,18 @@ struct config_s {
     unsigned int freqavg;          // number of frequency channels to average
     unsigned int gulp;
     unsigned int nchans;        // number of 1MHz channels
-    unsigned int ngpus;         // number of GPUs to use
     unsigned int npol;
     unsigned int port;
     unsigned int record;        // number of seconds to record
     unsigned int stokes;        // number of Stokes parameters to output
     unsigned int streamno;      // number of CUDA streams for filterbanking
-    unsigned int timesavg;         // number of time samples to average
+    unsigned int timeavg;         // number of time samples to average
+
+    unsigned short nogpus;
 
 };
 
-inline void default_config(config_s &config) {
+inline void SetDefaultConfig(InConfig &config) {
     config.test = false;
     config.verbose = false;
 
@@ -78,16 +79,16 @@ inline void default_config(config_s &config) {
     config.record = 600;        // record ~10 minutes of data
     config.stokes = 4;
     config.streamno = 4;
-    config.timesavg = 4;
+    config.timeavg = 4;
 
     config.batch = config.nchans;
     config.filchans = config.nchans * 27 / config.freqavg;
-    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timesavg;
+    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
     for (int ii = 0; ii < config.filchans; ii++)
          (config.killmask).push_back((int)1);
 }
 
-inline void read_config(string filename, config_s &config) {
+inline void ReadConfig(string filename, InConfig &config) {
 
     std::fstream inconfig(filename.c_str(), std::ios_base::in);
     string line;
@@ -134,19 +135,19 @@ inline void read_config(string filename, config_s &config) {
             } else if (paraname == "NO_STREAMS") {
                 config.streamno = (unsigned int)(stoi(paravalue));
             } else if (paraname == "TIME_AVERAGE") {
-                config.timesavg = (unsigned int)(stoi(paravalue));
+                config.timeavg = (unsigned int)(stoi(paravalue));
             } else {
                 cout << "Error: unrecognised parameter: " << paraname << endl;
             }
         }
     } else {
-        cout << "Error opening the configuration file!!\n Will use default configuration instead." << endl;
+        cout << "Error opening the configuration file!!\n Will use the default configuration instead." << endl;
     }
 
     inconfig.close();
 }
 
-inline void set_search_params(hd_params &params, config_s config)
+inline void set_search_params(hd_params &params, InConfig config)
 {
     params.verbosity       = 0;
     #ifdef HAVE_PSRDADA

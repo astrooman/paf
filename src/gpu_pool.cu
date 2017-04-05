@@ -6,7 +6,6 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -28,11 +27,11 @@
 #include "errors.hpp"
 #include "filterbank.hpp"
 #include "get_mjd.hpp"
+#include "gpu_pool.cuh"
 #include "heimdall/pipeline.hpp"
 #include "kernels.cuh"
 #include "paf_metadata.hpp"
 #include "pdif.hpp"
-#include "pool_multi.cuh"
 
 #include <inttypes.h>
 #include <errno.h>
@@ -47,8 +46,6 @@
 using std::cout;
 using std::endl;
 using std::mutex;
-using std::pair;
-using std::queue;
 using std::thread;
 using std::unique_ptr;
 using std::vector;
@@ -59,46 +56,13 @@ using std::vector;
 #define BUFLEN 7232
 #define PORTS 8
 
-mutex cout_guard;
+bool GpuPool::working_ = true;
 
-/* ########################################################
-TODO: Too many copies - could I use move in certain places?
-#########################################################*/
-
-/*##############################################
-IMPORTANT: from what I seen in the system files:
-eth3, gpu0, gpu1 - NUMA node 0, CPUs 0-7
-eth2, gpu2, gpu3 - NUMA node 1, CPUs 8-15
-##############################################*/
-
-Oberpool::Oberpool(config_s config) : ngpus(config.ngpus)
-{
-
-    for (int ii = 0; ii < ngpus; ii++) {
-        gpuvector.push_back(unique_ptr<GPUpool>(new GPUpool(ii, config)));
-    }
-
-    for (int ii = 0; ii < ngpus; ii++) {
-        threadvector.push_back(thread(&GPUpool::execute, std::move(gpuvector[ii])));
-    }
-
-}
-
-Oberpool::~Oberpool(void)
-{
-    for (int ii = 0; ii < ngpus; ii++) {
-        threadvector[ii].join();
-    }
-
-}
-
-bool GPUpool::working_ = true;
-
-GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
+GpuPool::GpuPool(int poolid, InConfig config) : accumulate(config.accumulate),
                                         beamno{0},
-                                        filchans_(config.filchans), 
-                                        gpuid(config.gpuids[id]),
-                                        strip(config.ips[id]),
+                                        filchans_(config.filchans),
+                                        gpuid(config.gpuids[poolid]),
+                                        strip(config.ips[poolid]),
                                         highest_buf(0),
                                         batchsize(config.batch),
                                         fftpoint(config.fftsize),
@@ -106,7 +70,7 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
                                         freqavg(config.freqavg),
                                         nostreams(config.streamno),
                                         npol(config.npol),
-                                        poolid_(id),
+                                        poolid_(poolid),
                                         d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg * config.accumulate),
                                         d_in_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
                                         d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
@@ -133,12 +97,12 @@ GPUpool::GPUpool(int id, config_s config) : accumulate(config.accumulate),
     }
 }
 
-void GPUpool::execute(void)
+void GpuPool::Initialise(void)
 {
     struct bitmask *mask = numa_parse_nodestring((std::to_string(poolid_)).c_str());
     numa_bind(mask);
 
-    signal(SIGINT, GPUpool::HandleSignal);
+    signal(SIGINT, GpuPool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
 
     filchansd4_ = 1 << (int)log2f(filchans_);
@@ -176,6 +140,7 @@ void GPUpool::execute(void)
     // TODO: make a private const data memmber and put in the initializer list!!
     nchans = config_.nchans;
 
+    // TODO: The Rearrange() kernel has to be optimised
     CUDAthreads[0] = 7;
     CUDAthreads[1] = fftpoint * timeavg * batchsize / 42;
     CUDAthreads[2] = nchans;
@@ -290,12 +255,12 @@ void GPUpool::execute(void)
             // TODO: add separate error checking for cufft functions
             cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol * accumulate));
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
-            mythreads.push_back(thread(&GPUpool::worker, this, ii));
+            mythreads.push_back(thread(&GpuPool::FilterbankData, this, ii));
     }
 
     // dedispersion thread
     cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
-    mythreads.push_back(thread(&GPUpool::dedisp_thread, this, avt - 2));
+    mythreads.push_back(thread(&GpuPool::dedisp_thread, this, avt - 2));
 
     // STAGE: networking
     if (verbose_)
@@ -367,7 +332,7 @@ void GPUpool::execute(void)
     }
 
     for (int ii = 0; ii < PORTS; ii++)
-        receive_threads.push_back(thread(&GPUpool::receive_thread, this, ii));
+        receive_threads.push_back(thread(&GpuPool::receive_thread, this, ii));
 
 //    for (int ii = 0; ii < PORTS; ii++)
 //        receive_threads[ii].join();
@@ -444,7 +409,7 @@ void GPUpool::execute(void)
                 cerr << "Got nothing from metadata" << endl;
             }
         } */
-       
+
         metalog.close();
     } else {
         cout_guard.lock();
@@ -454,7 +419,7 @@ void GPUpool::execute(void)
     delete [] metabuffer;
 }
 
-GPUpool::~GPUpool(void)
+GpuPool::~GpuPool(void)
 {
     // TODO: clear the memory properly
     if (verbose_)
@@ -468,9 +433,9 @@ GPUpool::~GPUpool(void)
 
     //save the scaling factors before quitting
     if (scaled_) {
-        string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno) + ".dat"; 
+        string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno) + ".dat";
         std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
-        
+
         if (scalefile) {
             float *means = new float[filchans_];
             float *stdevs = new float[filchans_];
@@ -481,7 +446,7 @@ GPUpool::~GPUpool(void)
                     scalefile << means[jj] << " " << stdevs[jj] << endl;
                 }
                 scalefile << endl << endl;
-            }   
+            }
         }
         scalefile.close();
     }
@@ -519,8 +484,8 @@ GPUpool::~GPUpool(void)
     delete [] h_stdevs_;
     cudaCheckError(cudaFree(d_means_));
     cudaCheckError(cudaFree(d_rstdevs_));
-   
-    
+
+
     cudaCheckError(cudaFree(d_in));
     cudaCheckError(cudaFree(d_fft));
     cudaCheckError(cudaFreeHost(h_in));
@@ -532,13 +497,13 @@ GPUpool::~GPUpool(void)
     delete [] myplans;
 }
 
-void GPUpool::HandleSignal(int signum) {
+void GpuPool::HandleSignal(int signum) {
 
     cout << "Captured the signal\nWill now terminate!\n";
     working_ = false;
 }
 
-void GPUpool::worker(int stream)
+void GpuPool::FilterbankData(int stream)
 {
 
     cpu_set_t cpuset;
@@ -633,7 +598,7 @@ void GPUpool::worker(int stream)
     cudaFree(pd_fil);
 }
 
-void GPUpool::dedisp_thread(int dstream)
+void GpuPool::SendForDedispersion(int dstream)
 {
 
     cpu_set_t cpuset;
@@ -648,7 +613,7 @@ void GPUpool::dedisp_thread(int dstream)
 
     obs_time sendtime;
 
-  
+
 
     cudaCheckError(cudaSetDevice(gpuid));
     if (verbose_)
@@ -663,7 +628,7 @@ void GPUpool::dedisp_thread(int dstream)
                 headerfil.source_name = "J1641-45";
                 headerfil.az = 0.0;
                 headerfil.dec = 0.0;
-                // for channels in decreasing order 
+                // for channels in decreasing order
                 headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchansd4_ * config_.foff;
                 headerfil.foff = -1.0 * abs(config_.foff);
                 // for channels in increasing order
@@ -711,7 +676,7 @@ void GPUpool::dedisp_thread(int dstream)
     }
 }
 
-void GPUpool::receive_thread(int ii)
+void GpuPool::receive_thread(int ii)
 {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
