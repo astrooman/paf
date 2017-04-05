@@ -211,6 +211,93 @@ void TestPort(int iport, std::string strip) {
 
 }
 
+void TestBand(int iport, std::string strip, int usebeam, int toread, unsigned int *topframes) {
+
+    printmutex.lock();
+    cout << "Starting receive on port " << iport << endl;
+    printmutex.unlock();
+
+    int sfd, netrv;
+    addrinfo hints, *servinfo, *tryme;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    std::ostringstream oss;
+    std::string strport;
+    oss.str("");
+    oss << iport;
+    strport = oss.str();
+
+
+    if((netrv = getaddrinfo(strip.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
+        cout << "getaddrinfo() error: " << gai_strerror(netrv) << endl;
+    }
+
+    for (tryme = servinfo; tryme != NULL; tryme=tryme->ai_next) {
+        if((sfd = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
+            cout << "Socket error\n";
+            continue;
+        }
+
+        if(bind(sfd, tryme->ai_addr, tryme->ai_addrlen) == -1) {
+            close(sfd);
+            cout << "Bind error\n";
+            continue;
+        }
+        break;
+    }
+
+    if (tryme == NULL) {
+        cout << "Failed to bind to the socket\n";
+    }
+
+    int numbytes;
+    unsigned char *rec_buf = new unsigned char[7168 + 64];
+    sockaddr_storage their_addr;
+    memset(&their_addr, 0, sizeof(their_addr));
+    socklen_t addr_len;
+    memset(&addr_len, 0, sizeof(addr_len));
+
+    unsigned int framestamp{0};
+    unsigned int timestamp{0};
+
+    unsigned short beamno{0};
+    unsigned short fpga{0};
+    unsigned short refepoch{0};
+
+    int ipack = 0;
+    unsigned int starttime;
+
+    while (true) {
+        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+        framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        timestamp = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
+        if (framestamp == 0) {
+            cout << "Reached the 27s boundary. Will start recording now...\n";
+            starttime = timestamp;
+            break;
+        }
+    }
+
+    while (ipack < toread ) {
+        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+        fpga = ((unsigned short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+        beamno = (unsigned short)(rec_buf[23] | (rec_buf[22] << 8));
+        if (beamno == usebeam) {
+            refepoch = (unsigned short)(rec_buf[12] >> 2);
+            timestamp = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
+            framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+            topframes[fpga] = framestamp + (timestamp - starttime) * 250000;
+            ipack++;
+        }
+    }
+
+    delete [] rec_buf;
+
+}
+
 int main(int argc, char *argv[])
 {
 
@@ -222,6 +309,7 @@ int main(int argc, char *argv[])
     string fpgastr;
     string inipstr;
     string portstr;
+    string testtype;
 
     vector<int> portvector;
 
@@ -243,16 +331,21 @@ int main(int argc, char *argv[])
         } else if (string(argv[iarg]) == "-b") {
             iarg++;
             beam = atoi(argv[iarg]);
+        } else if (string(argv[iarg]) == "-t") {
+            iarg++;
+            testtype = string(argv[iarg]);
         } else if (string(argv[iarg]) == "-h") {
             cout << "net_test [OPTIONS]\n"
                 << "\t-i <ip>\n"
                 << "\t-p <port1,port2,...,portn>\n"
                 << "\t-s <packets to read>\n"
-                << "\t-b <beam to use>\n\n";    
+                << "\t-b <beam to use>\n"
+                << "\t-t <p | b>\n\n";
             exit(EXIT_SUCCESS);
-        } 
+        }
     }
 
+    vector<thread> bandthreads;
     vector<thread> fpgathreads;
     vector<thread> portthreads;
 
@@ -264,14 +357,32 @@ int main(int argc, char *argv[])
     cout << endl;
     printmutex.unlock();
 
-    // NOTE: this tests what percentage of data on a given port from each FPGA
-    for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
-        fpgathreads.push_back(thread(TestFpga, *iport, nofpgas, inipstr, beam, toread));
-    }
-    for (vector<thread>::iterator ithread = fpgathreads.begin(); ithread != fpgathreads.end(); ++ithread) {
-        ithread->join();
-    }
+    if (testtype == "p") {
+        for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
+            fpgathreads.push_back(thread(TestFpga, *iport, nofpgas, inipstr, beam, toread));
+        }
+        for (vector<thread>::iterator ithread = fpgathreads.begin(); ithread != fpgathreads.end(); ++ithread) {
+            ithread->join();
+        }
+    } else if (testtype == "b") {
+        // NOTE: Test the whole band
+        unsigned int *fpgaframes = new unsigned int[portvector.size()];
 
+        for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
+            bandthreads.push_back(thread(TestBand, *iport, inipstr, beam, toread, fpgaframes));
+        }
+
+        for (vector<thread>::iterator ithread = bandthreads.begin(); ithread != bandthreads.end(); ++ithread) {
+            ithread->join();
+        }
+
+        for (int iport = 0; iport < portvector.size(); iport++) {
+            cout << "Beam " << beam << " on port:\n"
+                    << portvector[iport] << ": " << (float)fpgaframes[iport] / (float)toread * 100.0 << "%\n";
+        }
+
+        delete [] fpgaframes;
+    }
     // NOTE: this tests the percentage of data the port receives
 /*    for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
         portthreads.push_back(thread(TestPort, *iport, inipstr));
