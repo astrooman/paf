@@ -321,7 +321,11 @@ void GPUpool::execute(void)
     // all the magic happens here
     for (int ii = 0; ii < PORTS; ii++) {
         oss.str("");
-        oss << 17100 + ii;
+        if (ii == 7) {
+            oss << 17100 + ii + 1;
+        } else {
+            oss << 17100 + ii;
+        }
         strport = oss.str();
 
         if((netrv = getaddrinfo(strip.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
@@ -605,7 +609,7 @@ void GPUpool::worker(int stream)
             }
             for (int frameidx = 0; frameidx < accumulate; frameidx++)
                 frame_times[stream * accumulate + frameidx] = 0;
-
+ 
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
             rearrange2<<<rearrange_b, rearrange_t, 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
@@ -769,6 +773,8 @@ void GPUpool::receive_thread(int ii)
         }
     }
 
+    cout << "Reached the 27s boundary on port " << 17000 + ii << endl;
+
     while(working_) {
         if ((numbytes = recvfrom(sfds[ii], rec_bufs[ii], BUFLEN - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
             cout_guard.lock();
@@ -780,23 +786,29 @@ void GPUpool::receive_thread(int ii)
             continue;
         ref_s = (int)(rec_bufs[ii][3] | (rec_bufs[ii][2] << 8) | (rec_bufs[ii][1] << 16) | ((rec_bufs[ii][0] & 0x3f) << 24));
         frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
-        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        frame = frame + (ref_s - start_time.start_second - 27) / 27 * 250000;
+        beamno = (int)(rec_bufs[ii][23] | (rec_bufs[ii][22] << 8));
+        if (beamno < 6) {
+            fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+            if (fpga == 8)
+                fpga = 7;
+            fpga = fpga * 6 + beamno;
+            frame = frame + (ref_s - start_time.start_second - 27) / 27 * 250000;
 
-        // looking at how much stuff we are not missing - remove a lot of checking for now
-        // TODO: add some mininal checks later anyway
-        //if (frame >= 131008) {
-        // which half of the buffer to put the data in
-        bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
-        // frame position in the half
-        bufidx += (frame % accumulate) * 48;
-        frame_times[frame % (accumulate * nostreams)] = frame;
-        // frequency chunk in the frame
-        bufidx += fpga;
-        std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + (BUFLEN - HEADER) * bufidx);
-        //cout << bufidx << endl;
-        //cout.flush();
-        bufidx_array[bufidx] = true;
+            // looking at how much stuff we are not missing - remove a lot of checking for now
+            // TODO: add some mininal checks later anyway
+            //if (frame >= 131008) {
+            // which half of the buffer to put the data in
+            bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
+            // frame position in the half
+            bufidx += (frame % accumulate) * 48;
+            frame_times[frame % (accumulate * nostreams)] = frame;
+            // frequency chunk in the frame
+            bufidx += fpga;
+            std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + (BUFLEN - HEADER) * bufidx);
+            //cout << bufidx << endl;
+            //cout.flush();
+            bufidx_array[bufidx] = true;
+        }
         //}
     }
 }

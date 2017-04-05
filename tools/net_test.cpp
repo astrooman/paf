@@ -31,7 +31,7 @@ mutex printmutex;
 
 #define SIZE 16384
 
-void TestFpga(int iport, int nofpgas, std::string strip) {
+void TestFpga(int iport, int nofpgas, std::string strip, int usebeam, int toread) {
 
     printmutex.lock();
     cout << "Starting receive on port " << iport << endl;
@@ -76,7 +76,7 @@ void TestFpga(int iport, int nofpgas, std::string strip) {
     int numbytes;
     int *fpgaid = new int[6];
     unsigned char *rec_buf = new unsigned char[7168 + 64];
-    unsigned char *inbuffer = new unsigned char[(7168 + 64) * nofpgas * SIZE];
+    //unsigned char *inbuffer = new unsigned char[(7168 + 64) * nofpgas * SIZE];
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
     socklen_t addr_len;
@@ -91,16 +91,28 @@ void TestFpga(int iport, int nofpgas, std::string strip) {
 
     vector<std::tuple<unsigned short, unsigned short, unsigned short, unsigned int, unsigned int>> headvals;
 
-    for (int ipack = 0; ipack < SIZE; ipack++) {
+    int ipack = 0;
+
+    while (true) {
+        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+        framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        if (framestamp == 0) {
+            cout << "Reached the 27s boundary. Will start recording now...\n";
+            break;
+        }
+    }
+
+    while (ipack < toread ) {
         numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
         fpga = ((unsigned short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        fpgaid[fpga % 6]++;
         beamno = (unsigned short)(rec_buf[23] | (rec_buf[22] << 8));
-        refepoch = (unsigned short)(rec_buf[12] >> 2);
-        timestamp = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
-        framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-        std::copy(rec_buf + 64, rec_buf + 7168 + 64, inbuffer + ipack * nofpgas * 7168 + fpga * 7168);
-        headvals.push_back(std::make_tuple(fpga, beamno, refepoch, timestamp, framestamp));
+        if (beamno == usebeam) {
+            refepoch = (unsigned short)(rec_buf[12] >> 2);
+            timestamp = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
+            framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+            headvals.push_back(std::make_tuple(fpga, beamno, refepoch, timestamp, framestamp));
+            ipack++;
+        }
     }
 
 
@@ -123,13 +135,13 @@ void TestFpga(int iport, int nofpgas, std::string strip) {
     }
     outhead.close();
 
-    std::ofstream outdata("data.codif", std::ios_base::out | std::ios_base::binary);
+/*    std::ofstream outdata("data.codif", std::ios_base::out | std::ios_base::binary);
     if (outdata) {
         outdata.write(reinterpret_cast<char*>(inbuffer), (7168 + 64) * nofpgas * SIZE);
     }
     outdata.close();
-
-    delete [] inbuffer;
+*/
+    //delete [] inbuffer;
     delete [] rec_buf;
 
 }
@@ -202,8 +214,10 @@ void TestPort(int iport, std::string strip) {
 int main(int argc, char *argv[])
 {
 
+    int beam;
     int nofpgas;
     int noports;
+    int toread;
 
     string fpgastr;
     string inipstr;
@@ -223,7 +237,20 @@ int main(int argc, char *argv[])
         } else if (string(argv[iarg]) == "-f") {
             iarg++;
             nofpgas = atoi(argv[iarg]);
-        }
+        } else if (string(argv[iarg]) == "-s") {
+            iarg++;
+            toread = atoi(argv[iarg]);
+        } else if (string(argv[iarg]) == "-b") {
+            iarg++;
+            beam = atoi(argv[iarg]);
+        } else if (string(argv[iarg]) == "-h") {
+            cout << "net_test [OPTIONS]\n"
+                << "\t-i <ip>\n"
+                << "\t-p <port1,port2,...,portn>\n"
+                << "\t-s <packets to read>\n"
+                << "\t-b <beam to use>\n\n";    
+            exit(EXIT_SUCCESS);
+        } 
     }
 
     vector<thread> fpgathreads;
@@ -239,7 +266,7 @@ int main(int argc, char *argv[])
 
     // NOTE: this tests what percentage of data on a given port from each FPGA
     for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
-        fpgathreads.push_back(thread(TestFpga, *iport, nofpgas, inipstr));
+        fpgathreads.push_back(thread(TestFpga, *iport, nofpgas, inipstr, beam, toread));
     }
     for (vector<thread>::iterator ithread = fpgathreads.begin(); ithread != fpgathreads.end(); ++ithread) {
         ithread->join();
