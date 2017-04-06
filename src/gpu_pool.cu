@@ -1,4 +1,4 @@
-#include <algorithm>
+accumulate_#include <algorithm>
 #include <bitset>
 #include <cmath>
 #include <iomanip>
@@ -11,9 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include <boost/array.hpp>
-#include <boost/asio.hpp>
-#include <boost/bind.hpp>
 #include <cufft.h>
 #include <cuda.h>
 #include <numa.h>
@@ -46,6 +43,7 @@
 using std::cout;
 using std::endl;
 using std::mutex;
+using std::string;
 using std::thread;
 using std::unique_ptr;
 using std::vector;
@@ -58,7 +56,7 @@ using std::vector;
 
 bool GpuPool::working_ = true;
 
-GpuPool::GpuPool(int poolid, InConfig config) : accumulate(config.accumulate),
+GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         beamno{0},
                                         filchans_(config.filchans),
                                         gpuid(config.gpuids[poolid]),
@@ -68,24 +66,24 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate(config.accumulate),
                                         fftpoint(config.fftsize),
                                         timeavg(config.timesavg),
                                         freqavg(config.freqavg),
-                                        nostreams(config.streamno),
-                                        npol(config.npol),
+                                        nopols_(config.npols),
+                                        nostokes_(config.stokes),
+                                        nostreams_(config.streamno),
                                         poolid_(poolid),
                                         d_rearrange_size(8 * config.batch * config.fftsize * config.timesavg * config.accumulate),
-                                        d_in_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
-                                        d_fft_size(config.batch * config.fftsize * config.timesavg * config.npol * config.accumulate),
+                                        d_in_size(config.batch * config.fftsize * config.timesavg * config.npols * config.accumulate),
+                                        d_fft_size(config.batch * config.fftsize * config.timesavg * config.npols * config.accumulate),
                                         d_time_scrunch_size((config.fftsize - 5) * config.batch * config.accumulate),
                                         d_freq_scrunch_size((config.fftsize - 5) * config.batch  * config.accumulate / config.freqavg),
                                         gulps_sent(0),
                                         gulps_processed(0),
-                                        working(true),
                                         scaled_(false),
                                         verbose_(config.verbose),
                                         record_(config.record),
 					packcount(0)
 
 {
-    avt = min(nostreams + 2, thread::hardware_concurrency());
+    havethreads_ = min(nostreams_ + 2, thread::hardware_concurrency());
 
     config_ = config;
 
@@ -125,14 +123,14 @@ void GpuPool::Initialise(void)
         cout_guard.unlock();
     }
 
-    p_dedisp = unique_ptr<DedispPlan>(new DedispPlan(filchansd4_, config_.tsamp, config_.ftop, config_.foff, gpuid));
-    p_mainbuffer = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
+    dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchansd4_, config_.tsamp, config_.ftop, config_.foff, gpuid));
+    filbuffer_ = unique_ptr<Buffer<float>>(new Buffer<float>(gpuid));
 
-    frame_times = new int[accumulate * nostreams];
+    frame_times = new int[accumulate_ * nostreams_];
     // every thread will be associated with its own CUDA streams
-    mystreams = new cudaStream_t[avt];
+    mystreams = new cudaStream_t[havethreads_];
     // each worker stream will have its own cuFFT plan
-    myplans = new cufftHandle[nostreams];
+    myplans = new cufftHandle[nostreams_];
 
     int nkernels = 4;
     CUDAthreads = new unsigned int[nkernels];
@@ -159,12 +157,12 @@ void GpuPool::Initialise(void)
     cdesc = cudaCreateChannelDesc<int2>();
     cudaCheckError(cudaPeekAtLastError());
 
-    d_array2Dp = new cudaArray*[nostreams];
-    texObj = new cudaTextureObject_t[nostreams];
-    rdesc = new cudaResourceDesc[nostreams];
-    tdesc = new cudaTextureDesc[nostreams];
-    for (int ii = 0; ii < nostreams; ii++) {
-        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg * accumulate));
+    d_array2Dp = new cudaArray*[nostreams_];
+    texObj = new cudaTextureObject_t[nostreams_];
+    rdesc = new cudaResourceDesc[nostreams_];
+    tdesc = new cudaTextureDesc[nostreams_];
+    for (int ii = 0; ii < nostreams_; ii++) {
+        cudaCheckError(cudaMallocArray(&(d_array2Dp[ii]), &cdesc, 7, (batchsize  / 7) * fftpoint * timeavg * accumulate_));
 
         memset(&(rdesc[ii]), 0, sizeof(cudaResourceDesc));
         rdesc[ii].resType = cudaResourceTypeArray;
@@ -183,18 +181,17 @@ void GpuPool::Initialise(void)
     sizes[0] = (int)fftpoint;
 
     // each stream will have its own incoming buffeer to read from
-    pack_per_buf = batchsize / 7 * accumulate * nostreams;
-    h_pol = new unsigned char[d_rearrange_size * nostreams];
+    pack_per_buf = batchsize / 7 * accumulate_ * nostreams_;
+    h_pol = new unsigned char[d_rearrange_size * nostreams_];
     bufidx_array = new bool[pack_per_buf]();
-    cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams * sizeof(unsigned char), cudaHostAllocDefault));
-    cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams * sizeof(cufftComplex)));
-    cudaCheckError(cudaMalloc((void**)&d_fft, d_fft_size * nostreams * sizeof(cufftComplex)));
+    cudaCheckError(cudaHostAlloc((void**)&h_in, d_rearrange_size * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
+    cudaCheckError(cudaMalloc((void**)&d_in, d_in_size * nostreams_ * sizeof(cufftComplex)));
+    cudaCheckError(cudaMalloc((void**)&d_fft, d_fft_size * nostreams_ * sizeof(cufftComplex)));
     // need to store all 4 Stoke parameters
-    dv_time_scrunch.resize(nostreams);
-    dv_freq_scrunch.resize(nostreams);
-    // TODO: make a private const data memmber and put in the initializer list!!
-    stokes = config_.stokes;
-    for (int ii = 0; ii < nostreams; ii++) {
+    dv_time_scrunch.resize(nostreams_);
+    dv_freq_scrunch.resize(nostreams_);
+
+    for (int ii = 0; ii < nostreams_; ii++) {
         dv_time_scrunch[ii].resize(d_time_scrunch_size * stokes);
         dv_freq_scrunch[ii].resize(d_freq_scrunch_size * stokes);
     }
@@ -224,20 +221,20 @@ void GpuPool::Initialise(void)
     // generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
-    p_dedisp->generate_dm_list(config_.dstart, config_.dend, 64.0f, 1.10f);
+    dedispplan_->generate_dm_list(config_.dstart, config_.dend, 64.0f, 1.10f);
     // this is the number of time sample - each timesample will have config.filchans frequencies
-    dedisp_totsamples = (size_t)config_.gulp + p_dedisp->get_max_delay();
+    dedisp_totsamples = (size_t)config_.gulp + dedispplan_->get_max_delay();
     dedisp_buffno = (dedisp_totsamples - 1) / config_.gulp + 1;
-    dedisp_buffsize = dedisp_buffno * config_.gulp + p_dedisp->get_max_delay();
+    dedisp_buffsize = dedisp_buffno * config_.gulp + dedispplan_->get_max_delay();
     if (verbose_)
         cout << "Total buffer size: " << dedisp_buffsize << endl;
     // can this method be simplified?
-    p_mainbuffer->allocate(accumulate, dedisp_buffno, p_dedisp->get_max_delay(), config_.gulp, dedisp_buffsize, filchansd4_, stokes);
-    //p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, filchansd4_, stokes);
-    //p_mainbuffer->allocate(accumulate, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, config_.filchans, stokes);
+    filbuffer_->allocate(accumulate_, dedisp_buffno, dedispplan_->get_max_delay(), config_.gulp, dedisp_buffsize, filchansd4_, stokes);
+    //filbuffer_->allocate(accumulate_, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, filchansd4_, stokes);
+    //filbuffer_->allocate(accumulate_, dedisp_buffno, 1, config_.gulp, dedisp_buffsize, config_.filchans, stokes);
     buffer_ready[0] = false;
     buffer_ready[1] = false;
-    p_dedisp->set_killmask(&config_.killmask[0]);
+    dedispplan_->set_killmask(&config_.killmask[0]);
     // everything should be ready for dedispersion after this point
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
@@ -250,17 +247,17 @@ void GpuPool::Initialise(void)
 
     // STAGE: start processing
     // FFT threads
-    for (int ii = 0; ii < nostreams; ii++) {
+    for (int ii = 0; ii < nostreams_; ii++) {
             cudaCheckError(cudaStreamCreate(&mystreams[ii]));
             // TODO: add separate error checking for cufft functions
-            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * npol * accumulate));
+            cufftCheckError(cufftPlanMany(&myplans[ii], 1, sizes, NULL, 1, fftpoint, NULL, 1, fftpoint, CUFFT_C2C, batchsize * timeavg * nopols_ * _));
             cufftCheckError(cufftSetStream(myplans[ii], mystreams[ii]));
             mythreads.push_back(thread(&GpuPool::FilterbankData, this, ii));
     }
 
     // dedispersion thread
-    cudaCheckError(cudaStreamCreate(&mystreams[avt - 2]));
-    mythreads.push_back(thread(&GpuPool::dedisp_thread, this, avt - 2));
+    cudaCheckError(cudaStreamCreate(&mystreams[havethreads_ - 2]));
+    mythreads.push_back(thread(&GpuPool::dedisp_thread, this, havethreads_ - 2));
 
     // STAGE: networking
     if (verbose_)
@@ -451,13 +448,13 @@ GpuPool::~GpuPool(void)
         scalefile.close();
     }
     // cleaning up the stuff
-    for (int ii = 0; ii < nostreams; ii++) {
+    for (int ii = 0; ii < nostreams_; ii++) {
         cudaCheckError(cudaDestroyTextureObject(texObj[ii]));
         cudaCheckError(cudaFreeArray(d_array2Dp[ii]));
     }
 
     // need deallocation in the dedisp buffer destructor as well
-    p_mainbuffer->deallocate();
+    filbuffer_->deallocate();
     // this stuff is deleted in order it appears in the code
     delete [] frame_times;
     delete [] mystreams;
@@ -490,7 +487,7 @@ GpuPool::~GpuPool(void)
     cudaCheckError(cudaFree(d_fft));
     cudaCheckError(cudaFreeHost(h_in));
 
-    for (int ii = 0; ii < nostreams; ii++) {
+    for (int ii = 0; ii < nostreams_; ii++) {
         cufftCheckError(cufftDestroy(myplans[ii]));
     }
 
@@ -533,13 +530,13 @@ void GpuPool::FilterbankData(int stream)
     float *pdv_time_scrunch = thrust::raw_pointer_cast(dv_time_scrunch[stream].data());
     float *pdv_freq_scrunch = thrust::raw_pointer_cast(dv_freq_scrunch[stream].data());
 
-    float **p_fil = p_mainbuffer->get_pfil();
+    float **p_fil = filbuffer_->get_pfil();
     float **pd_fil;
     cudaMalloc((void**)&pd_fil, stokes * sizeof(float *));
     cudaMemcpy(pd_fil, p_fil, stokes * sizeof(float *), cudaMemcpyHostToDevice);
 
-    int skip_read = stream * (pack_per_buf / nostreams);
-    int skip_to_end = (stream + 1) * (pack_per_buf / nostreams) - 1;
+    int skip_read = stream * (pack_per_buf / nostreams_);
+    int skip_to_end = (stream + 1) * (pack_per_buf / nostreams_) - 1;
     int next_start;
     if (stream != 3) {
         next_start = skip_to_end + 24;
@@ -562,33 +559,33 @@ void GpuPool::FilterbankData(int stream)
                 bufidx_array[next_start - ii] = false;
             }
             std::copy(h_pol + stream * d_rearrange_size,  h_pol + stream * d_rearrange_size + d_rearrange_size, h_in + stream * d_rearrange_size);;
-            for (int frameidx = 0; frameidx < accumulate; frameidx++) {
-                if (frame_times[stream * accumulate + frameidx] != 0) {
-                    current_frame = frame_times[stream * accumulate + frameidx];
+            for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
+                if (frame_times[stream * accumulate_ + frameidx] != 0) {
+                    current_frame = frame_times[stream * accumulate_ + frameidx];
                     break;
                 }
             }
-            for (int frameidx = 0; frameidx < accumulate; frameidx++)
-                frame_times[stream * accumulate + frameidx] = 0;
+            for (int frameidx = 0; frameidx < accumulate_; frameidx++)
+                frame_times[stream * accumulate_ + frameidx] = 0;
 
             obs_time frame_time{start_time.start_epoch, start_time.start_second, current_frame};
             cudaCheckError(cudaMemcpyToArrayAsync(d_array2Dp[stream], 0, 0, h_in + stream * d_rearrange_size, d_rearrange_size, cudaMemcpyHostToDevice, mystreams[stream]));
-            rearrange2<<<rearrange_b, rearrange_t, 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate);
+            rearrange2<<<rearrange_b, rearrange_t, 0, mystreams[stream]>>>(texObj[stream], d_in + skip, accumulate_);
             cufftCheckError(cufftExecC2C(myplans[stream], d_in + skip, d_fft + skip, CUFFT_FORWARD));
-            powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate);
-            //addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
-            //addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)filchans_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+            powertime2<<<48, 27, 0, mystreams[stream]>>>(d_fft + skip, pdv_time_scrunch, d_time_scrunch_size, timeavg, accumulate_);
+            //addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)config_.filchans, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate_);
+            //addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, (short)filchans_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate_, d_means_, d_rstdevs_);
             if (scaled_) {
-                addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate, d_means_, d_rstdevs_);
+                addchanscale<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate_, d_means_, d_rstdevs_);
             } else {
-                addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate);
+                addchannel2<<<CUDAblocks[3], CUDAthreads[3], 0, mystreams[stream]>>>(pdv_time_scrunch, pd_fil, filchansd4_, config_.gulp, dedisp_buffsize, dedisp_buffno, d_time_scrunch_size, freqavg, current_frame, accumulate_);
             }
             cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
             //cout << current_frame << endl;
             //cout.flush();
-            p_mainbuffer->update(frame_time);
+            filbuffer_->update(frame_time);
             //working_ = false;
         } else {
             std::this_thread::yield();
@@ -604,7 +601,7 @@ void GpuPool::SendForDedispersion(int dstream)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
-    int retaff = pthread_setaffinity_np(mythreads[nostreams].native_handle(), sizeof(cpu_set_t), &cpuset);
+    int retaff = pthread_setaffinity_np(mythreads[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         cout_guard.lock();
         cout << "Error setting thread affinity for dedisp thread" << endl;
@@ -620,7 +617,7 @@ void GpuPool::SendForDedispersion(int dstream)
         cout << "Dedisp thread up and running..." << endl;
     int ready{0};
     while(working_) {
-        ready = p_mainbuffer->ready();
+        ready = filbuffer_->ready();
         if (ready) {
             if (scaled_) {
                 header_f headerfil;
@@ -640,7 +637,7 @@ void GpuPool::SendForDedispersion(int dstream)
                 // TODO: this totally doesn't work when something is skipped
                 headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + 27 + (gulps_sent + 1)* config_.gulp * config_.tsamp);
                 // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
-                sendtime = p_mainbuffer->gettime(ready-1);
+                sendtime = filbuffer_->gettime(ready-1);
                 headerfil.tstart = get_mjd(sendtime.start_epoch, sendtime.start_second + 27 + sendtime.framet * config_.tsamp);
                 // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
                 headerfil.za = 0.0;
@@ -655,14 +652,14 @@ void GpuPool::SendForDedispersion(int dstream)
 
                 if (verbose_)
                     cout << ready - 1 << " buffer ready " << endl;
-                p_mainbuffer->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
-                p_mainbuffer->dump((gulps_sent % 2), headerfil, config_.outdir);
+                filbuffer_->send(d_dedisp, ready, mystreams[dstream], (gulps_sent % 2));
+                filbuffer_->dump((gulps_sent % 2), headerfil, config_.outdir);
                 gulps_sent++;
                 if ((int)(gulps_sent * dedisp_totsamples * config_.tsamp) >= record_)
                     working_ = false;
             }   else {
                 // perform the scaling
-                p_mainbuffer->rescale(ready, mystreams[dstream], d_means_, d_rstdevs_);
+                filbuffer_->rescale(ready, mystreams[dstream], d_means_, d_rstdevs_);
                 cudaCheckError(cudaGetLastError());
                 scaled_ = true;
                 ready = 0;
@@ -680,7 +677,7 @@ void GpuPool::receive_thread(int ii)
 {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 8 + 1 + nostreams + (int)(ii / 3), &cpuset);
+    CPU_SET((int)(poolid_) * 8 + 1 + nostreams_ + (int)(ii / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[ii].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         cout_guard.lock();
@@ -699,7 +696,7 @@ void GpuPool::receive_thread(int ii)
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
 
-    const int pack_per_worker_buf = pack_per_buf / nostreams;
+    const int pack_per_worker_buf = pack_per_buf / nostreams_;
     int numbytes{0};
     short fpga{0};
     short bufidx{0};
@@ -752,10 +749,10 @@ void GpuPool::receive_thread(int ii)
         // TODO: add some mininal checks later anyway
         //if (frame >= 131008) {
         // which half of the buffer to put the data in
-        bufidx = ((int)(frame / accumulate) % nostreams) * pack_per_worker_buf;
+        bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;
         // frame position in the half
-        bufidx += (frame % accumulate) * 48;
-        frame_times[frame % (accumulate * nostreams)] = frame;
+        bufidx += (frame % accumulate_) * 48;
+        frame_times[frame % (accumulate_ * nostreams_)] = frame;
         // frequency chunk in the frame
         bufidx += fpga;
         std::copy(rec_bufs[ii] + HEADER, rec_bufs[ii] + BUFLEN, h_pol + (BUFLEN - HEADER) * bufidx);

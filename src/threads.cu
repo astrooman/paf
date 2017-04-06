@@ -1,44 +1,20 @@
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
-#include <queue>
-#include <mutex>
-#include <random>
 #include <thread>
 #include <vector>
 
 #include <cuda.h>
 #include <cufft.h>
 
-#include "buffer.cuh"
 #include "config.hpp"
-#include "dedisp/dedisp.hpp"
-#include "dedisp/DedispPlan.hpp"
 #include "errors.hpp"
-#include "network.hpp"
 #include "ober_pool.cuh"
-#include "pdif.hpp"
 
-// Heimdall headers - including might be a bit messy
-#include <heimdall/params.hpp>
-#include <heimdall/pipeline.hpp>
-
-#include <boost/asio.hpp>
-#include <errno.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-using boost::asio::ip::udp;
 using std::cerr;
 using std::cout;
 using std::endl;
-using std::mutex;
-using std::queue;
-using string;
+using std::string;
 using std::thread;
 using std::vector;
 
@@ -121,6 +97,7 @@ int main(int argc, char *argv[])
 
     }
 
+    // TODO: Expand the configuration output a bit
     if (config.verbose) {
         cout << "Starting up. This may take few seconds..." << endl;
 
@@ -143,8 +120,6 @@ int main(int argc, char *argv[])
     }
 
     OberPool mypool(config);
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
 
     cudaDeviceReset();
 
