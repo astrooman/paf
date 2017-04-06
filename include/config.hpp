@@ -28,10 +28,14 @@ struct config_s {
     double tsamp;               // sampling time
 
     std::string outdir;
+    std::string source;
 
     std::vector<int> gpuids;
     std::vector<std::string> ips;
     std::vector<int> killmask;
+
+    std::vector<float> ra_start;
+    std::vector<float> dec_start;
 
     unsigned int accumulate;    // number of 108us complete chunks to process on the GPU at once
     unsigned int batch;
@@ -98,7 +102,6 @@ inline void read_config(string filename, config_s &config) {
         while(std::getline(inconfig, line)) {
             std::istringstream ossline(line);
             ossline >> paraname >> paravalue;
-            std::stringstream svalue;
 
             if (paraname == "DM_END") {
                 config.dend = stod(paravalue);
@@ -135,6 +138,18 @@ inline void read_config(string filename, config_s &config) {
                 config.streamno = (unsigned int)(stoi(paravalue));
             } else if (paraname == "TIME_AVERAGE") {
                 config.timesavg = (unsigned int)(stoi(paravalue));
+            } else if (paraname == "RA") {
+                std::stringstream svalue(paravalue);
+                std::string sep;
+                while (std::getline(svalue, sep, ','))
+                    config.ra_start.push_back(std::stof(sep));
+            } else if (paraname == "DEC") {
+                std::stringstream svalue(paravalue);
+                std::string sep;
+                while (std::getline(svalue, sep, ','))
+                    config.dec_start.push_back(std::stof(sep));
+            } else if (paraname == "SOURCE") {
+                config.source = paravalue;
             } else {
                 cout << "Error: unrecognised parameter: " << paraname << endl;
             }

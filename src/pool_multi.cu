@@ -587,6 +587,7 @@ void GPUpool::worker(int stream)
     }
     bool endready = false;
     bool innext = false;
+    int processed = 0;
     while (working_) {
         endready = false;
         innext = false;
@@ -625,10 +626,14 @@ void GPUpool::worker(int stream)
             cudaStreamSynchronize(mystreams[stream]);
             // used to check for any possible errors in the kernel execution
             cudaCheckError(cudaGetLastError());
+            processed++;
             //cout << current_frame << endl;
             //cout.flush();
             p_mainbuffer->update(frame_time);
-            //working_ = false;
+            // NOTE: Run only 128 kernels per stream
+            // Usedwhen running benchmarks
+            if (processed >= 128)
+                working_ = false;
         } else {
             std::this_thread::yield();
         }
@@ -664,17 +669,15 @@ void GPUpool::dedisp_thread(int dstream)
             if (scaled_) {
                 header_f headerfil;
                 headerfil.raw_file = "tastytastytest";
-                headerfil.source_name = "J1641-45";
-                headerfil.az = 0.0;
-                headerfil.dec = 0.0;
+                headerfil.source_name = config_.source;
                 // for channels in decreasing order 
                 headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchansd4_ * config_.foff;
                 headerfil.foff = -1.0 * abs(config_.foff);
                 // for channels in increasing order
                 // headerfil.fch1 = 1173.0 - (16.0 / 27.0);
                 // headerfil.foff = config_.foff;
-                headerfil.ra = 0.0;
-                headerfil.rdm = 0.0;
+                headerfil.ra = config_.ra_start.at(poolid_);
+                headerfil.rdm = config_.dec_start.at(poolid_);
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
                 headerfil.tstart = get_mjd(start_time.start_epoch, start_time.start_second + 27 + (gulps_sent + 1)* config_.gulp * config_.tsamp);
