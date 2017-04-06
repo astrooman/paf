@@ -289,7 +289,9 @@ void TestBand(int iport, std::string strip, int usebeam, int toread, unsigned in
             refepoch = (unsigned short)(rec_buf[12] >> 2);
             timestamp = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
             framestamp = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-            topframes[fpga] = framestamp + (timestamp - starttime) * 250000;
+            if (fpga == 8)
+                fpga--; 
+            topframes[fpga] = framestamp + (timestamp - starttime) / 27 * 250000;
             ipack++;
         }
     }
