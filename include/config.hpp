@@ -46,6 +46,7 @@ struct config_s {
     unsigned int filchans;      // number fo filterbank channels
     unsigned int freqavg;          // number of frequency channels to average
     unsigned int gulp;
+    unsigned int machine;
     unsigned int nchans;        // number of 1MHz channels
     unsigned int ngpus;         // number of GPUs to use
     unsigned int npol;
@@ -53,6 +54,7 @@ struct config_s {
     unsigned int record;        // number of seconds to record
     unsigned int stokes;        // number of Stokes parameters to output
     unsigned int streamno;      // number of CUDA streams for filterbanking
+    unsigned int telescope;
     unsigned int timesavg;         // number of time samples to average
 
 };
@@ -114,7 +116,7 @@ inline void read_config(string filename, config_s &config) {
                 config.freqavg = (unsigned int)(stoi(paravalue));
             } else if (paraname == "DEDISP_GULP") {
                 config.gulp = (unsigned int)(stoi(paravalue));
-            } else if (paraname == "GPU_IDS") {
+            } else if (paraname == "GPU_ID") {
                 std::stringstream svalue(paravalue);
                 string sep;
                 while(std::getline(svalue, sep, ','))
@@ -156,6 +158,10 @@ inline void read_config(string filename, config_s &config) {
                     config.beam.push_back(std::stoi(sep));  
             } else if (paraname == "SOURCE") {
                 config.source = paravalue;
+            } else if (paraname == "MACHINE_ID") {
+                config.machine = stoi(paravalue);
+            } else if (paraname == "TELESCOPE_ID") {
+                config.telescope = stoi(paravalue);
             } else {
                 cout << "Error: unrecognised parameter: " << paraname << endl;
             }

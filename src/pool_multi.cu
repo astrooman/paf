@@ -632,8 +632,8 @@ void GPUpool::worker(int stream)
             p_mainbuffer->update(frame_time);
             // NOTE: Run only 128 kernels per stream
             // Usedwhen running benchmarks
-            if (processed >= 128)
-                working_ = false;
+            //if (processed >= 128)
+            //    working_ = false;
         } else {
             std::this_thread::yield();
         }
@@ -688,12 +688,12 @@ void GPUpool::dedisp_thread(int dstream)
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = config_.beam.at(poolid_);;
-                headerfil.machine_id = 2;
+                headerfil.machine_id = config_.machine;
                 headerfil.nbeams = 1;
                 headerfil.nbits = 8;
                 headerfil.nchans = filchansd4_;
                 headerfil.nifs = 1;
-                headerfil.telescope_id = 2;
+                headerfil.telescope_id = config_.telescope;
 
                 if (verbose_)
                     cout << ready - 1 << " buffer ready " << endl;
