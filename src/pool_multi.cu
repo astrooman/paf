@@ -57,7 +57,7 @@ using std::vector;
 #define HEADER 64
 #define WORDS_PER_PACKET 896
 #define BUFLEN 7232
-#define PORTS 8
+#define PORTS 6
 
 mutex cout_guard;
 
@@ -687,7 +687,7 @@ void GPUpool::dedisp_thread(int dstream)
                 // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
-                headerfil.ibeam = beamno;
+                headerfil.ibeam = config_.beam.at(poolid_);;
                 headerfil.machine_id = 2;
                 headerfil.nbeams = 1;
                 headerfil.nbits = 8;

@@ -34,6 +34,7 @@ struct config_s {
     std::vector<std::string> ips;
     std::vector<int> killmask;
 
+    std::vector<int> beam;
     std::vector<float> ra_start;
     std::vector<float> dec_start;
 
@@ -148,6 +149,11 @@ inline void read_config(string filename, config_s &config) {
                 std::string sep;
                 while (std::getline(svalue, sep, ','))
                     config.dec_start.push_back(std::stof(sep));
+            } else if (paraname == "BEAM") {
+                std::stringstream svalue(paravalue);
+                std::string sep;
+                while (std::getline(svalue, sep, ','))
+                    config.beam.push_back(std::stoi(sep));  
             } else if (paraname == "SOURCE") {
                 config.source = paravalue;
             } else {
