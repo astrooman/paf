@@ -211,6 +211,7 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     for (int ii = 0; ii < stokes; ii++) {
         oss.str("");
         //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
+        // TODO: Change the naming scheme to utc_beam_I/Q/U/V.fil
         oss << stokesid[ii] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
         filename = outdir + "/" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";

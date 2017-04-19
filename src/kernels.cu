@@ -10,25 +10,7 @@
 
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
 
-__global__ void rearrange(cudaTextureObject_t texObj, cufftComplex * __restrict__ out)
-{
-    // this is currently the ugliest solution I can think of
-    // xidx is the channel number
-    int xidx = blockIdx.x * blockDim.x + threadIdx.x;
-    int yidx = blockIdx.y * 128;
-    int2 word;
-    //if ((xidx == 0) && (yidx == 0)) printf("In the rearrange kernel\n");
-    for (int sample = 0; sample < YSIZE; sample++) {
-         word = tex2D<int2>(texObj, xidx, yidx + sample);
-         printf("%i ", sample);
-         out[xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
-         out[xidx * 128 + 7 * yidx + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
-         out[336 * 128 + xidx * 128 + 7 * yidx + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
-         out[336 * 128 + xidx * 128 + 7 * yidx + sample].y = static_cast<float>(static_cast<short>(((word.x & 0xff00) >> 8) | ((word.x & 0xff) << 8)));
-    }
-}
-
-__global__ void rearrange2(cudaTextureObject_t texObj, cufftComplex * __restrict__ out, unsigned int acc)
+__global__ void RearrangeKernel(cudaTextureObject_t texObj, cufftComplex * __restrict__ out, unsigned int acc)
 {
 
     int xidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -101,7 +83,7 @@ __global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsi
     //printf("S1 freq sum %f\n", out[idx]);
 }
 
-__global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
+__global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int extra = totsize - gulpno * gulp;
@@ -171,7 +153,7 @@ __global__ void addchannel2(float* __restrict__ in, float** __restrict__ out, sh
 */
 }
 
-__global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc, float **means, float **rstdevs) {
+__global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc, float **means, float **rstdevs) {
 
     // the number of threads is equal to the number of output channels
     // each 'idx' is responsible for one output frequency channel
@@ -181,7 +163,7 @@ __global__ void addchanscale(float* __restrict__ in, float** __restrict__ out, s
     // thats the starting save position for the chunk of length acc time samples
     int saveidx;
 
-    float tmp0, tmp1, tmp2, tmp3;   
+    float tmp0, tmp1, tmp2, tmp3;
 
     int inskip;
 
@@ -296,7 +278,7 @@ __global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out
    printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
 }
 
-__global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
+__global__ void GetPowerAddTimeKernel(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
 
     int idx1, idx2;
     int outidx;
@@ -333,7 +315,7 @@ __global__ void powertime2(cufftComplex* __restrict__ in, float* __restrict__ ou
 
 // initialise the scale factors
 // memset is slower than custom kernels and not safe for anything else than int
-__global__ void initscalefactors(float **means, float **rstdevs, int stokes) {
+__global__ void InitScaleFactors(float **means, float **rstdevs, int stokes) {
     // the scaling is (in - mean) * rstdev + 64.0f
     // and I want to get the original in back in the first running
     // will therefore set the mean to 64.0f and rstdev to 1.0f
