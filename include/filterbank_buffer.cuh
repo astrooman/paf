@@ -60,7 +60,7 @@ class FilterbankBuffer
         void Allocate(int acc_u, int gulpno_u, size_t extra_u, size_t gulp_u, size_t size_u, int filchans, int stokes_u);
         void deallocate(void);
         void SendToDisk(int idx, header_f head, std::string outdir);
-        float **get_pfil(void) {return this->pd_filterbank;};
+        float **GetFilPointer(void) {return this->pd_filterbank;};
         ObsTime gettime(int index);
         int ready();
         void GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);

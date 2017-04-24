@@ -34,13 +34,13 @@ class GpuPool
         const unsigned int accumulate_;              //!< The number of 108us chunks to accumulate for the GPU processing
         const unsigned int avgfreq_;                 //!< Number of post-FFT frequency channels to average
         const unsigned int avgtime_;                 //!< Number of post-FFT time samples to average
-        const unsigned int codiflen_;
+        const unsigned int codiflen_;               //!< Length (in bytes) of the single CODIF data packet (just data, no header)
         const unsigned int fftbatchsize_;            //!< The number of 1MHz channels to process
         const unsigned int fftedsize_;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations        const unsigned int timescrunchedsize_;     //!< (size of single fft - 5) * # 1MHz channels
         const unsigned int fftpoints_;               //!< Size of the single FFT
         const unsigned int freqscrunchedsize_;     //!< timescrunchedsize_ / # frequency channels to average
         const unsigned int gpuid_;                      //!< Self-explanatory
-        const unsigned int headlen_;
+        const unsigned int headlen_;                //!< Length (in bytes) of the CODIF header
         const unsigned int inbuffsize_;
         const unsigned int inchans_;                 //!< Number of 1MHz channels in the input data
         const unsigned int nopols_;                  //!< Number of polarisations in the input data
@@ -55,9 +55,14 @@ class GpuPool
 
         cudaStream_t dedispstream_;
 
+        hd_pipeline singlepipeline_;
+        hd_params singleparams_;
+
         InConfig config_;
 
         int fftsizes_[1];                   //<! Used to store GpuPool::fftpoint - cufftPlanMany() requirement
+
+        ObsTime starttime_;
 
         std::string ipstring_;
 
@@ -68,7 +73,9 @@ class GpuPool
         unsigned int dedispgulpsamples_;
         unsigned int dedispnobuffers_;
         unsigned int filchans_;                //!< Number of output filterbank channels
+        unsigned int gulpssent_;
         unsigned int packperbuffer_;
+        unsigned int secondstorecord_;
         unsigned int usethreads_;
 
         std::vector<int> ports_;
@@ -85,10 +92,14 @@ class GpuPool
         cudaTextureObject_t *arrangetexobj_;
         cufftHandle *fftplans_;           //<! Pointer to the array of cuFFT plans
 
-        float **hmeans_;
-        float **hrstdevs_;
+        float **dfreqscrunchedbuffer_;
         float **dmeans_;
         float **drstdevs_;
+        float **dtimescrunchedbuffer_;
+        float **hfreqscrunchedbuffer_;
+        float **hmeans_;
+        float **hrstdevs_;
+        float **dtimescrunchedbuffer_;
 
         int *filedesc_;
 
@@ -100,30 +111,20 @@ class GpuPool
         unsigned char *hstreambuffer_;       //!< Raw voltage host buffer, async copied to dstreambuffer_ in the GpuPool::worker()
         unsigned char **receivebuffers_;
 
+        unsigned int *cudablocks_;       //<! Pointer to the array of block layouts for different kernels
         unsigned int *cudathreads_;      //<! Pointer to the array of thread layouts for different kernels
 
         // NOTE: Old, bad names
 
-        //DedispPlan dedisp;
-        hd_pipeline pipeline;
-        hd_params params;
-        int packcount;
         vector<thrust::device_vector<float>> dv_time_scrunch;   //!< Time scrunched buffer, addtime() kernel output, addchannel() kernel input; holds GpuPool::nostreams_ device vectors, each holding GpuPool::timescrunchedsize_ * GpuPool::stokes elements
         vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GpuPool::nostreams_ device vectors, each holding GpuPool::freqscrunchedsize_ * GpuPool::stokes elements
 
-        // networking
-
-        // SCALING
-
-        ObsTime start_time;
         bool *readybuffidx_;
-        bool working;
-        int record_;
 
         unsigned int filsize;
         // polarisations buffer
         int pol_begin;
-        int *frame_times;               //!< Array for the absolute frame numbers for given buffers
+        unsigned int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
         // GPU and thread stuff
         // raw voltage buffers
         // dstreambuffer_ is a cufftExecC2C() input
@@ -144,13 +145,6 @@ class GpuPool
         unsigned char *d_dedisp;        //!< Not in use in the dump mode
         unsigned char *d_search;        //!< Not in use in the dump mode
 
-        unsigned int gulps_sent;
-        unsigned int gulps_processed;
-        size_t highest_buf;
-        size_t highest_frame;
-        std::mutex datamutex;
-        std::mutex workmutex;
-        unsigned int *cudablocks_;       //<! Pointer to the array of block layouts for different kernels
 
     protected:
 

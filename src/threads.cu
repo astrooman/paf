@@ -20,7 +20,7 @@ using std::vector;
 
 int main(int argc, char *argv[])
 {
-    string config_file;
+    string configfile;
     InConfig config;
     SetDefaultConfig(config);
 
@@ -29,8 +29,8 @@ int main(int argc, char *argv[])
         for (int iarg = 0; iarg < argc; iarg  ++) {
             if (string(argv[iarg]) == "--config") {      // configuration file
                 iarg++;
-                config_file = string(argv[iarg]);
-                ReadConfig(config_file, config);
+                configfile = string(argv[iarg]);
+                ReadConfig(configfile, config);
             } else if (string(argv[iarg]) == "-c") {      // the number of chunks to process
                 iarg++;
                 config.chunks = atoi(argv[iarg]);

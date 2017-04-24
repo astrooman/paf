@@ -1,14 +1,28 @@
 #include <stdio.h>
 
-#include <kernels.cuh>
+#include "kernels.cuh"
 
 #define XSIZE 7
 #define YSIZE 128
 #define ZSIZE 48
 
-// __restrict__ tells the compiler there is no memory overlap
-
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
+
+// NOTE: Initialise the scaling factors
+// Use custom kernel as CUDA memset is slower and not safe for anything else than int
+__global__ void InitScaleFactors(float **means, float **rstdevs, int stokes) {
+    // NOTE: The scaling is (in - mean) * rstdev + 64.0f
+    // I want to get the original in back in the first running
+    // Will therefore set the mean to 64.0f and rstdev to 1.0f
+
+    // NOTE: Each thread responsible for one channel
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    for (int istoke = 0; istoke < stokes; istoke++) {
+        means[istoke][idx] = 64.0f;
+        rstdevs[istoke][idx] = 1.0f;
+    }
+}
 
 __global__ void RearrangeKernel(cudaTextureObject_t texObj, cufftComplex * __restrict__ out, unsigned int acc)
 {
@@ -19,10 +33,10 @@ __global__ void RearrangeKernel(cudaTextureObject_t texObj, cufftComplex * __res
     int skip;
     int2 word;
 
-    for (int ac = 0; ac < acc; ac++) {
-        skip = 336 * 128 * 2 * ac;
+    for (int iac = 0; iac < acc; iac++) {
+        skip = 336 * 128 * 2 * iac;
         for (int sample = 0; sample < YSIZE; sample++) {
-            word = tex2D<int2>(texObj, xidx, yidx + ac * 48 * 128 + sample);
+            word = tex2D<int2>(texObj, xidx, yidx + iac * 48 * 128 + sample);
             out[skip + chanidx * YSIZE * 2 + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
             out[skip + chanidx * YSIZE * 2 + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
             out[skip + chanidx * YSIZE * 2 + YSIZE + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
@@ -31,56 +45,37 @@ __global__ void RearrangeKernel(cudaTextureObject_t texObj, cufftComplex * __res
     }
 }
 
+__global__ void GetPowerAddTimeKernel(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
 
-__global__ void addtime(float *in, float *out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
-{
+    int idx1, idx2;
+    int outidx;
+    int skip1, skip2;
+    float power1, power2;
+    float avgfactor= 1.0f / factort;
 
-    // index will tell which 1MHz channel we are taking care or
-    // use 1 thread per 1MHz channel
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    //if (idx == 0) printf("In the time kernel\n");
+    for (int iac = 0; iac < acc; iac++) {
+        skip1 = iac * 336 * 128 * 2;
+        skip2 = iac * 336 * 27;
+            for (int ichan = 0; ichan < 7; ichan++) {
+            outidx = skip2 + 7 * 27 * blockIdx.x + ichan * 27 + threadIdx.x;
+            out[outidx] = (float)0.0;
+            out[outidx + jump] = (float)0.0;
+            out[outidx + 2 * jump] = (float)0.0;
+            out[outidx + 3 * jump] = (float)0.0;
 
-    for(int ch = 0; ch < 27; ch++) {
-	// have to restart to 0, otherwise will add to values from previous execution
-        out[idx * 27 + ch] = (float)0.0;
-        out[idx * 27 + ch + jumpout] = (float)0.0;
-        out[idx * 27 + ch + 2 * jumpout] = (float)0.0;
-        out[idx * 27 + ch + 3 * jumpout] = (float)0.0;
+            idx1 = skip1 + 256 * (blockIdx.x * 7 + ichan);
 
-        for (int t = 0; t < factort; t++) {
-            out[idx * 27 + ch] += in[idx * 128 + ch + t * 32];
-            //printf("S1 time sum %f\n", out[idx * 27 + ch]);
-            out[idx * 27 + ch + jumpout] += in[idx * 128 + ch + t * 32 + jumpin];
-            out[idx * 27 + ch + 2 * jumpout] += in[idx * 128 + ch + t * 32 + 2 * jumpin];
-            out[idx * 27 + ch + 3 * jumpout] += in[idx * 128 + ch + t * 32 + 3 * jumpin];
+            for (int itime = 0; itime < factort; itime++) {
+                idx2 = threadIdx.x + itime * 32;
+                power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
+                power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
+                out[outidx] += (power1 + power2) * avgfactor;
+                out[outidx + jump] += (power1 - power2) * avgfactor;
+                out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y)) * avgfactor;
+                out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x)) * avgfactor;
+            }
         }
     }
-}
-
-/*__global__ void addtime(float* __restrict__ int, float* __restrict__ out, unsigned int jumpin, unsigned int jumpout, unsigned int factort)
-{
-
-
-} */
-
-__global__ void addchannel(float* __restrict__ in, float* __restrict__ out, unsigned int jumpin, unsigned int jumpout, unsigned int factorc) {
-
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    //if (idx == 0) printf("In the channel kernel\n");
-
-    out[idx] = (float)0.0;
-    out[idx + jumpout] = (float)0.0;
-    out[idx + 2 * jumpout] = (float)0.0;
-    out[idx + 3 * jumpout] = (float)0.0;
-
-    for (int ch = 0; ch < factorc; ch++) {
-        out[idx] += in[idx * factorc + ch];
-        out[idx + jumpout] += in[idx * factorc + ch + jumpin];
-        out[idx + 2 * jumpout] += in[idx * factorc + ch + 2 * jumpin];
-        out[idx + 3 * jumpout] += in[idx * factorc + ch + 3 * jumpin];
-    }
-
-    //printf("S1 freq sum %f\n", out[idx]);
 }
 
 __global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
@@ -92,9 +87,9 @@ __global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ o
 
     int inskip;
 
-    for (int ac = 0; ac < acc; ac++) {
+    for (int iac = 0; iac < acc; iac++) {
         saveidx = (framet % (gulpno * gulp)) * nchans + idx;
-        inskip = ac * 27 * 336;
+        inskip = iac * 27 * 336;
 
         out[0][saveidx] = (float)0.0;
         out[1][saveidx] = (float)0.0;
@@ -102,18 +97,18 @@ __global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ o
         out[3][saveidx] = (float)0.0;
 
         if ((framet % (gulpno * gulp)) >= extra) {
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ch];
-                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            for (int ichan = 0; ichan < factorc; ichan++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ichan];
+                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
             }
         } else {
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ch];
-                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            for (int ichan = 0; ichan < factorc; ichan++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ichan];
+                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
             }
             // save in two places -save in the extra bit
             out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
@@ -123,40 +118,12 @@ __global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ o
             }
         framet++;
     }
-    // not a problem - earch thread in a warp uses the same branch
-/*    if ((framet % totsize) < gulpno * gulp) {
-        for (int ac = 0; ac < acc; ac++) {
-            inskip = ac * 27 * 336;
-            outskip = ac * 27 * 336 / factorc;
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][outskip + saveidx] += in[inskip + idx * factorc + ch];
-                out[1][outskip + saveidx] += in[inskip + idx * factorc + ch + jumpin];
-                out[2][outskip + saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
-                out[3][outskip + saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
-            }
-        }
-    } else {
-        for (int ac = 0; ac < acc; ac++) {
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][outskip + saveidx] += in[idx * factorc + ch];
-                out[1][outskip + saveidx] += in[idx * factorc + ch + jumpin];
-                out[2][outskip + saveidx] += in[idx * factorc + ch + 2 * jumpin];
-                out[3][outskip + saveidx] += in[idx * factorc + ch + 3 * jumpin];
-            }
-            // save in two places - wrap wround to the start of the buffer
-            out[0][outskip + saveidx - (gulpno * gulp * nchans)] = out[0][outskip + saveidx];
-            out[1][outskip + saveidx - (gulpno * gulp * nchans)] = out[1][outskip + saveidx];
-            out[2][outskip + saveidx - (gulpno * gulp * nchans)] = out[2][outskip + saveidx];
-            out[3][outskop + saveidx - (gulpno * gulp * nchans)] = out[3][outskip + saveidx];
-        }
-    }
-*/
 }
 
 __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc, float **means, float **rstdevs) {
 
-    // the number of threads is equal to the number of output channels
-    // each 'idx' is responsible for one output frequency channel
+    // NOTE: The number of threads is equal to the number of output channels
+    // Each 'idx' is responsible for one output frequency channel
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int extra = totsize - gulpno * gulp;
     float avgfactor = 1.0f / factorc;
@@ -167,27 +134,28 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
 
     int inskip;
 
-    for (int ac = 0; ac < acc; ac++) {
-        // channels in increasing order
+    for (int iac = 0; iac < acc; iac++) {
+        // NOTE: Channels in increasing order
         // saveidx = (framet % (gulpno * gulp)) * nchans + idx;
         // channels in decreasing order
         saveidx = (framet % (gulpno * gulp)) * nchans + nchans - (idx + 1);
-        inskip = ac * 27 * 336;
+        inskip = iac * 27 * 336;
 
         out[0][saveidx] = (float)0.0;
         out[1][saveidx] = (float)0.0;
         out[2][saveidx] = (float)0.0;
         out[3][saveidx] = (float)0.0;
 
-        // use scaling of the form
+        // NOTE: Use scaling of the form
         // out = (in - mean) / stdev * 32 + 64;
         // rstdev = (1 / stdev) * 32 to reduce the number of operations
         if ((framet % (gulpno * gulp)) >= extra) {
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ch];
-                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            // NOTE: Save in one place in the filterbank buffer
+            for (int ichan = 0; ichan < factorc; ichan++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ichan];
+                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
             }
             // scaling
             out[0][saveidx] = (out[0][saveidx] * avgfactor - means[0][idx]) * rstdevs[0][idx] + 64.0f;
@@ -195,13 +163,14 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
             out[2][saveidx] = (out[2][saveidx] * avgfactor - means[2][idx]) * rstdevs[2][idx] + 64.0f;
             out[3][saveidx] = (out[3][saveidx] * avgfactor - means[3][idx]) * rstdevs[3][idx] + 64.0f;
         } else {
-            for (int ch = 0; ch < factorc; ch++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ch];
-                out[1][saveidx] += in[inskip + idx * factorc + ch + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ch + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ch + 3 * jumpin];
+            // NOTE: Save in two places in the filterbank buffer
+            for (int ichan = 0; ichan < factorc; ichan++) {
+                out[0][saveidx] += in[inskip + idx * factorc + ichan];
+                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
+                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
+                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
             }
-            // scaling
+
             out[0][saveidx] = (out[0][saveidx] * avgfactor - means[0][idx]) * rstdevs[0][idx] + 64.0f;
             out[1][saveidx] = (out[1][saveidx] * avgfactor - means[1][idx]) * rstdevs[1][idx] + 64.0f;
             out[2][saveidx] = (out[2][saveidx] * avgfactor - means[2][idx]) * rstdevs[2][idx] + 64.0f;
@@ -216,7 +185,6 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
             out[3][saveidx] = fmaxf(0.0, out[0][saveidx]);
             out[3][saveidx] = fminf(255, out[0][saveidx]);
 
-            // save in two places -save in the extra bit
             out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
             out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
             out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
@@ -224,159 +192,5 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
         }
         framet++;
     }
-
-}
-__global__ void powerscale(cufftComplex *in, float *out, unsigned int jump)
-{
-
-    int idx1 = blockIdx.x * blockDim.x + threadIdx.x;
-    //if (idx1 == 0) printf("In the power kernel\n");
-    // offset introduced, jump to the B polarisation data - can cause some slowing down
-    int idx2 = idx1 + jump;
-    // these calculations assume polarisation is recorded in x,y base
-    // i think the if statement is unnecessary as the number of threads for this
-    // kernel 0s fftpoint * timeavg * nchans, which is exactly the size of the output array
-    if (idx1 < jump) {      // half of the input data
-        float power1 = (in[idx1].x * in[idx1].x + in[idx1].y * in[idx1].y) * fftfactor;
-        float power2 = (in[idx2].x * in[idx2].x + in[idx2].y * in[idx2].y) * fftfactor;
-        out[idx1] = (power1 + power2); // I; what was this doing here? / 2.0;
-        //printf("Input numbers for %i and %i with jump %i: %f %f %f %f, with power %f\n", idx1, idx2, jump, in[idx1].x, in[idx1].y, in[idx2].x, in[idx2].y, out[idx1]);
-        out[idx1 + jump] = (power1 - power2); // Q
-        out[idx1 + 2 * jump] = 2 * fftfactor * (in[idx1].x * in[idx2].x + in[idx1].y * in[idx2].y); // U
-        out[idx1 + 3 * jump] = 2 * fftfactor * (in[idx1].x * in[idx2].y - in[idx1].y * in[idx2].x); // V
-    }
-}
-
-__global__ void powertime(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort)
-{
-    // 1MHz channel ID
-    int idx1 = blockIdx.x;
-    // 'small' channel ID
-    int idx2 = threadIdx.x;
-    float power1;
-    float power2;
-
-    idx1 = idx1 * YSIZE * 2;
-    int outidx = 27 * blockIdx.x + threadIdx.x;
-
-    out[outidx] = (float)0.0;
-    out[outidx + jump] = (float)0.0;
-    out[outidx + 2 * jump] = (float)0.0;
-    out[outidx + 3 * jump] = (float)0.0;
-
-    for (int ii = 0; ii < factort; ii++) {
-        idx2 = threadIdx.x + ii * 32;
-	power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
-        power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
-	out[outidx] += (power1 + power2);
-        out[outidx + jump] += (power1 - power2);
-        out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y));
-        out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x));
-
-    }
-
-   printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
-}
-
-__global__ void GetPowerAddTimeKernel(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
-
-    int idx1, idx2;
-    int outidx;
-    int skip1, skip2;
-    float power1, power2;
-    float avgfactor= 1.0f / factort;
-
-    for (int ac = 0; ac < acc; ac++) {
-        skip1 = ac * 336 * 128 * 2;
-        skip2 = ac * 336 * 27;
-        for (int ii = 0; ii < 7; ii++) {
-            outidx = skip2 + 7 * 27 * blockIdx.x + ii * 27 + threadIdx.x;
-            out[outidx] = (float)0.0;
-            out[outidx + jump] = (float)0.0;
-            out[outidx + 2 * jump] = (float)0.0;
-            out[outidx + 3 * jump] = (float)0.0;
-
-            idx1 = skip1 + 256 * (blockIdx.x * 7 + ii);
-
-            for (int jj = 0; jj < factort; jj++) {
-                idx2 = threadIdx.x + jj * 32;
-                power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
-                power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
-        	out[outidx] += (power1 + power2) * avgfactor;
-                out[outidx + jump] += (power1 - power2) * avgfactor;
-                out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y)) * avgfactor;
-                out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x)) * avgfactor;
-            }
-        }
-    }
-
-//    printf("%i, %i: %i\n", blockIdx.x, threadIdx.x, out[outidx]);
-}
-
-// initialise the scale factors
-// memset is slower than custom kernels and not safe for anything else than int
-__global__ void InitScaleFactors(float **means, float **rstdevs, int stokes) {
-    // the scaling is (in - mean) * rstdev + 64.0f
-    // and I want to get the original in back in the first running
-    // will therefore set the mean to 64.0f and rstdev to 1.0f
-
-    // each thread responsible for one channel
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    for (int ii = 0; ii < stokes; ii++) {
-        means[ii][idx] = 64.0f;
-        rstdevs[ii][idx] = 1.0f;
-    }
-}
-
-// filterbank data saved in the format t1c1,t1c2,t1c3,...
-// need to transpose to t1c1,t2c1,t3c1,... for easy and efficient scaling kernel
-__global__ void transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes) {
-
-    // very horrible implementation or matrix transpose
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int start = idx * ntimes;
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        out[start + tsamp] = in[idx + tsamp * nchans];
-    }
-}
-
-__global__ void scale_factors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
-    // calculates mean and standard deviation in every channel
-    // assumes the data has been transposed
-
-    // for now have one thread per frequency channel
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float mean;
-    float variance;
-
-    float ntrec = 1.0f / (float)ntimes;
-    float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
-
-    unsigned int start = idx * ntimes;
-    mean = 0.0f;
-    variance = 0.0;
-    // two-pass solution for now
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        mean += in[start + tsamp] * ntrec;
-    }
-    means[param][idx] = mean;
-
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
-    }
-    variance *= ntrec1;
-    // reciprocal of standard deviation
-    // multiplied by the desired standard deviation of the scaled data
-    // reduces the number of operations that have to be done on the GPU
-    rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
-    // to avoid inf when there is no data in the channel
-    if (means[param][idx] == 0)
-        rstdevs[param][idx] = 0;
-}
-
-__global__ void bandpass() {
-
-
 
 }
