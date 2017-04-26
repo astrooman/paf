@@ -5,7 +5,6 @@
 #include <iostream>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -29,6 +28,7 @@
 #include "kernels.cuh"
 #include "obs_time.hpp"
 #include "pdif.hpp"
+#include "print_safe.hpp"
 
 #include <inttypes.h>
 #include <errno.h>
@@ -40,27 +40,13 @@
 #include <unistd.h>
 #include <signal.h>
 
-using std::cout;
 using std::endl;
-using std::lock_guard;
-using std::mutex;
 using std::string;
 using std::thread;
 using std::unique_ptr;
 using std::vector;
 
 bool GpuPool::working_ = true;
-
-void SafeCout(string instring) {
-    mutex printmutex;
-    lock_guard<mutex> guard(printmutex);
-    cout << instring << endl;
-}
-
-// TODO: Could I do it this way?
-std::ostream& operator<<(std::ostream &ostr, string outstr) {
-
-}
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         avgfreq_(config.freqavg),
@@ -96,12 +82,8 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
 
     config_ = config;
 
-    if (verbose_) {
-        cout_guard.lock();
-        cout << "Starting GPU pool " << gpuid_ << endl;
-	    cout.flush();
-        cout_guard.unlock();
-    }
+    if (verbose_)
+        PrintSafe("Starting GPU pool", gpuid_);
 }
 
 void GpuPool::Initialise(void) {
@@ -123,19 +105,11 @@ void GpuPool::Initialise(void) {
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
-    // TODO: Use a function for priting things out with a mutex
-    // Variadic templates?
-    if (retaff != 0) {
-        cout_guard.lock();
-        cerr << "Error setting thread affinity for the GPU pool " << gpuid_ << endl;
-        cout_guard.unlock();
-    }
+    if (retaff != 0)
+        PrintSafe("Error setting thread affinity for the GPU pool", poolid_);
 
-    if(verbose_) {
-        cout_guard.lock();
-        cout << "GPU pool for device " << gpuid_ << " running on CPU " << sched_getcpu() << endl;
-        cout_guard.unlock();
-    }
+    if (verbose_)
+        PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
 
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer<float>>(new FilterbankBuffer<float>(gpuid_));
@@ -162,7 +136,7 @@ void GpuPool::Initialise(void) {
 
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     if (verbose_)
-        cout << "Preparing the memory..." << endl;
+        PrintSafe("Preparing the memory on pool", poolid_ "...");
 
     arrangechandesc_ = cudaCreateChannelDesc<int2>();
     cudaCheckError(cudaPeekAtLastError());
@@ -246,14 +220,12 @@ void GpuPool::Initialise(void) {
     dedispdispersedsamples_ = (size_t)dedispgulpsamples_ + dedispextrasamples_;
     dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
-    if (verbose_)
-        cout << "Total buffer size: " << dedispbuffersize_ << endl;
     filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_);
     dedispplan_->set_killmask(&config_.killmask[0]);
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
     if (verbose_)
-        cout << "Setting up dedispersion and single pulse search..." << endl;
+        PrintSafe("Setting up dedispersion and single pulse search on pool", poolid_, "...");
 
     set_search_params(singleparams_, config_);
     // NOTE: Commented out for the filterbank dump mode
@@ -274,7 +246,7 @@ void GpuPool::Initialise(void) {
 
     // STAGE: Networking
     if (verbose_)
-        cout << "Setting up networking..." << endl;
+        PrintSafe("Setting up networking on pool", poolid_, "...");
 
     int netrv;
     addrinfo hints, *servinfo, *tryme;
@@ -296,49 +268,28 @@ void GpuPool::Initialise(void) {
     for (int iport = 0; iport < noports_; iport++) {
         // TODO: Read port numbers from the config file
         oss.str("");
-        oss << port_.at(iport);
+        oss << ports_.at(iport);
         strport = oss.str();
 
-        if((netrv = getaddrinfo(ipstring_.c_str(), strport.c_str(), &hints, &servinfo)) != 0) {
-            cout_guard.lock();
-            cerr <<  "getaddrinfo() error: " << gai_strerror(netrv) << endl;
-            cout_guard.unlock();
-        }
+        if ((netrv = getaddrinfo(ipstring_.c_str(), strport.c_str(), &hints, &servinfo)) != 0)
+            PrintSafe("getaddrinfo() error:", gai_strerror(netrv), "on pool", poolid_);
 
         for (tryme = servinfo; tryme != NULL; tryme=tryme->ai_next) {
             if((filedesc_[iport] = socket(tryme->ai_family, tryme->ai_socktype, tryme->ai_protocol)) == -1) {
-                cout_guard.lock();
-                cerr << "Socket error\n";
-                cout_guard.unlock();
+                PrintSafe("Socket error on pool", poolid_);
                 continue;
             }
 
-            if(bind(filedesc_[iport], tryme->ai_addr, tryme->ai_addrlen) == -1) {
+            if (bind(filedesc_[iport], tryme->ai_addr, tryme->ai_addrlen) == -1) {
                 close(filedesc_[iport]);
-                cout_guard.lock();
-                cerr << "Bind error\n";
-                cout_guard.unlock();
+                PrintSafe("Bind error on pool", poolid_);
                 continue;
             }
             break;
         }
 
-        if (tryme == NULL) {
-            cout_guard.lock();
-            cerr << "Failed to bind to the socket " << 17100 + iport << "\n";
-            cout_guard.unlock();
-        }
-    }
-
-    int bufres{4*1024*1024};    // 4MB
-
-    for (int iport = 0; iport < noports_; iport++) {
-        if(setsockopt(filedesc_[iport], SOL_SOCKET, SO_RCVBUF, (char *)&bufres, sizeof(bufres)) != 0) {
-            cout_guard.lock();
-            cerr << "Setsockopt error on port " << 17100 + iport << endl;
-            cerr << "Errno " << errno << endl;
-            cout_guard.unlock();
-        }
+        if (tryme == NULL)
+            PrintSafe("Failed to bind to the socket", ports_.at(iport), "on pool", poolid_);
     }
 
     for (int iport = 0; iport < noports_; iport++)
@@ -347,9 +298,6 @@ void GpuPool::Initialise(void) {
 }
 
 GpuPool::~GpuPool(void) {
-    // TODO: clear the memory properly
-    if (verbose_)
-        cout << "Calling destructor" << endl;
 
     for(int ithread = 0; ithread < gputhreads_.size(); ithread++)
         gputhreads_[ithread].join();
@@ -436,8 +384,9 @@ GpuPool::~GpuPool(void) {
 
 void GpuPool::HandleSignal(int signum) {
 
-    cout << "Captured the signal\nWill now terminate!\n";
+    PrintSafe("Captured the signal!\nWill now terminate!\n");
     working_ = false;
+
 }
 
 void GpuPool::FilterbankData(int stream) {
@@ -447,17 +396,11 @@ void GpuPool::FilterbankData(int stream) {
     CPU_SET((int)(poolid_) * 8 + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
-    if (retaff != 0) {
-        cout_guard.lock();
-        cerr << "Error setting thread affinity for stream " << stream << endl;
-        cout_guard.unlock();
-    }
+    if (retaff != 0)
+        PrintSafe("Error setting thread affinity for stream", stream, "on pool", poolid_);
 
-    if (verbose_) {
-        cout_guard.lock();
-        cout << "Starting worker " << gpuid_ << ":" << stream << " on CPU " << sched_getcpu() << endl;
-        cout_guard.unlock();
-    }
+    if (verbose_)
+        PrintSafe("Starting worker", stream, "on pool", poolid_, "on CPU", sched_getcpu());
 
     cudaSetDevice(gpuid_);
     dim3 rearrange_b(1,48,1);
@@ -489,7 +432,6 @@ void GpuPool::FilterbankData(int stream) {
         endready = false;
         innext = false;
         for (int iidx = 0; iidx < 4; iidx++) {
-            //cout << readybuffidx_[skip_to_end - iidx] << " " << readybuffidx_[skip_to_end + 24 - iidx] << endl;
             endready = endready || readybuffidx_[skip_to_end - iidx];
             innext = innext || readybuffidx_[next_start - iidx];
         }
@@ -534,17 +476,15 @@ void GpuPool::SendForDedispersion(void) {
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (retaff != 0) {
-        cout_guard.lock();
-        cout << "Error setting thread affinity for dedisp thread" << endl;
-        cout_guard.unlock();
-    }
+    if (retaff != 0)
+        PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
 
     ObsTime sendtime;
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
-        cout << "Dedisp thread up and running..." << endl;
+        PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
+
     int ready{0};
     while(working_) {
         ready = filbuffer_->ready();
@@ -567,10 +507,8 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
                 headerfil.tstart = get_mjd(starttime_.start_epoch, starttime_.start_second + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
-                // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
                 sendtime = filbuffer_->gettime(ready-1);
                 headerfil.tstart = get_mjd(sendtime.start_epoch, sendtime.start_second + 27 + sendtime.framet * config_.tsamp);
-                // cout << std::setprecision(8) << std::fixed << headerfil.tstart << endl;
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
@@ -582,7 +520,8 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.telescope_id = 2;
 
                 if (verbose_)
-                    cout << ready - 1 << " buffer ready " << endl;
+                    PrintSafe(ready - 1, "buffer ready on pool", poolid_);
+
                 filbuffer_ -> SendToRam(d_dedisp, ready, dedispstream_, (gulpssent_ % 2));
                 filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
                 gulpssent_++;
@@ -594,8 +533,9 @@ void GpuPool::SendForDedispersion(void) {
                 cudaCheckError(cudaGetLastError());
                 scaled_ = true;
                 ready = 0;
+
                 if (verbose_)
-                    cout << "Scaling factors have been obtained" << endl;
+                    PrintSafe("Scaling factors have been obtained on pool", poolid_);
             }
 
         } else {
@@ -609,17 +549,11 @@ void GpuPool::ReceiveData(int portid, int recport) {
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receive_threads[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (retaff != 0) {
-        cout_guard.lock();
-        cerr << "Error setting thread affinity for receive thread on port " << recport << endl;
-        cout_guard.unlock();
-    }
+    if (retaff != 0)
+        PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
 
-    if (verbose_) {
-        cout_guard.lock();
-        cout << "Receive thread on port " << recport << " running on CPU " << sched_getcpu() << endl;
-        cout_guard.unlock();
-    }
+    if (verbose_)
+        PrintSafe("Receive thread on port", recport, "on pool", poolid_, "running on CPU", sched_getcpu());
 
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
@@ -644,12 +578,9 @@ void GpuPool::ReceiveData(int portid, int recport) {
     }
 
     while (true) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-            cout_guard.lock();
-            cerr << "Error of recvfrom on port " << recport << endl;
-            cerr << "Errno " << errno << endl;
-            cout_guard.unlock();
-        }
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1)
+            PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
+
         if (numbytes == 0)
             continue;
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
@@ -660,12 +591,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
     }
 
     while(working_) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1) {
-            cout_guard.lock();
-            cerr << "Error of recvfrom on port " << recport << endl;
-            cerr << "Errno " << errno << endl;
-            cout_guard.unlock();
-        }
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1)
+            PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
 
         if (numbytes == 0)
             continue;

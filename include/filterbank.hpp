@@ -190,7 +190,7 @@ inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, 
 
         }
 
-        std::cout << "Saved filterbank " << saved << " on beam " << head.ibeam << std::endl;
+        PrintSafe("Saved filterbank", saved, "on beam", head.ibeam);
 
         outfile.close();
 
