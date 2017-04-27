@@ -194,3 +194,47 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
     }
 
 }
+
+__global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes) {
+
+    // very horrible implementation or matrix transpose
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int start = idx * ntimes;
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        out[start + tsamp] = in[idx + tsamp * nchans];
+    }
+}
+
+__global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
+    // calculates mean and standard deviation in every channel
+    // assumes the data has been transposed
+
+    // for now have one thread per frequency channel
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float mean;
+    float variance;
+
+    float ntrec = 1.0f / (float)ntimes;
+    float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
+
+    unsigned int start = idx * ntimes;
+    mean = 0.0f;
+    variance = 0.0;
+    // two-pass solution for now
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        mean += in[start + tsamp] * ntrec;
+    }
+    means[param][idx] = mean;
+
+    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+        variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
+    }
+    variance *= ntrec1;
+    // reciprocal of standard deviation
+    // multiplied by the desired standard deviation of the scaled data
+    // reduces the number of operations that have to be done on the GPU
+    rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
+    // to avoid inf when there is no data in the channel
+    if (means[param][idx] == 0)
+        rstdevs[param][idx] = 0;
+}

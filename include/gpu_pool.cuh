@@ -99,7 +99,7 @@ class GpuPool
         float **hfreqscrunchedbuffer_;
         float **hmeans_;
         float **hrstdevs_;
-        float **dtimescrunchedbuffer_;
+        float **htimescrunchedbuffer_;
 
         int *filedesc_;
 

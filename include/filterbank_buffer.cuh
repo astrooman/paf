@@ -142,7 +142,7 @@ void FilterbankBuffer<T>::deallocate(void)
 template<class T>
 void FilterbankBuffer<T>::SendToDisk(int idx, header_f header, std::string outdir)
 {
-        save_filterbank2(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved, outdir);
+        SaveFilterbank(ph_fil, gulp + extra, (gulp + extra) * nchans * stokes * idx, header, stokes, fil_saved, outdir);
         fil_saved++;
         // need info from the telescope
 }
@@ -165,8 +165,8 @@ void FilterbankBuffer<T>::GetScaling(int idx, cudaStream_t &stream, float **d_me
     float *d_transpose;
     cudaMalloc((void**)&d_transpose, (gulp + extra) * nchans * sizeof(float));
     for (int ii = 0; ii < stokes; ii++) {
-        transpose<<<1,nchans,0,stream>>>(pd_filterbank[ii] + (idx - 1) * gulp * nchans, d_transpose, nchans, gulp + extra);
-        scale_factors<<<1,nchans,0,stream>>>(d_transpose, d_means, d_rstdevs, nchans, gulp + extra, ii);
+        Transpose<<<1,nchans,0,stream>>>(pd_filterbank[ii] + (idx - 1) * gulp * nchans, d_transpose, nchans, gulp + extra);
+        GetScaleFactors<<<1,nchans,0,stream>>>(d_transpose, d_means, d_rstdevs, nchans, gulp + extra, ii);
     }
     cudaFree(d_transpose);
     // need this so I don't save this buffer
@@ -204,7 +204,7 @@ void FilterbankBuffer<T>::write(T *d_data, ObsTime frame_time, unsigned int amou
     // we will save one data sample at a time, with fixed size
     // no need to check that there is enough space available to fit all the data before the end of the buffer
     std::lock_guard<mutex> addguard(buffermutex);
-    int index = frame_time.framet % totsize;
+    int index = frame_time.framefromstart % totsize;
     if((index % gulp) == 0)
         gulp_times[index / gulp] = frame_time;
     if (end == totsize)    // reached the end of the buffer
@@ -234,8 +234,8 @@ template<class T>
 void FilterbankBuffer<T>::UpdateFilledTimes(ObsTime frame_time)
 {
     std::lock_guard<mutex> addguard(statemutex);
-    int framet = frame_time.framet;
-    int index = frame_time.framet % (gulpno * gulp);
+    int framet = frame_time.framefromstart;
+    int index = frame_time.framefromstart % (gulpno * gulp);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
 

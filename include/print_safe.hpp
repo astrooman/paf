@@ -8,7 +8,7 @@ std::recursive_mutex coutmutex;
 
 template<class T> void PrintSafe(T lastin) {
     std::lock_guard<std::recursive_mutex> guard(coutmutex);
-    std::cout << lastin << endl;
+    std::cout << lastin << std::endl;
 }
 
 template<class T, class ... Types> void PrintSafe(T firstin, Types ... args) {

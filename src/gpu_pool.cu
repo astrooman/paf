@@ -50,12 +50,12 @@ bool GpuPool::working_ = true;
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         avgfreq_(config.freqavg),
-                                        avgtime_(config.timesavg),
+                                        avgtime_(config.timeavg),
                                         beamno_(0),
                                         codiflen_(config.codiflen),
                                         dedispgulpsamples_(config.gulp),
                                         fftbatchsize_(config.batch),
-                                        fftedsize_(config.batch * config.fftsize * config.timesavg * config.nopols * config.accumulate),
+                                        fftedsize_(config.batch * config.fftsize * config.timeavg * config.nopols * config.accumulate),
                                         fftpoints_(config.fftsize),
                                         filchans_(config.filchans),
                                         freqscrunchedsize_((config.fftsize - 5) * config.batch  * config.accumulate / config.freqavg),
@@ -63,7 +63,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
                                         ipstring_(config.ips[poolid]),
-                                        inbuffsize_(8 * config.batch * config.fftsize * config.timesavg * config.accumulate),
+                                        inbuffsize_(8 * config.batch * config.fftsize * config.timeavg * config.accumulate),
                                         inchans_(config.nochans),
                                         nopols_(config.nopols),
                                         noports_(config.noports),
@@ -73,11 +73,12 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         ports_(config.ports),
                                         // NOTE: 32 * 4 gives the starting 128 time samples, but this is not the correct implementation
                                         // TODO: Need to include the time averaging in the correct way
-                                        rearrangedsize_(config.batch * config.fftsize * config.timesavg * config.nopols * config.accumulate),
+                                        rearrangedsize_(config.batch * config.fftsize * config.timeavg * config.nopols * config.accumulate),
                                         scaled_(false),
-                                        secondstorecord_(config.record)
+                                        secondstorecord_(config.record),
                                         timescrunchedsize_((config.fftsize - 5) * config.batch * config.accumulate),
                                         verbose_(config.verbose) {
+
     usethreads_ = min(nostreams_ + 2, thread::hardware_concurrency());
 
     config_ = config;
@@ -114,7 +115,7 @@ void GpuPool::Initialise(void) {
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer<float>>(new FilterbankBuffer<float>(gpuid_));
 
-    framenumbers_ = new int[accumulate_ * nostreams_];
+    framenumbers_ = new unsigned int[accumulate_ * nostreams_];
     gpustreams_ = new cudaStream_t[nostreams_];
     fftplans_ = new cufftHandle[nostreams_];
 
@@ -136,7 +137,7 @@ void GpuPool::Initialise(void) {
 
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     if (verbose_)
-        PrintSafe("Preparing the memory on pool", poolid_ "...");
+        PrintSafe("Preparing the memory on pool", poolid_, "...");
 
     arrangechandesc_ = cudaCreateChannelDesc<int2>();
     cudaCheckError(cudaPeekAtLastError());
@@ -236,8 +237,8 @@ void GpuPool::Initialise(void) {
     // FFT threads
     for (int igstream = 0; igstream < nostreams_; igstream++) {
             cudaCheckError(cudaStreamCreate(&gpustreams_[igstream]));
-            cufftCheckError(cufftPlanMany(&myplans[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_ * avgtime_ * nopols_ * _));
-            cufftCheckError(cufftSetStream(myplans[igstream], gpustreams_[igstream]));
+            cufftCheckError(cufftPlanMany(&fftplans_[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_ * avgtime_ * nopols_ * accumulate_));
+            cufftCheckError(cufftSetStream(fftplans_[igstream], gpustreams_[igstream]));
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
     }
 
@@ -303,7 +304,7 @@ GpuPool::~GpuPool(void) {
         gputhreads_[ithread].join();
 
     for (int ithread = 0; ithread < noports_; ithread++)
-        receive_threads[ithread].join();
+        receivethreads_[ithread].join();
 
     //save the scaling factors before quitting
     if (scaled_) {
@@ -376,10 +377,10 @@ GpuPool::~GpuPool(void) {
     cudaCheckError(cudaFreeHost(hstreambuffer_));
 
     for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cufftCheckError(cufftDestroy(myplans[igstream]));
+        cufftCheckError(cufftDestroy(fftplans_[igstream]));
     }
 
-    delete [] myplans;
+    delete [] fftplans_;
 }
 
 void GpuPool::HandleSignal(int signum) {
@@ -455,7 +456,7 @@ void GpuPool::FilterbankData(int stream) {
 
             cudaCheckError(cudaMemcpyToArrayAsync(arrange2darray_[stream], 0, 0, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
-            cufftCheckError(cufftExecC2C(myplans[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
+            cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
             GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
             AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
             cudaStreamSynchronize(gpustreams_[stream]);
@@ -506,9 +507,9 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.rdm = 0.0;
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
-                headerfil.tstart = get_mjd(starttime_.start_epoch, starttime_.start_second + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+                headerfil.tstart = get_mjd(starttime_.startepoch, starttime_.startsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
                 sendtime = filbuffer_->gettime(ready-1);
-                headerfil.tstart = get_mjd(sendtime.start_epoch, sendtime.start_second + 27 + sendtime.framet * config_.tsamp);
+                headerfil.tstart = get_mjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
@@ -548,7 +549,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
-    int retaff = pthread_setaffinity_np(receive_threads[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
+    int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0)
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
 
@@ -572,8 +573,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
     if (portid == 0) {
         unsigned char *tmpbuffer = receivebuffers_[0];
         numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len);
-        starttime_.start_epoch = (int)(tmpbuffer[12] >> 2);
-        starttime_.start_second = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
+        starttime_.startepoch = (int)(tmpbuffer[12] >> 2);
+        starttime_.startsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
     }
 
@@ -599,7 +600,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
         fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        frame = frame + (refsecond - starttime_.start_second - 27) / 27 * 250000;
+        frame = frame + (refsecond - starttime_.startsecond - 27) / 27 * 250000;
 
         // TODO: Add some mininal missing frames checks later anyway
         bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;

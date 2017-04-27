@@ -20,9 +20,9 @@ __global__ void GetPowerAddTimeKernel(cufftComplex* __restrict__ in, float* __re
 
 __global__ void InitScaleFactors(float **means, float **rstdevs, int stokes);
 
-__global__ void transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes);
+__global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes);
 
-__global__ void scale_factors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param);
+__global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param);
 
 __global__ void bandpass();
 #endif

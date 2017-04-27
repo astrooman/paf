@@ -16,8 +16,8 @@ struct InConfig {
     bool verbose;
 
     double band;                // sampling rate for each band in MHz
-    double dend;
-    double dstart;
+    double dmend;
+    double dmstart;
     double foff;                // channel width in MHz
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
@@ -59,8 +59,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.dmend = 4000.0;
     config.ftop = 1400.0;
 
-    config.beamno = 1;
-    config.chunks = 32;
+    config.nobeams = 1;
     config.fftsize = 32;
     config.freqavg = 16;
     config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
@@ -72,7 +71,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.noports = 6;
     config.outdir = "./";
     config.record = 600;        // record ~10 minutes of data
-    config.stokes = 4;
+    config.nostokes = 4;
     config.nostreams = 4;
     config.timeavg = 4;
 
@@ -82,8 +81,8 @@ inline void SetDefaultConfig(InConfig &config) {
     for (int ichan = 0; ichan < config.filchans; ichan++)
          (config.killmask).push_back((int)1);
 
-    for (int iport = 0; iport < noports; iport++)
-        ports.push_back(17100 + iport);
+    for (int iport = 0; iport < config.noports; iport++)
+        config.ports.push_back(17100 + iport);
 }
 
 inline void ReadConfig(std::string filename, InConfig &config) {
@@ -100,9 +99,9 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             std::stringstream svalue;
 
             if (paraname == "DM_END") {
-                config.dend = std::stod(paravalue);
+                config.dmend = std::stod(paravalue);
             } else if (paraname == "DM_START") {
-                config.dstart = std::stod(paravalue);
+                config.dmstart = std::stod(paravalue);
             } else if (paraname == "FFT_SIZE") {
                 config.fftsize = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "FREQ_AVERAGE") {
@@ -123,20 +122,20 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.nochans = (unsigned int)(std::stoi(paravalue));
                 config.batch = config.nochans;
             } else if (paraname == "NO_BEAMS") {
-                config.beamno = (unsigned int)(std::stoi(paravalue));
+                config.nobeams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "NO_GPUS") {
-                config.ngpus = (unsigned int)(std::stoi(paravalue));
+                config.nogpus = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "NO_POLS") {
                 config.nopols = std::stoi(paravalue);
             } else if (paraname == "NO_STOKES") {
-                config.stokes = std::stoi(paravalue);
+                config.nostokes = std::stoi(paravalue);
             } else if (paraname == "NO_STREAMS") {
                 config.nostreams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
                 while(std::getline(svalue, sep, ','))
-                    config.ports.push_back(sep);
+                    config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
             } else if (paraname == "TIME_AVERAGE") {
                 config.timeavg = (unsigned int)(std::stoi(paravalue));
@@ -165,13 +164,13 @@ inline void set_search_params(hd_params &params, InConfig config)
     params.baseline_length = 2.0;
     params.beam            = 0;
     params.override_beam   = false;
-    params.nochans          = config.filchans;
+    params.nchans          = config.filchans;
     params.dt              = config.tsamp;
     params.f0              = config.ftop;
     params.df              = -abs(config.foff);    // just to make sure it is negative
     // no need for dm params as the code will not do it
-    params.dm_min          = config.dstart;
-    params.dm_max          = config.dend;
+    params.dm_min          = config.dmstart;
+    params.dm_max          = config.dmend;
     params.dm_tol          = 1.25;
     params.dm_pulse_width  = 40;//e-6; // TODO: Check why this was here
     params.dm_nbits        = 32;//8;
