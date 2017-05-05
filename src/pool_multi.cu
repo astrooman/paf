@@ -790,11 +790,11 @@ void GPUpool::receive_thread(int ii)
         ref_s = (int)(rec_bufs[ii][3] | (rec_bufs[ii][2] << 8) | (rec_bufs[ii][1] << 16) | ((rec_bufs[ii][0] & 0x3f) << 24));
         frame = (int)(rec_bufs[ii][7] | (rec_bufs[ii][6] << 8) | (rec_bufs[ii][5] << 16) | (rec_bufs[ii][4] << 24));
         beamno = (int)(rec_bufs[ii][23] | (rec_bufs[ii][22] << 8));
-        if (beamno < 6) {
+//        if (beamno < 6) {
             fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-            if (fpga == 8)
-                fpga = 7;
-            fpga = fpga * 6 + beamno;
+//            if (fpga == 8)
+//                fpga = 7;
+//            fpga = fpga * 6 + beamno;
             frame = frame + (ref_s - start_time.start_second - 27) / 27 * 250000;
 
             // looking at how much stuff we are not missing - remove a lot of checking for now
@@ -811,7 +811,7 @@ void GPUpool::receive_thread(int ii)
             //cout << bufidx << endl;
             //cout.flush();
             bufidx_array[bufidx] = true;
-        }
+//        }
         //}
     }
 }
