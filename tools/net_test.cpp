@@ -215,10 +215,13 @@ void TestPort(int iport, std::string strip, unsigned int toread) {
         framevals.push_back(frameno);	
         if (frameno > highestframe)
             highestframe = frameno;
+            if (frameno == 249999)
+                highestframe = 0;
     }
 
     printmutex.lock();
-    cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
+    //cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
+    cout << (double)(toread)/ (double)(highestframe + 1) * 100.0 << "% received on port " << iport << endl;
     cout << endl;
     printmutex.unlock();
 
