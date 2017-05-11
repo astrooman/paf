@@ -100,8 +100,8 @@ void GpuPool::Initialise(void) {
     // TODO: Test whether there can be a better way of doing this
     // Using the closest lower power of 2 can lose us a lot of channels
     filchans_ = 1 << (int)log2f(filchans_);
-
     cpu_set_t cpuset;
+
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
