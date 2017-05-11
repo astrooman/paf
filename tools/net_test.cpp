@@ -76,7 +76,7 @@ void TestFpga(int iport, int nofpgas, std::string strip, int usebeam, int toread
     int numbytes;
     int *fpgaid = new int[6];
     unsigned char *rec_buf = new unsigned char[7168 + 64];
-    //unsigned char *inbuffer = new unsigned char[(7168 + 64) * nofpgas * SIZE];
+    //unsigned char *inbuffer = new unsigned char[(7168 + 64) * nofpgas * toread];
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
     socklen_t addr_len;
@@ -137,7 +137,7 @@ void TestFpga(int iport, int nofpgas, std::string strip, int usebeam, int toread
 
 /*    std::ofstream outdata("data.codif", std::ios_base::out | std::ios_base::binary);
     if (outdata) {
-        outdata.write(reinterpret_cast<char*>(inbuffer), (7168 + 64) * nofpgas * SIZE);
+        outdata.write(reinterpret_cast<char*>(inbuffer), (7168 + 64) * nofpgas * toread);
     }
     outdata.close();
 */
@@ -146,7 +146,7 @@ void TestFpga(int iport, int nofpgas, std::string strip, int usebeam, int toread
 
 }
 
-void TestPort(int iport, std::string strip) {
+void TestPort(int iport, std::string strip, unsigned int toread) {
 
     printmutex.lock();
     cout << "Starting receive on port " << iport << endl;
@@ -196,18 +196,43 @@ void TestPort(int iport, std::string strip) {
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
 
-    for (int ipack = 0; ipack < 6 * SIZE; ipack++) {
+    std::vector<size_t> framevals;
+
+    while (true) {
+        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+        frameno = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        if (frameno == 0) {
+            cout << "Reached the 27s boundary. Will start recording now...\n";
+            break;
+        }
+    }
+
+
+    for (int ipack = 0; ipack < 8 * toread; ipack++) {
         numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
         fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        framevals.push_back(frameno);	
         if (frameno > highestframe)
             highestframe = frameno;
     }
 
     printmutex.lock();
-    cout << (double)highestframe / (double)SIZE * 100.0 << "% received on port " << iport << endl;
+    cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
     cout << endl;
     printmutex.unlock();
+
+    oss.str("");
+    oss << "frames_port_" << iport;
+
+    std::string portfile; 
+    portfile = oss.str();
+    std::ofstream outfile(portfile.c_str());
+
+    for (auto iframe = framevals.begin(); iframe != framevals.end(); ++iframe)
+        outfile << *iframe << std::endl;
+
+    outfile.close();
 
 }
 
@@ -358,7 +383,7 @@ int main(int argc, char *argv[])
         cout << *iport << ", ";
     cout << endl;
     printmutex.unlock();
-
+/*
     if (testtype == "p") {
         for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
             fpgathreads.push_back(thread(TestFpga, *iport, nofpgas, inipstr, beam, toread));
@@ -385,13 +410,14 @@ int main(int argc, char *argv[])
 
         delete [] fpgaframes;
     }
+*/
     // NOTE: this tests the percentage of data the port receives
-/*    for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
-        portthreads.push_back(thread(TestPort, *iport, inipstr));
+    for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
+        portthreads.push_back(thread(TestPort, *iport, inipstr, toread));
     }
     for (vector<thread>::iterator ithread = portthreads.begin(); ithread != portthreads.end(); ++ithread) {
         ithread->join();
     }
-*/
+
     return 0;
 }
