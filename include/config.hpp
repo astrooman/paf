@@ -134,6 +134,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
+                // NOTE: Need to remove the ports added as default parameters
+                config.ports.clear();
                 while(std::getline(svalue, sep, ','))
                     config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
