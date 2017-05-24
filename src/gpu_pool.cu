@@ -415,8 +415,8 @@ void GpuPool::FilterbankData(int stream) {
 
     ObsTime frametime;
 
-    float *ptimescrunchedbuffer_ = dtimescrunchedbuffer_[stream];
-    float *pfreqscrunchedbuffer_ = dfreqscrunchedbuffer_[stream];
+    float *ptimescrunchedbuffer_ = htimescrunchedbuffer_[stream];
+    float *pfreqscrunchedbuffer_ = hfreqscrunchedbuffer_[stream];
 
     // TODO: This has to be simplified
     int skip_read = stream * (packperbuffer_ / nostreams_);

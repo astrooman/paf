@@ -10,7 +10,7 @@ CC=g++
 NVCC=/usr/bin/nvcc
 DEBUG=#-g -G
 endif
-
+DEBUG=-g -G
 INCLUDE = -I${INC_DIR}
 LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
 
