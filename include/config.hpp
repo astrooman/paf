@@ -55,9 +55,11 @@ inline void SetDefaultConfig(InConfig &config) {
 
     config.accumulate = 8;
     config.band = 1.185;
+    config.codiflen = 7168;
     config.dmstart = 0.0;
     config.dmend = 4000.0;
     config.ftop = 1400.0;
+    config.headlen = 64;
 
     config.nobeams = 1;
     config.fftsize = 32;
