@@ -526,8 +526,13 @@ void GpuPool::SendForDedispersion(void) {
                 filbuffer_ -> SendToRam(d_dedisp, ready, dedispstream_, (gulpssent_ % 2));
                 filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
                 gulpssent_++;
+
+                if (verbose_)
+                    PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
+
                 if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_)
                     working_ = false;
+
             }   else {
                 // perform the scaling
                 filbuffer_->GetScaling(ready, dedispstream_, dmeans_, drstdevs_);
