@@ -34,7 +34,7 @@ void DoWork(int id) {
     }
     
 
-    unsigned int accumulate = 8;
+    unsigned int accumulate = 1;
     unsigned int codiflen = 7168;
     unsigned int fftsize = 32;
     unsigned int nofpgas = 48;
@@ -70,7 +70,7 @@ void DoWork(int id) {
 
     auto runstart = std::chrono::high_resolution_clock::now();
 
-    unsigned int timeavg = 1;
+    unsigned int timeavg = 4;
     unsigned int freqavg = 16;
 
     float *power = new float[unpackedsize];
