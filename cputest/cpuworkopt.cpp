@@ -186,7 +186,7 @@ void PowerAverage(float *out, fftwf_complex *ini, fftwf_complex *inq, unsigned i
     for (int ichan = 0; ichan < 336; ichan++) {
         for (int itavg = 0; itavg < tavg; ++itavg) {
             inidx = ichan * 32 * tavg + 32 * tavg;
-
+/*
             __m256i polixi1 = _mm256_set_epi32(ini[inidx + 7][0], ini[inidx + 6][0], ini[inidx + 5][0], ini[inidx + 4][0], ini[inidx + 3][0], ini[inidx + 2][0], ini[inidx + 1][0], ini[inidx][0]);
             __m256i poliyi1 = _mm256_set_epi32(ini[inidx + 7][1], ini[inidx + 6][1], ini[inidx + 5][1], ini[inidx + 4][1], ini[inidx + 3][1], ini[inidx + 2][1], ini[inidx + 1][1], ini[inidx][1]);
             __m256 polixf1 = _mm256_cvtepi32_ps(polixi1);
@@ -263,6 +263,82 @@ void PowerAverage(float *out, fftwf_complex *ini, fftwf_complex *inq, unsigned i
             __m256 powtot4 = _mm256_add_ps(powi4, powq4);
 
             summed4 = _mm256_add_ps(summed4, powtot4);
+*/
+            // NOTE: Loading whole complex numbers does not decrease the total number of loads, but there will be no weird conversions between ints and floats and it is long
+            // NOTE: Each load now contains 4 full complex numbers (instead of 8 halves as before)
+            __m256 poli1 = _mm256_loadu_ps(reinterpret_cast<float*>(ini));
+            __m256 polq1 = _mm256_loadu_ps(reinterpret_cast<float*>(inq));
+            
+            __m256 sqri1 = _mm256_mul_ps(poli1, poli1);
+            __m256 sqrq1 = _mm256_mul_ps(polq1, polq1);
+            __m256 part1 = _mm256_add_ps(sqri1, sqrq1);
+
+            __m256 poli2 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 4));
+            __m256 polq2 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 4));
+
+            __m256 sqri2 = _mm256_mul_ps(poli2, poli2);
+            __m256 sqrq2 = _mm256_mul_ps(polq2, polq2);
+           __m256 part2 = _mm256_add_ps(sqri2, sqrq2);
+           
+           __m256 comb12 = _mm256_hadd_ps(part1, part2);
+           summed1 = _mm256_add_ps(summed1, comb12);
+
+
+            __m256 poli3 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 8));
+            __m256 polq3 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 8));
+
+            __m256 sqri3 = _mm256_mul_ps(poli3, poli3);
+            __m256 sqrq3 = _mm256_mul_ps(polq3, polq3);
+
+            __m256 part3 = _mm256_add_ps(sqri3, sqrq3);
+
+
+            __m256 poli4 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 12));
+            __m256 polq4 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 12));
+
+            __m256 sqri4 = _mm256_mul_ps(poli4, poli4);
+            __m256 sqrq4 = _mm256_mul_ps(polq4, polq4);
+
+           __m256 part4 = _mm256_add_ps(sqri4, sqrq4);
+           __m256 comb34 = _mm256_hadd_ps(part3, part4);
+           summed2 = _mm256_add_ps(summed2, comb34);
+
+            __m256 poli5 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 16));
+            __m256 polq5 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 16));
+
+            __m256 sqri5 = _mm256_mul_ps(poli5, poli5);
+            __m256 sqrq5 = _mm256_mul_ps(polq5, polq5);
+            __m256 part5 = _mm256_add_ps(sqri5, sqrq5);
+
+            __m256 poli6 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 20));
+            __m256 polq6 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 20));
+
+            __m256 sqri6 = _mm256_mul_ps(poli6, poli6);
+            __m256 sqrq6 = _mm256_mul_ps(polq6, polq6);
+           __m256 part6 = _mm256_add_ps(sqri6, sqrq6);
+
+           __m256 comb56 = _mm256_hadd_ps(part5, part6);
+           summed3 = _mm256_add_ps(summed3, comb56);              
+
+
+            __m256 poli7 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 24));
+            __m256 polq7 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 24));
+
+            __m256 sqri7 = _mm256_mul_ps(poli7, poli7);
+            __m256 sqrq7 = _mm256_mul_ps(polq7, polq7);
+            __m256 part7 = _mm256_add_ps(sqri7, sqrq7);
+
+            __m256 poli8 = _mm256_loadu_ps(reinterpret_cast<float*>(ini + 28));
+            __m256 polq8 = _mm256_loadu_ps(reinterpret_cast<float*>(inq + 28));
+
+            __m256 sqri8 = _mm256_mul_ps(poli8, poli8);
+            __m256 sqrq8 = _mm256_mul_ps(polq8, polq8);
+           __m256 part8 = _mm256_add_ps(sqri8, sqrq8);
+
+           __m256 comb78 = _mm256_hadd_ps(part7, part8);
+           summed4 = _mm256_add_ps(summed4, comb78);
+
+
         }
 
         outidx = 27 * ichan;
