@@ -14,7 +14,6 @@
 #include <cuda.h>
 #include <numa.h>
 #include <pthread.h>
-#include <thrust/device_vector.h>
 
 #include "config.hpp"
 #include "dedisp/dedisp.hpp"
@@ -106,8 +105,10 @@ void GpuPool::Initialise(void) {
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
-    if (retaff != 0)
+    if (retaff != 0) {
         PrintSafe("Error setting thread affinity for the GPU pool", poolid_);
+        exit(EXIT_FAILURE);     // affinity is critical for us
+    }
 
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
@@ -123,7 +124,7 @@ void GpuPool::Initialise(void) {
     cudathreads_ = new unsigned int[nokernels];
     cudablocks_ = new unsigned int[nokernels];
 
-    // TODO: The Rearrange() kernel has to be optimised
+    // TODO: Put optimised versions of these kernels in
     cudathreads_[0] = 7;
     cudathreads_[1] = fftpoints_ * avgtime_ * fftbatchsize_ / 42;
     cudathreads_[2] = inchans_;
@@ -186,12 +187,6 @@ void GpuPool::Initialise(void) {
     cudaCheckError(cudaMemcpy(dtimescrunchedbuffer_, htimescrunchedbuffer_, nostreams_ * sizeof(float*), cudaMemcpyHostToDevice));
     cudaCheckError(cudaMemcpy(dfreqscrunchedbuffer_, hfreqscrunchedbuffer_, nostreams_ * sizeof(float*), cudaMemcpyHostToDevice));
 
-/*    for (int igstream = 0; igstream < nostreams_; igstream++) {
-        dv_time_scrunch[igstream].resize(timescrunchedsize_ * nostokes_);
-        dv_freq_scrunch[igstream].resize(freqscrunchedsize_ * nostokes_);
-    }
-*/
-
     hmeans_ = new float*[nostokes_];
     hrstdevs_ = new float*[nostokes_];
 
@@ -228,7 +223,7 @@ void GpuPool::Initialise(void) {
     if (verbose_)
         PrintSafe("Setting up dedispersion and single pulse search on pool", poolid_, "...");
 
-    set_search_params(singleparams_, config_);
+    SetSearchParams(singleparams_, config_);
     // NOTE: Commented out for the filterbank dump mode
     //hd_create_pipeline(&pipeline, params);
     // NOTE: everything should be ready for single pulse search after this point
@@ -332,7 +327,7 @@ GpuPool::~GpuPool(void) {
     }
 
     // need deallocation in the dedisp buffer destructor as well
-    filbuffer_->deallocate();
+    filbuffer_->Deallocate();
     // this stuff is deleted in order it appears in the code
     delete [] framenumbers_;
     delete [] gpustreams_;
@@ -397,8 +392,10 @@ void GpuPool::FilterbankData(int stream) {
     CPU_SET((int)(poolid_) * 8 + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
-    if (retaff != 0)
+    if (retaff != 0) {
         PrintSafe("Error setting thread affinity for stream", stream, "on pool", poolid_);
+        exit(EXIT_FAILURE);
+    }
 
     if (verbose_)
         PrintSafe("Starting worker", stream, "on pool", poolid_, "on CPU", sched_getcpu());
@@ -419,13 +416,13 @@ void GpuPool::FilterbankData(int stream) {
     float *pfreqscrunchedbuffer_ = hfreqscrunchedbuffer_[stream];
 
     // TODO: This has to be simplified
-    int skip_read = stream * (packperbuffer_ / nostreams_);
-    int skip_to_end = (stream + 1) * (packperbuffer_ / nostreams_) - 1;
-    int next_start;
+    int skipread = stream * (packperbuffer_ / nostreams_);
+    int skiptoend = (stream + 1) * (packperbuffer_ / nostreams_) - 1;
+    int nextstart;
     if (stream != 3) {
-        next_start = skip_to_end + 24;
+        nextstart = skiptoend + 24;
     } else {
-        next_start = 23;
+        nextstart = 23;
     }
     bool endready = false;
     bool innext = false;
@@ -433,13 +430,13 @@ void GpuPool::FilterbankData(int stream) {
         endready = false;
         innext = false;
         for (int iidx = 0; iidx < 4; iidx++) {
-            endready = endready || readybuffidx_[skip_to_end - iidx];
-            innext = innext || readybuffidx_[next_start - iidx];
+            endready = endready || readybuffidx_[skiptoend - iidx];
+            innext = innext || readybuffidx_[nextstart - iidx];
         }
         if (endready && innext) {
             for (int iidx = 0; iidx < 4; iidx++) {
-                readybuffidx_[skip_to_end - iidx] = false;
-                readybuffidx_[next_start - iidx] = false;
+                readybuffidx_[skiptoend - iidx] = false;
+                readybuffidx_[nextstart - iidx] = false;
             }
             std::copy(hinbuffer_ + stream * inbuffsize_,  hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);;
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
@@ -477,8 +474,10 @@ void GpuPool::SendForDedispersion(void) {
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (retaff != 0)
+    if (retaff != 0) {
         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
+        exit(EXIT_FAILURE);
+    }
 
     ObsTime sendtime;
 
@@ -488,7 +487,7 @@ void GpuPool::SendForDedispersion(void) {
 
     int ready{0};
     while(working_) {
-        ready = filbuffer_->ready();
+        ready = filbuffer_->CheckIfReady();
         if (ready) {
             if (scaled_) {
                 // TODO: Prefil the header with non-changing infomation
@@ -496,20 +495,20 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.raw_file = "tastytastytest";
                 headerfil.source_name = "J1641-45";
                 headerfil.az = 0.0;
-                headerfil.dec = 0.0;
+                headerfil.ra = config.ra;
+                headerfil.dec = config.dec;
                 // for channels in decreasing order
                 headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchans_ * config_.foff;
                 headerfil.foff = -1.0 * abs(config_.foff);
                 // for channels in increasing order
                 // headerfil.fch1 = 1173.0 - (16.0 / 27.0);
                 // headerfil.foff = config_.foff;
-                headerfil.ra = 0.0;
                 headerfil.rdm = 0.0;
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
-                headerfil.tstart = get_mjd(starttime_.startepoch, starttime_.startsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
-                sendtime = filbuffer_->gettime(ready-1);
-                headerfil.tstart = get_mjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
+                headerfil.tstart = GetMjd(starttime_.startepoch, starttime_.startsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+                sendtime = filbuffer_->GetTime(ready-1);
+                headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
@@ -535,6 +534,8 @@ void GpuPool::SendForDedispersion(void) {
 
             }   else {
                 // perform the scaling
+                // NOTE: Scaling breaks down when there is no data - division by a standard deviation of 0
+                // TODO: Need to come up with a more clever way of dealing with that
                 filbuffer_->GetScaling(ready, dedispstream_, dmeans_, drstdevs_);
                 cudaCheckError(cudaGetLastError());
                 scaled_ = true;
@@ -555,16 +556,18 @@ void GpuPool::ReceiveData(int portid, int recport) {
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (retaff != 0)
+    if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
+        exit(EXIT_FAILURE);
+    }
 
     if (verbose_)
         PrintSafe("Receive thread on port", recport, "on pool", poolid_, "running on CPU", sched_getcpu());
 
-    sockaddr_storage their_addr;
-    memset(&their_addr, 0, sizeof(their_addr));
-    socklen_t addr_len;
-    memset(&addr_len, 0, sizeof(addr_len));
+    sockaddr_storage senderaddr;
+    memset(&senderaddr, 0, sizeof(senderaddr));
+    socklen_t addrlen;
+    memset(&addrlen, 0, sizeof(addrlen));
 
     const int pack_per_worker_buf = packperbuffer_ / nostreams_;
     int numbytes{0};
@@ -577,14 +580,14 @@ void GpuPool::ReceiveData(int portid, int recport) {
 
     if (portid == 0) {
         unsigned char *tmpbuffer = receivebuffers_[0];
-        numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len);
+        numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen);
         starttime_.startepoch = (int)(tmpbuffer[12] >> 2);
         starttime_.startsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
     }
 
     while (true) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1)
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
             PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
 
         if (numbytes == 0)
@@ -597,14 +600,14 @@ void GpuPool::ReceiveData(int portid, int recport) {
     }
 
     while(working_) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&their_addr, &addr_len)) == -1)
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
             PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
 
         if (numbytes == 0)
             continue;
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
-        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+        fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         frame = frame + (refsecond - starttime_.startsecond - 27) / 27 * 250000;
 
         // TODO: Add some mininal missing frames checks later anyway

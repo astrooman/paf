@@ -22,6 +22,10 @@ struct InConfig {
     double ftop;                // frequency of the top channel in MHz
     double tsamp;               // sampling time
 
+    // NOTE: Information from the telescope
+    double dec;
+    double ra;
+
     std::string outdir;             //!< Product output directory
 
     std::vector<int> gpuids;        //!< GPU IDs to use
@@ -60,6 +64,9 @@ inline void SetDefaultConfig(InConfig &config) {
     config.dmend = 4000.0;
     config.ftop = 1400.0;
     config.headlen = 64;
+
+    config.dec = 0.0;
+    config.ra = 0.0;
 
     config.nobeams = 1;
     config.fftsize = 32;
@@ -100,17 +107,17 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             ossline >> paraname >> paravalue;
             std::stringstream svalue;
 
-            if (paraname == "DM_END") {
+            if (paraname == "DMEND") {
                 config.dmend = std::stod(paravalue);
-            } else if (paraname == "DM_START") {
+            } else if (paraname == "DMSTART") {
                 config.dmstart = std::stod(paravalue);
-            } else if (paraname == "FFT_SIZE") {
+            } else if (paraname == "FFTSIZE") {
                 config.fftsize = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "FREQ_AVERAGE") {
+            } else if (paraname == "FREQAVG") {
                 config.freqavg = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "DEDISP_GULP") {
+            } else if (paraname == "DEDISPGULP") {
                 config.gulp = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "GPU_IDS") {
+            } else if (paraname == "GPUID") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
                 while(std::getline(svalue, sep, ','))
@@ -120,18 +127,18 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 std::string sep;
                 while(std::getline(svalue, sep, ','))
                     config.ips.push_back(sep);
-            } else if (paraname == "NO_1MHZ_CHANS") {
+            } else if (paraname == "NO1MHZCHANS") {
                 config.nochans = (unsigned int)(std::stoi(paravalue));
                 config.batch = config.nochans;
-            } else if (paraname == "NO_BEAMS") {
+            } else if (paraname == "NBEAMS") {
                 config.nobeams = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "NO_GPUS") {
+            } else if (paraname == "NOGPUS") {
                 config.nogpus = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "NO_POLS") {
+            } else if (paraname == "NOPOLS") {
                 config.nopols = std::stoi(paravalue);
-            } else if (paraname == "NO_STOKES") {
+            } else if (paraname == "NOSTOKES") {
                 config.nostokes = std::stoi(paravalue);
-            } else if (paraname == "NO_STREAMS") {
+            } else if (paraname == "NOSTREAMS") {
                 config.nostreams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
@@ -141,7 +148,7 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 while(std::getline(svalue, sep, ','))
                     config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
-            } else if (paraname == "TIME_AVERAGE") {
+            } else if (paraname == "TIMEAVG") {
                 config.timeavg = (unsigned int)(std::stoi(paravalue));
             } else {
                 std::cerr << "Error: unrecognised parameter: " << paraname << std::endl;
@@ -154,7 +161,7 @@ inline void ReadConfig(std::string filename, InConfig &config) {
     inconfig.close();
 }
 
-inline void set_search_params(hd_params &params, InConfig config)
+inline void SetSearchParams(hd_params &params, InConfig config)
 {
     params.verbosity       = 0;
     #ifdef HAVE_PSRDADA

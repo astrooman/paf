@@ -191,7 +191,9 @@ inline void SaveFilterbank(float *ph_filterbank, size_t nsamps, size_t start, he
             outfile.write(field, length * sizeof(char));
 
             //float *ph_filsave = ph_filterbank[ii];
-	    for (int sample = 0; sample < nsamps * head.nchans; sample++) {
+            // TODO: Temporary array does not make any sense. Get rid of it
+            // This is beyond wrong
+	        for (int sample = 0; sample < nsamps * head.nchans; sample++) {
                 tmpstore[sample] = static_cast<unsigned char>(ph_filterbank[start + ii * nsamps * head.nchans + sample]);
             }
             //outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);

@@ -1,11 +1,6 @@
 #ifndef _H_PAFRB_GPU_POOL
 #define _H_PAFRB_GPU_POOL
 
-/*! \file pool_multi.cuh
-    \brief Defines classes that are responsible for all the work done
-
-*/
-
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -15,7 +10,6 @@
 
 #include <cuda.h>
 #include <cufft.h>
-#include <thrust/device_vector.h>
 
 #include "config.hpp"
 #include "dedisp/DedispPlan.hpp"
@@ -115,9 +109,6 @@ class GpuPool
         unsigned int *cudathreads_;      //<! Pointer to the array of thread layouts for different kernels
 
         // NOTE: Old, bad names
-
-        vector<thrust::device_vector<float>> dv_time_scrunch;   //!< Time scrunched buffer, addtime() kernel output, addchannel() kernel input; holds GpuPool::nostreams_ device vectors, each holding GpuPool::timescrunchedsize_ * GpuPool::stokes elements
-        vector<thrust::device_vector<float>> dv_freq_scrunch;   //!< Frequency scrunched buffer, addchannel() kernel output; holds GpuPool::nostreams_ device vectors, each holding GpuPool::freqscrunchedsize_ * GpuPool::stokes elements
 
         bool *readybuffidx_;
 

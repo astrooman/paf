@@ -3,21 +3,21 @@
 
 #include <iomanip>
 
-inline double get_mjd(int ref_epoch, size_t ref_second) {
+inline double GetMjd(int refepoch, size_t refsecond) {
 
-    // leap year has very stupid rules, but I don't think anyone will use
-    // this code in they year 2100, when divisibility by 100 is taken into account
-    // for now can simply assume, that every year that can be divided by 4 is a leap year
-    short year = 2000 + (int)(ref_epoch / 2);
+    // NOTE: Leap year has few rules, but I don't think anyone will be using
+    // this code in the year 2100 (sorry if you are), when the divisibility by 100 is taken into account.
+    // For now can simply assume, that every year that can be divided by 4 is a leap year.
+    short year = 2000 + (int)(refepoch / 2);
     short dinm[12] = {31, 28 , 31, 30 ,31, 30, 31, 31, 30, 31, 30, 31};
     if ((year % 4) == 0)
         dinm[1] = 29;
-    short month = 0 + 6 * (ref_epoch % 2);
-    short day = (int)(ref_second / 86400);
-    int rem = ref_second - 86400 * day;
+    short month = 6 * (refepoch % 2);
+    short day = (int)(refsecond / 86400);
+    int rem = refsecond - 86400 * day;
     day++;
-    for (int ii = 0; ii < 6; ii++) {
-        if((day - dinm[month + ii]) > 0) {
+    for (int imonth = 0; imonth < 6; imonth++) {
+        if((day - dinm[month + imonth]) > 0) {
             day -= dinm[month];
             month++;
             continue;

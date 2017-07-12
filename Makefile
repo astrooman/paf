@@ -7,7 +7,7 @@ OBJ_DIR = ./obj
 BIN_DIR = ./bin
 DEDISP_DIR = ./dedisp_paf
 CC=g++
-NVCC=/usr/bin/nvcc
+NVCC=/usr/local/cuda-8.0/bin/nvcc
 DEBUG=#-g -G
 endif
 DEBUG=-g -G
@@ -19,12 +19,13 @@ NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread
 
 CPPOBJECTS = ${OBJ_DIR}/DedispPlan.o
 
-CUDAOBJECTS = ${OBJ_DIR}/threads.o ${OBJ_DIR}/gpu_pool.o ${OBJ_DIR}/ober_pool.o ${OBJ_DIR}/kernels.o ${OBJ_DIR}/dedisp.o
+CUDAOBJECTS = ${OBJ_DIR}/pafinder.o ${OBJ_DIR}/gpu_pool.o ${OBJ_DIR}/main_pool.o ${OBJ_DIR}/kernels.o ${OBJ_DIR}/dedisp.o
 
 
-all: pafrb
-pafrb: ${CUDAOBJECTS} ${CPPOBJECTS}
-	${NVCC} ${NVCC_FLAG} ${INCLUDE} ${LIBS} ${CUDAOBJECTS} ${CPPOBJECTS} -o ${BIN_DIR}/pafrb
+all: pafinder
+
+pafinder: ${CUDAOBJECTS} ${CPPOBJECTS}
+	${NVCC} ${NVCC_FLAG} ${INCLUDE} ${LIBS} ${CUDAOBJECTS} ${CPPOBJECTS} -o ${BIN_DIR}/pafinder
 
 ${OBJ_DIR}/%.o: ${SRC_DIR}/%.cu
 	${NVCC} -c ${NVCC_FLAG} ${INCLUDE} $< -o $@

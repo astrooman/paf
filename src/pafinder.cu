@@ -10,7 +10,7 @@
 
 #include "config.hpp"
 #include "errors.hpp"
-#include "ober_pool.cuh"
+#include "main_pool.cuh"
 
 using std::cerr;
 using std::cout;
@@ -32,7 +32,8 @@ int main(int argc, char *argv[])
                 iarg++;
                 configfile = string(argv[iarg]);
                 ReadConfig(configfile, config);
-	    } else if (string(argv[iarg]) == "-r") {
+                //TODO: Shall we break at this point or allow to add extra or change some parameters?
+            } else if (string(argv[iarg]) == "-r") {
                 iarg++;
                 config.record = atoi(argv[iarg]);
             } else if (string(argv[iarg]) == "-s") {     // the number of streams to use
@@ -50,6 +51,12 @@ int main(int argc, char *argv[])
             } else if (string(argv[iarg]) == "-n") {    // the number of GPUs to use
                 iarg++;
                 config.nogpus = atoi(argv[iarg]);
+                int devcount{0};
+                cudaCheckError(cudaGetDeviceCount(&devcount));
+                if (config.nogpus > devcount) {
+                    cout << "You can't use more GPUs than you have available!" << endl;
+                    config.nogpus = devcount;
+                }
             } else if (string(argv[iarg]) == "-o") {    // output directory for the filterbank files
                 iarg++;
                 struct stat chkdir;
@@ -60,7 +67,7 @@ int main(int argc, char *argv[])
                     if (isdir)
                         config.outdir = string(argv[iarg]);
                     else
-                        cout << "Output directory does not exist! Will use default directory!";
+                        cout << "Output directory does not exist! Will use the default directory!";
                 }
             } else if (string(argv[iarg]) == "--gpuid") {
                 for (int igpu = 0; igpu < config.nogpus; igpu++) {
@@ -99,24 +106,26 @@ int main(int argc, char *argv[])
         cout << "Starting up. This may take few seconds..." << endl;
 
         cout << "This is the configuration used:" << endl;
+        cout << "\t - the number of beams per node: " << config.nobeams << endl;
         cout << "\t - the number of GPUs to use: " << config.nogpus << endl;
-        int devcount{0};
-        cudaCheckError(cudaGetDeviceCount(&devcount));
-        if (config.nogpus > devcount) {
-            cout << "You can't use more GPUs than you have available!" << endl;
-            config.nogpus = devcount;
-        }
-        cout << "\t - the number of worker streams per GPU: " << config.nostreams << endl;
-        cout << "\t - the IP addresses to listen on:" << endl;
+        cout << "\t - IP addresses to listen on:" << endl;
         for (int iip = 0; iip < config.ips.size(); iip++) {
-            cout << "\t\t * " << config.ips[iip] << endl;
+            cout << "\t\t * " << config.ips.at(iip) << endl;
         }
-        cout << "\t - gulp size: " << config.gulp << endl;
+        cout << "\t - ports to listen on: " << endl;
+        for (int iport = 0; iport < config.ports.size(); iport++) {
+            cout << "\t\t * " << config.ports.at(iport) << endl;
+        }
+        cout << "\t - output directory: " << config.outdir << endl;
+        cout << "\t - the number of seconds to record: " << config.record << endl;
         cout << "\t - frequency averaging: " << config.freqavg << endl;
         cout << "\t - time averaging: " << config.timeavg << endl;
+        cout << "\t - dedispersion gulp size: " << config.gulp << endl;
+        cout << "\t - first DM to dedisperse to: " << config.dmstart << endl;
+        cout << "\t - last DM to dedisperse to: " << config.dmend << endl;
     }
 
-    OberPool mypool(config);
+    MainPool pafpool(config);
 
     cudaDeviceReset();
 
