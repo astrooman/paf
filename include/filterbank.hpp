@@ -41,8 +41,8 @@ struct header_f
     \param head structure with all the information require for the filterbank header
     \param saved number of the filterbank files saved so far
 */
-
-inline void SaveFilterbank(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved, std::string outdir)
+template <class FilType>
+inline void SaveFilterbank(FilType **phfilterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved, std::string outdir)
 {
 
     std::ostringstream oss;
@@ -52,12 +52,11 @@ inline void SaveFilterbank(float *ph_filterbank, size_t nsamps, size_t start, he
     int length{0};
     char field[60];
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
-    // save just I for testing purposes
-    for (int ii = 0; ii < stokes; ii++) {
+    size_t tosave = nsamps * head.nchans * head.nbits / 8;
+    for (int istoke = 0; istoke < stokes; istoke++) {
         oss.str("");
-        //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
         // TODO: Change the naming scheme to utc_beam_I/Q/U/V.fil
-        oss << stokesid[ii] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
+        oss << stokesid[istoke] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
         filename = outdir + "/" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -190,14 +189,8 @@ inline void SaveFilterbank(float *ph_filterbank, size_t nsamps, size_t start, he
             strcpy(field, "HEADER_END");
             outfile.write(field, length * sizeof(char));
 
-            //float *ph_filsave = ph_filterbank[ii];
-            // TODO: Temporary array does not make any sense. Get rid of it
-            // This is beyond wrong
-	        for (int sample = 0; sample < nsamps * head.nchans; sample++) {
-                tmpstore[sample] = static_cast<unsigned char>(ph_filterbank[start + ii * nsamps * head.nchans + sample]);
-            }
-            //outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);
-            outfile.write(reinterpret_cast<char*>(&tmpstore[0]), nsamps * head.nchans);
+            FilType *filsave = phfilterbank[istoke];
+            outfile.write(reinterpret_cast<char*>(&filsave[start]), tosave);
 
         } else {
             std::cerr << "Problems with saving the filterbank file" << std::endl;
