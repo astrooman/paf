@@ -32,6 +32,7 @@ class GpuPool
         const unsigned int fftbatchsize_;            //!< The number of 1MHz channels to process
         const unsigned int fftedsize_;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations        const unsigned int timescrunchedsize_;     //!< (size of single fft - 5) * # 1MHz channels
         const unsigned int fftpoints_;               //!< Size of the single FFT
+        const unsigned int filbits_;
         const unsigned int freqscrunchedsize_;     //!< timescrunchedsize_ / # frequency channels to average
         const unsigned int gpuid_;                      //!< Self-explanatory
         const unsigned int headlen_;                //!< Length (in bytes) of the CODIF header
@@ -97,8 +98,7 @@ class GpuPool
 
         int *filedesc_;
 
-        // TODO: This should really be a template
-        std::unique_ptr<FilterbankBuffer<float>> filbuffer_;
+        std::unique_ptr<FilterbankBuffer> filbuffer_;
         std::unique_ptr<DedispPlan> dedispplan_;
 
         unsigned char *hinbuffer_;           //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples

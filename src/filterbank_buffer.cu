@@ -1,5 +1,6 @@
 #include <algorithm>
 
+#include "errors.hpp"
 #include "filterbank_buffer.cuh"
 
 FilterbankBuffer::FilterbankBuffer(int gpuid) : gpuid_(gpuid) {

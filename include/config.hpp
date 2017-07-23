@@ -48,6 +48,7 @@ struct InConfig {
     unsigned int noports;           //!< Number of ports to receive the data on; should be the same as ports.size()
     unsigned int nostokes;          //!< Number of Stokes parameters to output
     unsigned int nostreams;         //!< Number of GPU streams used for filterbank
+    unsigned int outbits;           //!< Number of filterbank bits per sample after scaling
     unsigned int record;            //!< Number of seconds to record
     unsigned int timeavg;           //!< Number of time samples to average
 
@@ -82,6 +83,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.record = 600;        // record ~10 minutes of data
     config.nostokes = 4;
     config.nostreams = 4;
+    config.outbits = 32;
     config.timeavg = 4;
 
     config.batch = config.nochans;
@@ -140,6 +142,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.nostokes = std::stoi(paravalue);
             } else if (paraname == "NOSTREAMS") {
                 config.nostreams = (unsigned int)(std::stoi(paravalue));
+            } else if (paraname == "OUTBITS") {
+                config.outbits = (unsigned int)(std::atoi(paravalue));
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;

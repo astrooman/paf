@@ -56,6 +56,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         fftbatchsize_(config.batch),
                                         fftedsize_(config.batch * config.fftsize * config.timeavg * config.nopols * config.accumulate),
                                         fftpoints_(config.fftsize),
+                                        filbits_(config.outbits),
                                         filchans_(config.filchans),
                                         freqscrunchedsize_((config.fftsize - 5) * config.batch  * config.accumulate / config.freqavg),
                                         gpuid_(config.gpuids[poolid]),
@@ -114,7 +115,7 @@ void GpuPool::Initialise(void) {
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
 
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
-    filbuffer_ = unique_ptr<FilterbankBuffer<float>>(new FilterbankBuffer<float>(gpuid_));
+    filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
 
     framenumbers_ = new unsigned int[accumulate_ * nostreams_];
     gpustreams_ = new cudaStream_t[nostreams_];
@@ -216,7 +217,7 @@ void GpuPool::Initialise(void) {
     dedispdispersedsamples_ = (size_t)dedispgulpsamples_ + dedispextrasamples_;
     dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
-    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_);
+    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_,);
     dedispplan_->set_killmask(&config_.killmask[0]);
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
