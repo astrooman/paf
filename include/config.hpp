@@ -58,7 +58,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.test = false;
     config.verbose = false;
 
-    config.accumulate = 8;
+    config.accumulate = 128;
     config.band = 1.185;
     config.codiflen = 7168;
     config.dmstart = 0.0;
@@ -83,10 +83,10 @@ inline void SetDefaultConfig(InConfig &config) {
     config.record = 600;        // record ~10 minutes of data
     config.nostokes = 4;
     config.nostreams = 4;
-    config.outbits = 32;
+    config.outbits = 8;
     config.timeavg = 4;
 
-    config.batch = config.nochans;
+    config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
     config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
     for (int ichan = 0; ichan < config.filchans; ichan++)
@@ -109,7 +109,9 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             ossline >> paraname >> paravalue;
             std::stringstream svalue;
 
-            if (paraname == "DMEND") {
+            if (paraname == "ACCUMULATE") {
+                config.accumulate = (unsigned int)(std::stoi(paravalue));
+            } else if (paraname == "DMEND") {
                 config.dmend = std::stod(paravalue);
             } else if (paraname == "DMSTART") {
                 config.dmstart = std::stod(paravalue);
@@ -119,12 +121,12 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.freqavg = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "DEDISPGULP") {
                 config.gulp = (unsigned int)(std::stoi(paravalue));
-            } else if (paraname == "GPUID") {
+            } else if (paraname == "GPUIDS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
                 while(std::getline(svalue, sep, ','))
                     config.gpuids.push_back(std::stoi(sep));
-            } else if (paraname == "IP") {
+            } else if (paraname == "IPS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
                 while(std::getline(svalue, sep, ','))
@@ -132,7 +134,7 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             } else if (paraname == "NO1MHZCHANS") {
                 config.nochans = (unsigned int)(std::stoi(paravalue));
                 config.batch = config.nochans;
-            } else if (paraname == "NBEAMS") {
+            } else if (paraname == "NOBEAMS") {
                 config.nobeams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "NOGPUS") {
                 config.nogpus = (unsigned int)(std::stoi(paravalue));
@@ -161,6 +163,11 @@ inline void ReadConfig(std::string filename, InConfig &config) {
     } else {
         std::cerr << "Error opening the configuration file!!\n Will use the default configuration instead." << std::endl;
     }
+
+    // NOTE: Need to restart these values, as they depend on variables that can be enter through configuration file
+    config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
+    config.filchans = config.nochans * 27 / config.freqavg;
+    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
 
     inconfig.close();
 }

@@ -24,5 +24,11 @@ __global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsig
 
 __global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param);
 
+// NOTE: New kernels
+__global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ out);
+
+__global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float** __restrict__ out, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet);
+
+// TODO: This will become the kernel to calculate scaling factors
 __global__ void bandpass();
 #endif

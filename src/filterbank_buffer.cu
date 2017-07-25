@@ -1,7 +1,16 @@
 #include <algorithm>
+#include <iostream>
+#include <mutex>
+#include <string>
 
 #include "errors.hpp"
+#include "filterbank.hpp"
 #include "filterbank_buffer.cuh"
+#include "obs_time.hpp"
+
+using std::lock_guard;
+using std::mutex;
+using std::string;
 
 FilterbankBuffer::FilterbankBuffer(int gpuid) : gpuid_(gpuid) {
     cudaSetDevice(gpuid_);
@@ -25,7 +34,7 @@ FilterbankBuffer::~FilterbankBuffer() {
 }
 
 void FilterbankBuffer::Allocate(int accumulate, int gulpno, size_t extrasize, size_t gulpsize, size_t totalsize, int filchans, int stokesno, int filbits) {
-    fil_saved = 0;
+    filsaved_ = 0;
     accumulate_ = accumulate;
     extrasamples_ = extrasize;
     gulpsamples_ = gulpsize;
@@ -62,13 +71,13 @@ void FilterbankBuffer::Deallocate(void) {
 
     cudaCheckError(cudaFreeHost(rambuffer_));
 
-    delete [] gulptimes_;
-    delete [] hdfilterbank_;
     delete [] samplestate_;
+    delete [] hdfilterbank_;
+    delete [] gulptimes_;
 }
 
 void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
-    std::lock_guard<mutex> addguard(statemutex_);
+    lock_guard<mutex> addguard(statemutex_);
     int framet = frame_time.framefromstart;
     int index = frame_time.framefromstart % (nogulps_ * gulpsamples_);
     //std::cout << framet << " " << index << std::endl;
@@ -89,7 +98,7 @@ void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
 }
 
 int FilterbankBuffer::CheckIfReady() {
-    std::lock_guard<mutex> addguard(statemutex_);
+    lock_guard<mutex> addguard(statemutex_);
     // for now check only the last position for the gulp
     for (int igulp = 0; igulp < nogulps_; igulp++) {
         if (samplestate_[(igulp + 1) * gulpsamples_ + extrasamples_ - 1] == 1)
@@ -102,9 +111,9 @@ ObsTime FilterbankBuffer::GetTime(int index) {
     return gulptimes_[index];
 }
 
-void FilterbankBuffer::SendToDisk(int idx, header_f header, std::string outdir) {
-        SaveFilterbank(rambuffer_, gulpsamples_ + extrasamples_, (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, fil_saved, outdir);
-        fil_saved++;
+void FilterbankBuffer::SendToDisk(int idx, header_f header, string outdir) {
+        SaveFilterbank(rambuffer_, gulpsamples_ + extrasamples_, (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
+        filsaved_++;
 }
 
 void FilterbankBuffer::SendToRam(int idx, cudaStream_t &stream, int hostjump) {

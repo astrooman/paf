@@ -47,23 +47,27 @@ using std::vector;
 
 bool GpuPool::working_ = true;
 
+#define NACCUMULATE 128
+
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         avgfreq_(config.freqavg),
                                         avgtime_(config.timeavg),
                                         beamno_(0),
                                         codiflen_(config.codiflen),
+                                        config_(config),
                                         dedispgulpsamples_(config.gulp),
-                                        fftbatchsize_(config.batch),
-                                        fftedsize_(config.batch * config.fftsize * config.timeavg * config.nopols * config.accumulate),
+                                        fftbatchsize_(config.nopols * config.nochans * config.accumulate * 128 / config.fftsize),
+                                        fftedsize_(config.nopols * config.nochans * config.accumulate * 128 / config.fftsize * config.fftsize),
                                         fftpoints_(config.fftsize),
                                         filbits_(config.outbits),
                                         filchans_(config.filchans),
-                                        freqscrunchedsize_((config.fftsize - 5) * config.batch  * config.accumulate / config.freqavg),
+                                        freqscrunchedsize_(config.nochans * config.accumulate * 128  / config.fftsize * (config.fftsize - 5) / config.timeavg / config.freqavg),
                                         gpuid_(config.gpuids[poolid]),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
                                         ipstring_(config.ips[poolid]),
-                                        inbuffsize_(8 * config.batch * config.fftsize * config.timeavg * config.accumulate),
+                                        // NOTE: There are config.nochans * config.accumulate * 128 8-byte words
+                                        inbuffsize_(8  * config.nochans * config.accumulate * 128),
                                         inchans_(config.nochans),
                                         nopols_(config.nopols),
                                         noports_(config.noports),
@@ -71,36 +75,28 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         nostreams_(config.nostreams),
                                         poolid_(poolid),
                                         ports_(config.ports),
-                                        // NOTE: 32 * 4 gives the starting 128 time samples, but this is not the correct implementation
-                                        // TODO: Need to include the time averaging in the correct way
-                                        rearrangedsize_(config.batch * config.fftsize * config.timeavg * config.nopols * config.accumulate),
-                                        scaled_(false),
+                                        // NOTE: Quick hack to switch the scaling off
+                                        scaled_(true),
                                         secondstorecord_(config.record),
-                                        timescrunchedsize_((config.fftsize - 5) * config.batch * config.accumulate),
+                                        timescrunchedsize_(config.nochans * config.accumulate * 128 / config.fftsize * (config.fftsize - 5) / config.timeavg),
+                                        unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
 
+    // TODO: This statement doesn't make sense - we eiather have enough cores or not
+    // NOTE: usethreads_ is not used anywhere
     usethreads_ = min(nostreams_ + 2, thread::hardware_concurrency());
-
-    config_ = config;
 
     if (verbose_)
         PrintSafe("Starting GPU pool", gpuid_);
 }
 
 void GpuPool::Initialise(void) {
+
     struct bitmask *mask = numa_parse_nodestring((std::to_string(poolid_)).c_str());
     numa_bind(mask);
 
     signal(SIGINT, GpuPool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
-
-    // NOTE: The output number of channels has to be divisible by 4
-    // This is a requirement for the dedisp/Heimdall GPU memory access
-    // In this case, any power of 2, greater than 4 works
-    // TODO: Test whether there can be a better way of doing this
-    // Using the closest lower power of 2 can lose us a lot of channels
-    filchans_ = 1 << (int)log2f(filchans_);
-    cpu_set_t cpuset;
 
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
@@ -111,8 +107,20 @@ void GpuPool::Initialise(void) {
         exit(EXIT_FAILURE);     // affinity is critical for us
     }
 
+    // NOTE: The output number of channels has to be divisible by 4
+    // This is a requirement for the dedisp/Heimdall GPU memory access
+    // In this case, any power of 2, greater than 4 works
+    // TODO: Test whether there can be a better way of doing this
+    // Using the closest lower power of 2 can lose us a lot of channels
+    filchans_ = 1 << (int)log2f(filchans_);
+    cpu_set_t cpuset;
+
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
+
+    // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
+    if (verbose_)
+        PrintSafe("Preparing the memory on pool", poolid_, "...");
 
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
@@ -121,26 +129,23 @@ void GpuPool::Initialise(void) {
     gpustreams_ = new cudaStream_t[nostreams_];
     fftplans_ = new cufftHandle[nostreams_];
 
+    // TODO: Can really remove this array
+    // Wait until we put the final optimised verions of kernels
     int nokernels = 4;
     cudathreads_ = new unsigned int[nokernels];
     cudablocks_ = new unsigned int[nokernels];
 
-    // TODO: Put optimised versions of these kernels in
     cudathreads_[0] = 7;
-    cudathreads_[1] = fftpoints_ * avgtime_ * fftbatchsize_ / 42;
+    cudathreads_[1] = fftpoints_ * avgtime_ * inchans_ / 42;
     cudathreads_[2] = inchans_;
     cudathreads_[3] = filchans_;
-    //cudathreads_[3] = filchans_;
 
     cudablocks_[0] = 48;
     cudablocks_[1] = 42;
     cudablocks_[2] = 1;
     cudablocks_[3] = 1;
 
-    // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
-    if (verbose_)
-        PrintSafe("Preparing the memory on pool", poolid_, "...");
-
+/*
     arrangechandesc_ = cudaCreateChannelDesc<int2>();
     cudaCheckError(cudaPeekAtLastError());
 
@@ -149,7 +154,7 @@ void GpuPool::Initialise(void) {
     arrangeresdesc_ = new cudaResourceDesc[nostreams_];
     arrangetexdesc_ = new cudaTextureDesc[nostreams_];
     for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cudaCheckError(cudaMallocArray(&(arrange2darray_[igstream]), &arrangechandesc_, 7, (fftbatchsize_  / 7) * fftpoints_ * avgtime_ * accumulate_));
+        cudaCheckError(cudaMallocArray(&(arrange2darray_[igstream]), &arrangechandesc_, 7, (inchans_  / 7) * fftpoints_ * avgtime_ * accumulate_));
 
         memset(&(arrangeresdesc_[igstream]), 0, sizeof(cudaResourceDesc));
         arrangeresdesc_[igstream].resType = cudaResourceTypeArray;
@@ -163,30 +168,27 @@ void GpuPool::Initialise(void) {
         arrangetexobj_[igstream] = 0;
         cudaCheckError(cudaCreateTextureObject(&(arrangetexobj_[igstream]), &(arrangeresdesc_[igstream]), &(arrangetexdesc_[igstream]), NULL));
     }
-
-    // NOTE: It has to be an array and I can't do anything about that
-    fftsizes_[0] = (int)fftpoints_;
+*/
 
     // NOTE: Each stream will have its own incoming buffer to read from
-    packperbuffer_ = fftbatchsize_ / 7 * accumulate_ * nostreams_;
+    // NOTE: inchans_ / 7 as each packet receives 7 channels
+    packperbuffer_ = inchans_ / 7 * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
-    readybuffidx_ = new bool[packperbuffer_]();
+    readybuffidx_ = new bool[packperbuffer_];
+
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
-    cudaCheckError(cudaMalloc((void**)&dstreambuffer_, rearrangedsize_ * nostreams_ * sizeof(cufftComplex)));
+    cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
+    cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ nostreams_ * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
 
     htimescrunchedbuffer_ = new float*[nostreams_];
-    hfreqscrunchedbuffer_ = new float*[nostreams_];
 
     for (int igstream = 0; igstream < nostreams_; igstream++) {
         cudaCheckError(cudaMalloc((void**)&htimescrunchedbuffer_[igstream], timescrunchedsize_ * nostokes_ * sizeof(float)));
-        cudaCheckError(cudaMalloc((void**)&hfreqscrunchedbuffer_[igstream], freqscrunchedsize_ * nostokes_ * sizeof(float)));
     }
 
     cudaCheckError(cudaMalloc((void**)&dtimescrunchedbuffer_, nostreams_ * sizeof(float*)));
-    cudaCheckError(cudaMalloc((void**)&dfreqscrunchedbuffer_, nostreams_ * sizeof(float*)));
     cudaCheckError(cudaMemcpy(dtimescrunchedbuffer_, htimescrunchedbuffer_, nostreams_ * sizeof(float*), cudaMemcpyHostToDevice));
-    cudaCheckError(cudaMemcpy(dfreqscrunchedbuffer_, hfreqscrunchedbuffer_, nostreams_ * sizeof(float*), cudaMemcpyHostToDevice));
 
     hmeans_ = new float*[nostokes_];
     hrstdevs_ = new float*[nostokes_];
@@ -231,9 +233,13 @@ void GpuPool::Initialise(void) {
 
     // STAGE: start processing
     // FFT threads
+
+    // NOTE: It has to be an array and I can't do anything about that
+    fftsizes_[0] = (int)fftpoints_;
+
     for (int igstream = 0; igstream < nostreams_; igstream++) {
             cudaCheckError(cudaStreamCreate(&gpustreams_[igstream]));
-            cufftCheckError(cufftPlanMany(&fftplans_[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_ * avgtime_ * nopols_ * accumulate_));
+            cufftCheckError(cufftPlanMany(&fftplans_[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_));
             cufftCheckError(cufftSetStream(fftplans_[igstream], gpustreams_[igstream]));
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
     }
@@ -358,14 +364,10 @@ GpuPool::~GpuPool(void) {
     cudaCheckError(cudaFree(drstdevs_));
 
     for (int igstream = 0; igstream < nostreams_; igstream++) {
-        // TODO: cudaFree() the scrunched data buffers
-        cudaCheckError(cudaFree(hfreqscrunchedbuffer_[igstream]));
         cudaCheckError(cudaFree(htimescrunchedbuffer_[igstream]));
     }
 
     delete [] htimescrunchedbuffer_;
-    delete [] hfreqscrunchedbuffer_;
-    cudaCheckError(cudaFree(dfreqscrunchedbuffer_));
     cudaCheckError(cudaFree(dtimescrunchedbuffer_));
 
     cudaCheckError(cudaFree(dstreambuffer_));
@@ -404,7 +406,7 @@ void GpuPool::FilterbankData(int stream) {
     cudaSetDevice(gpuid_);
     dim3 rearrange_b(1,48,1);
     dim3 rearrange_t(7,1,1);
-    unsigned int skip = stream * rearrangedsize_;
+    unsigned int skip = stream * unpackedbuffersize_;
 
     float **pfil = filbuffer_ -> GetFilPointer();
     float **pdfil;
@@ -414,7 +416,6 @@ void GpuPool::FilterbankData(int stream) {
     ObsTime frametime;
 
     float *ptimescrunchedbuffer_ = htimescrunchedbuffer_[stream];
-    float *pfreqscrunchedbuffer_ = hfreqscrunchedbuffer_[stream];
 
     // TODO: This has to be simplified
     int skipread = stream * (packperbuffer_ / nostreams_);
@@ -452,11 +453,15 @@ void GpuPool::FilterbankData(int stream) {
             frametime.startepoch = starttime_.startepoch;
             frametime.startsecond = starttime_.startsecond;
 
-            cudaCheckError(cudaMemcpyToArrayAsync(arrange2darray_[stream], 0, 0, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
-            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
-            cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
-            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
+            cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
+            //cudaCheckError(cudaMemcpyToArrayAsync(arrange2darray_[stream], 0, 0, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
+//            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
+            UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + skip), dunpackedbuffer_ + skip);
+            cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, pfil[0], filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametie.framefromstart);
+            //cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
+//            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
+//            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
             cudaStreamSynchronize(gpustreams_[stream]);
             cudaCheckError(cudaGetLastError());
             filbuffer_ -> UpdateFilledTimes(frametime);

@@ -12,19 +12,14 @@
 #include <iostream>
 #include <mutex>
 #include <string>
-#include <vector>
-
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
 
 #include "errors.hpp"
 #include "filterbank.hpp"
 #include "kernels.cuh"
 #include "obs_time.hpp"
 
-using std::mutex;
-using std::vector;
-
+// NOTE: For the time being, only unsigned char scaled output will be supporded.
+// THe current FilterbankBuffer implementation should however support 8, 16 or 32 output bits
 class FilterbankBuffer
 {
     private:
@@ -36,8 +31,8 @@ class FilterbankBuffer
         int nostokes_;              // number of Stokes parameters to keep in the buffer
         int typebytes_;
 
-        mutex buffermutex_;
-        mutex statemutex_;
+        std::mutex buffermutex_;
+        std::mutex statemutex_;
 
         size_t end_;
         size_t extrasamples_;               // number of extra time samples required to process the full gulp
@@ -54,11 +49,7 @@ class FilterbankBuffer
 
         unsigned int *samplestate_;         // 0 for no data, 1 for data
 
-        BufferType *dfilterbank_
-        BufferType **hdfilterbank_;                                          // array of raw pointers to Stoke parameters device vectors
-        BufferType **rambuffer_;
-
-        int fil_saved;
+        int filsaved_;
     protected:
 
     public:
@@ -66,7 +57,7 @@ class FilterbankBuffer
         FilterbankBuffer(int gulpno, size_t extrasize, size_t gulpsize, size_t totalsize, int gpuid);
         ~FilterbankBuffer(void);
 
-        BufferType **GetFilPointer(void) {return this->dfilterbank_;};
+        unsigned char **GetFilPointer(void) {return this->dfilterbank_;};
 
         int CheckIfReady(void);
 
@@ -80,8 +71,8 @@ class FilterbankBuffer
         void UpdateFilledTimes(ObsTime frame_time);
 };
 
-template<class BufferType>
-void FilterbankBuffer<BufferType>::GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs) {
+// NOTE: Scaling will be removed in this form. Will be moved to the detection kernel
+void FilterbankBuffer::GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs) {
     float *d_transpose;
     cudaMalloc((void**)&d_transpose, (gulpsamples_ + extrasamples_) * nochans_ * sizeof(float));
     for (int istoke = 0; istoke < nostokes_; istoke++) {

@@ -43,8 +43,9 @@ class GpuPool
         const unsigned int nostokes_;                //!< Number of stoke parameters to generate and store
         const unsigned int nostreams_;               //!< Number of CUDA streams to use
         const unsigned int poolid_;
-        const unsigned int rearrangedsize_;               //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int timescrunchedsize_;      //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int timescrunchedsize_;          //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int unpackedbuffersize_;         //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
+
 
         cudaChannelFormatDesc arrangechandesc_;
 
@@ -78,7 +79,7 @@ class GpuPool
         std::vector<std::thread> receivethreads_;
 
         cufftComplex *dfftedbuffer_;            //!< Buffer for the signal after the FFT, powerscale() kernel input, holds GpuPool::fftedsize_ * GpuPool::nostreams_ elements
-        cufftComplex *dstreambuffer_;         //!< Raw voltage device buffer, cufftExecC2C() input, holds GpuPool::rearrangedsize_ * GpuPool::nostreams_ elements
+        cufftComplex *dunpackedbuffer_;
 
         cudaArray **arrange2darray_;
         cudaResourceDesc *arrangeresdesc_;
@@ -87,11 +88,9 @@ class GpuPool
         cudaTextureObject_t *arrangetexobj_;
         cufftHandle *fftplans_;           //<! Pointer to the array of cuFFT plans
 
-        float **dfreqscrunchedbuffer_;
         float **dmeans_;
         float **drstdevs_;
         float **dtimescrunchedbuffer_;
-        float **hfreqscrunchedbuffer_;
         float **hmeans_;
         float **hrstdevs_;
         float **htimescrunchedbuffer_;
@@ -101,6 +100,7 @@ class GpuPool
         std::unique_ptr<FilterbankBuffer> filbuffer_;
         std::unique_ptr<DedispPlan> dedispplan_;
 
+        unsigned char *dstreambuffer_;
         unsigned char *hinbuffer_;           //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples
         unsigned char *hstreambuffer_;       //!< Raw voltage host buffer, async copied to dstreambuffer_ in the GpuPool::worker()
         unsigned char **receivebuffers_;
