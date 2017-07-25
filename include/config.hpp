@@ -145,7 +145,7 @@ inline void ReadConfig(std::string filename, InConfig &config) {
             } else if (paraname == "NOSTREAMS") {
                 config.nostreams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "OUTBITS") {
-                config.outbits = (unsigned int)(std::atoi(paravalue));
+                config.outbits = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;

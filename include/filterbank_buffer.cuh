@@ -70,13 +70,13 @@ class FilterbankBuffer
         void SendToRam(int idx, cudaStream_t &stream, int hostjump);
         void UpdateFilledTimes(ObsTime frame_time);
 };
-
+/*
 // NOTE: Scaling will be removed in this form. Will be moved to the detection kernel
 void FilterbankBuffer::GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs) {
     float *d_transpose;
     cudaMalloc((void**)&d_transpose, (gulpsamples_ + extrasamples_) * nochans_ * sizeof(float));
     for (int istoke = 0; istoke < nostokes_; istoke++) {
-        Transpose<<<1,nochans_,0,stream>>>(pdfilterbank[istoke] + (idx - 1) * gulpsamples_ * nochans_, d_transpose, nochans_, gulpsamples_ + extrasamples_);
+        Transpose<<<1,nochans_,0,stream>>>(dfilterbank_[istoke] + (idx - 1) * gulpsamples_ * nochans_, d_transpose, nochans_, gulpsamples_ + extrasamples_);
         GetScaleFactors<<<1,nochans_,0,stream>>>(d_transpose, d_means, d_rstdevs, nochans_, gulpsamples_ + extrasamples_, istoke);
     }
     cudaFree(d_transpose);
@@ -84,6 +84,7 @@ void FilterbankBuffer::GetScaling(int idx, cudaStream_t &stream, float **d_means
     statemutex_.lock();
     samplestate_[idx * gulpsamples_ + extrasamples_ - 1] = 0;
     statemutex_.unlock();
-}
 
+}
+*/
 #endif

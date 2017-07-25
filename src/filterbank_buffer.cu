@@ -45,13 +45,13 @@ void FilterbankBuffer::Allocate(int accumulate, int gulpno, size_t extrasize, si
     typebytes_ = filbits / 8;
 
     gulptimes_ = new ObsTime[nogulps_];
-    hdfilterbank = new unsigned char*[nostokes_];
+    hdfilterbank_ = new unsigned char*[nostokes_];
     samplestate_ = new unsigned int[(int)totalsamples_];
     std::fill(samplestate_, samplestate_ + totalsamples_, 0);
     cudaCheckError(cudaHostAlloc((void**)&rambuffer_, nostokes_ * sizeof(unsigned char*), cudaHostAllocDefault));
 
     for (int istoke = 0; istoke < nostokes_; istoke++) {
-        cudaCheckError(cudaMalloc((void**)&(hdfilterbank_[istoke]), totalsamples_ * nochans_ * typebytes_)));
+        cudaCheckError(cudaMalloc((void**)&(hdfilterbank_[istoke]), totalsamples_ * nochans_ * typebytes_));
         cudaCheckError(cudaHostAlloc((void**)&(rambuffer_[istoke]), (gulpsamples_ + extrasamples_) * nochans_ * 2 * typebytes_, cudaHostAllocDefault));
     }
 
@@ -121,7 +121,7 @@ void FilterbankBuffer::SendToRam(int idx, cudaStream_t &stream, int hostjump) {
     hostjump *= (gulpsamples_ + extrasamples_) * nochans_ * nostokes_;
 
     for (int istoke = 0; istoke < nostokes_; istoke++) {
-        cudaCheckError(cudaMemcpyAsyc(rambuffer_[istoke] + hostjump * typebytes_, hdfilterbank_[istoke] + (idx - 1) * gulpsamples_ * nochans_ * typebytes_, (gulpsamples_ + extrasamples_) * nochans_ * typebytes_, cudaMemcpyDeviceToHost, stream));
+        cudaCheckError(cudaMemcpyAsync(rambuffer_[istoke] + hostjump * typebytes_, hdfilterbank_[istoke] + (idx - 1) * gulpsamples_ * nochans_ * typebytes_, (gulpsamples_ + extrasamples_) * nochans_ * typebytes_, cudaMemcpyDeviceToHost, stream));
     }
 
     cudaStreamSynchronize(stream);

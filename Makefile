@@ -19,7 +19,7 @@ NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread
 
 CPPOBJECTS = ${OBJ_DIR}/DedispPlan.o
 
-CUDAOBJECTS = ${OBJ_DIR}/pafinder.o ${OBJ_DIR}/gpu_pool.o ${OBJ_DIR}/main_pool.o ${OBJ_DIR}/kernels.o ${OBJ_DIR}/dedisp.o
+CUDAOBJECTS = ${OBJ_DIR}/pafinder.o ${OBJ_DIR}/gpu_pool.o ${OBJ_DIR}/main_pool.o ${OBJ_DIR}/kernels.o ${OBJ_DIR}/dedisp.o ${OBJ_DIR}/filterbank_buffer.o
 
 
 all: pafinder

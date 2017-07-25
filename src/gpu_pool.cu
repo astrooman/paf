@@ -98,6 +98,7 @@ void GpuPool::Initialise(void) {
     signal(SIGINT, GpuPool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
 
+    cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * 8, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
@@ -113,7 +114,6 @@ void GpuPool::Initialise(void) {
     // TODO: Test whether there can be a better way of doing this
     // Using the closest lower power of 2 can lose us a lot of channels
     filchans_ = 1 << (int)log2f(filchans_);
-    cpu_set_t cpuset;
 
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
@@ -178,7 +178,7 @@ void GpuPool::Initialise(void) {
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
-    cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ nostreams_ * sizeof(cufftComplex)));
+    cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ * nostreams_ * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
 
     htimescrunchedbuffer_ = new float*[nostreams_];
@@ -219,7 +219,7 @@ void GpuPool::Initialise(void) {
     dedispdispersedsamples_ = (size_t)dedispgulpsamples_ + dedispextrasamples_;
     dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
-    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_,);
+    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_, filbits_);
     dedispplan_->set_killmask(&config_.killmask[0]);
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
@@ -408,10 +408,10 @@ void GpuPool::FilterbankData(int stream) {
     dim3 rearrange_t(7,1,1);
     unsigned int skip = stream * unpackedbuffersize_;
 
-    float **pfil = filbuffer_ -> GetFilPointer();
-    float **pdfil;
-    cudaMalloc((void**)&pdfil, nostokes_ * sizeof(float*));
-    cudaMemcpy(pdfil, pfil, nostokes_ * sizeof(float*), cudaMemcpyHostToDevice);
+    unsigned char **pfil = filbuffer_ -> GetFilPointer();
+    unsigned char **pdfil;
+    cudaMalloc((void**)&pdfil, nostokes_ * sizeof(unsigned char*));
+    cudaMemcpy(pdfil, pfil, nostokes_ * sizeof(unsigned char*), cudaMemcpyHostToDevice);
 
     ObsTime frametime;
 
@@ -458,7 +458,7 @@ void GpuPool::FilterbankData(int stream) {
 //            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + skip), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, pfil[0], filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametie.framefromstart);
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
             //cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 //            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
 //            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
@@ -501,8 +501,8 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.raw_file = "tastytastytest";
                 headerfil.source_name = "J1641-45";
                 headerfil.az = 0.0;
-                headerfil.ra = config.ra;
-                headerfil.dec = config.dec;
+                headerfil.ra = config_.ra;
+                headerfil.dec = config_.dec;
                 // for channels in decreasing order
                 headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchans_ * config_.foff;
                 headerfil.foff = -1.0 * abs(config_.foff);
@@ -528,7 +528,7 @@ void GpuPool::SendForDedispersion(void) {
                 if (verbose_)
                     PrintSafe(ready - 1, "buffer ready on pool", poolid_);
 
-                filbuffer_ -> SendToRam(d_dedisp, ready, dedispstream_, (gulpssent_ % 2));
+                filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
                 filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
                 gulpssent_++;
 
@@ -542,7 +542,7 @@ void GpuPool::SendForDedispersion(void) {
                 // perform the scaling
                 // NOTE: Scaling breaks down when there is no data - division by a standard deviation of 0
                 // TODO: Need to come up with a more clever way of dealing with that
-                filbuffer_->GetScaling(ready, dedispstream_, dmeans_, drstdevs_);
+                // filbuffer_->GetScaling(ready, dedispstream_, dmeans_, drstdevs_);
                 cudaCheckError(cudaGetLastError());
                 scaled_ = true;
                 ready = 0;
