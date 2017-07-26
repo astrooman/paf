@@ -83,7 +83,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.record = 600;        // record ~10 minutes of data
     config.nostokes = 4;
     config.nostreams = 4;
-    config.outbits = 8;
+    config.outbits = 32;
     config.timeavg = 4;
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;

@@ -142,6 +142,7 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
         {
           sum += freq_sum_buffer[chan_idx];
         }
+        //out[NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM * blockIdx.x + threadIdx.x] = sum;
       out[saveoff + threadIdx.x] = sum;
       if (((framet + blockIdx.x) % (gulpno * gulp)) >= extra) {
           out[saveoff + threadIdx.x + (gulpno * gulp) * nchans] = sum;

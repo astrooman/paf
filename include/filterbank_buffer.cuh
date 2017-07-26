@@ -57,7 +57,7 @@ class FilterbankBuffer
         FilterbankBuffer(int gulpno, size_t extrasize, size_t gulpsize, size_t totalsize, int gpuid);
         ~FilterbankBuffer(void);
 
-        unsigned char **GetFilPointer(void) {return this->dfilterbank_;};
+        unsigned char **GetFilPointer(void) {return this -> hdfilterbank_;};
 
         int CheckIfReady(void);
 

@@ -118,7 +118,7 @@ void FilterbankBuffer::SendToDisk(int idx, header_f header, string outdir) {
 
 void FilterbankBuffer::SendToRam(int idx, cudaStream_t &stream, int hostjump) {
     // NOTE: Which half of the RAM buffer we are saving into
-    hostjump *= (gulpsamples_ + extrasamples_) * nochans_ * nostokes_;
+    hostjump *= (gulpsamples_ + extrasamples_) * nochans_;
 
     for (int istoke = 0; istoke < nostokes_; istoke++) {
         cudaCheckError(cudaMemcpyAsync(rambuffer_[istoke] + hostjump * typebytes_, hdfilterbank_[istoke] + (idx - 1) * gulpsamples_ * nochans_ * typebytes_, (gulpsamples_ + extrasamples_) * nochans_ * typebytes_, cudaMemcpyDeviceToHost, stream));

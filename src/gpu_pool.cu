@@ -113,7 +113,7 @@ void GpuPool::Initialise(void) {
     // In this case, any power of 2, greater than 4 works
     // TODO: Test whether there can be a better way of doing this
     // Using the closest lower power of 2 can lose us a lot of channels
-    filchans_ = 1 << (int)log2f(filchans_);
+    // filchans_ = 1 << (int)log2f(filchans_);
 
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
@@ -175,6 +175,8 @@ void GpuPool::Initialise(void) {
     packperbuffer_ = inchans_ / 7 * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
     readybuffidx_ = new bool[packperbuffer_];
+
+    std::fill(readybuffidx_, readybuffidx_ + packperbuffer_, 0);
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
@@ -458,7 +460,7 @@ void GpuPool::FilterbankData(int stream) {
 //            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + skip), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
             //cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 //            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
 //            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
