@@ -112,7 +112,9 @@ ObsTime FilterbankBuffer::GetTime(int index) {
 }
 
 void FilterbankBuffer::SendToDisk(int idx, header_f header, string outdir) {
-        SaveFilterbank(rambuffer_, gulpsamples_ + extrasamples_, (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
+  //NOTE [Ewan]: Commented out extrasamples_ as filterbank data should be contiguous on disk
+  //SaveFilterbank(rambuffer_, gulpsamples_ + extrasamples_, (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
+  SaveFilterbank(rambuffer_, gulpsamples_ , gulpsamples_ * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
         filsaved_++;
 }
 
