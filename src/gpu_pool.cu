@@ -628,7 +628,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // NOTE: Correct FPGA within the stream buffer
         bufidx += fpga * NACCUMULATE;
         // NOTE: Correct frame packet within the stream buffer
-        budidx += (frame % accumulate_);
+        bufidx += (frame % accumulate_);
 
         // bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;
         // bufidx += (frame % accumulate_) * 48;
