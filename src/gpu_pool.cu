@@ -62,7 +62,6 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         fftpoints_(config.fftsize),
                                         filbits_(config.outbits),
                                         filchans_(config.filchans),
-                                        freqscrunchedsize_(config.nochans * config.accumulate * 128  / config.fftsize * (config.fftsize - 5) / config.timeavg / config.freqavg),
                                         gpuid_(config.gpuids[poolid]),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
@@ -114,7 +113,7 @@ void GpuPool::Initialise(void) {
     // In this case, any power of 2, greater than 4 works
     // TODO: Test whether there can be a better way of doing this
     // Using the closest lower power of 2 can lose us a lot of channels
-    filchans_ = 1 << (int)log2f(filchans_);
+    // filchans_ = 1 << (int)log2f(filchans_);
 
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());

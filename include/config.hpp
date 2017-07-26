@@ -81,10 +81,10 @@ inline void SetDefaultConfig(InConfig &config) {
     config.noports = 6;
     config.outdir = "./";
     config.record = 600;        // record ~10 minutes of data
-    config.nostokes = 4;
+    config.nostokes = 1;
     config.nostreams = 4;
     config.outbits = 32;
-    config.timeavg = 4;
+    config.timeavg = 2;
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
