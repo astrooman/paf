@@ -518,13 +518,14 @@ void GpuPool::SendForDedispersion(void) {
                 // TODO: this totally doesn't work when something is skipped
                 headerfil.tstart = GetMjd(starttime_.startepoch, starttime_.startsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
                 sendtime = filbuffer_->GetTime(ready-1);
+                // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
                 headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
                 headerfil.machine_id = 2;
                 headerfil.nbeams = 1;
-                headerfil.nbits = 8;
+                headerfil.nbits = filbits_;
                 headerfil.nchans = filchans_;
                 headerfil.nifs = 1;
                 headerfil.telescope_id = 2;
@@ -534,6 +535,7 @@ void GpuPool::SendForDedispersion(void) {
 
                 filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
                 filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
+                // TODO: Possible race condition
                 gulpssent_++;
 
                 if (verbose_)
