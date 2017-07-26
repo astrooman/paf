@@ -96,6 +96,7 @@ class GpuPool
         float **htimescrunchedbuffer_;
 
         int *filedesc_;
+        int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
 
         std::unique_ptr<FilterbankBuffer> filbuffer_;
         std::unique_ptr<DedispPlan> dedispplan_;
@@ -115,7 +116,6 @@ class GpuPool
         unsigned int filsize;
         // polarisations buffer
         int pol_begin;
-        unsigned int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
         // GPU and thread stuff
         // raw voltage buffers
         // dstreambuffer_ is a cufftExecC2C() input

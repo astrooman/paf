@@ -47,6 +47,7 @@ using std::vector;
 
 bool GpuPool::working_ = true;
 
+#define NFPGAS 48
 #define NACCUMULATE 128
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
@@ -113,7 +114,7 @@ void GpuPool::Initialise(void) {
     // In this case, any power of 2, greater than 4 works
     // TODO: Test whether there can be a better way of doing this
     // Using the closest lower power of 2 can lose us a lot of channels
-    // filchans_ = 1 << (int)log2f(filchans_);
+    filchans_ = 1 << (int)log2f(filchans_);
 
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
@@ -125,7 +126,8 @@ void GpuPool::Initialise(void) {
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
 
-    framenumbers_ = new unsigned int[accumulate_ * nostreams_];
+    framenumbers_ = new int[accumulate_ * nostreams_];
+    std::fill(framenumbers_, framenumbers_ + accumulate_ * nostreams_, -1);
     gpustreams_ = new cudaStream_t[nostreams_];
     fftplans_ = new cufftHandle[nostreams_];
 
@@ -175,8 +177,6 @@ void GpuPool::Initialise(void) {
     packperbuffer_ = inchans_ / 7 * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
     readybuffidx_ = new bool[packperbuffer_];
-
-    std::fill(readybuffidx_, readybuffidx_ + packperbuffer_, 0);
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
@@ -419,36 +419,38 @@ void GpuPool::FilterbankData(int stream) {
 
     float *ptimescrunchedbuffer_ = htimescrunchedbuffer_[stream];
 
-    // TODO: This has to be simplified
-    int skipread = stream * (packperbuffer_ / nostreams_);
-    int skiptoend = (stream + 1) * (packperbuffer_ / nostreams_) - 1;
+    int skipread = stream * NFPGAS * NACCUMULATE;
+    int skiptoend = (stream + 1) * NFPGAS * NACCUMULATE - 1;
     int nextstart;
     if (stream != 3) {
-        nextstart = skiptoend + 24;
+        nextstart = skiptoend + 128;
     } else {
-        nextstart = 23;
+        nextstart = 128;
     }
     bool endready = false;
     bool innext = false;
     while (working_) {
         endready = false;
         innext = false;
-        for (int iidx = 0; iidx < 4; iidx++) {
+        for (int iidx = 0; iidx < 64; iidx++) {
             endready = endready || readybuffidx_[skiptoend - iidx];
             innext = innext || readybuffidx_[nextstart - iidx];
         }
         if (endready && innext) {
-            for (int iidx = 0; iidx < 4; iidx++) {
+            for (int iidx = 0; iidx < 64; iidx++) {
                 readybuffidx_[skiptoend - iidx] = false;
                 readybuffidx_[nextstart - iidx] = false;
             }
             std::copy(hinbuffer_ + stream * inbuffsize_,  hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);;
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
-                if (framenumbers_[stream * accumulate_ + frameidx] != 0) {
+                if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
                     frametime.framefromstart = framenumbers_[stream * accumulate_ + frameidx];
                     break;
                 }
             }
+
+            std::fill(framenumbers_ + stream * accumulate_, framenumbers_ + (stream + 1) * accumulate_, -1);
+
             for (int frameidx = 0; frameidx < accumulate_; frameidx++)
                 framenumbers_[stream * accumulate_ + frameidx] = 0;
 
@@ -460,7 +462,7 @@ void GpuPool::FilterbankData(int stream) {
 //            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + skip), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
             //cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 //            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
 //            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
@@ -619,10 +621,20 @@ void GpuPool::ReceiveData(int portid, int recport) {
         frame = frame + (refsecond - starttime_.startsecond - 27) / 27 * 250000;
 
         // TODO: Add some mininal missing frames checks later anyway
-        bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;
-        bufidx += (frame % accumulate_) * 48;
+        // NOTE: Which stream buffer the data is saved to
+        bufidx = (int)(frame / accumulate_) % nostreams_;
+        // NOTE: Number of packets to skip to get to the start of the stream buffer
+        bufidx *= NFPGAS * NACCUMULATE;
+        // NOTE: Correct FPGA within the stream buffer
+        bufidx += fpga * NACCUMULATE;
+        // NOTE: Correct frame packet within the stream buffer
+        budidx += (frame % accumulate_);
+
+        // bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;
+        // bufidx += (frame % accumulate_) * 48;
+
         framenumbers_[frame % (accumulate_ * nostreams_)] = frame;
-        bufidx += fpga;
+        // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         readybuffidx_[bufidx] = true;
     }

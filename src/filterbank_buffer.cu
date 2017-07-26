@@ -79,12 +79,14 @@ void FilterbankBuffer::Deallocate(void) {
 void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
     lock_guard<mutex> addguard(statemutex_);
     int framet = frame_time.framefromstart;
-    int index = frame_time.framefromstart % (nogulps_ * gulpsamples_);
+    int filtime = framet * 2;
+    int index = 0;
+    //int index = (frame_time.framefromstart * 2) % (nogulps_ * gulpsamples_);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
 
-    for (int iacc = 0; iacc < accumulate_; iacc++) {
-        index = framet % (nogulps_ * gulpsamples_);
+    for (int iacc = 0; iacc < accumulate_ * 2; iacc++) {
+        index = filtime % (nogulps_ * gulpsamples_);
         if((index % gulpsamples_) == 0)
             gulptimes_[index / gulpsamples_] = frame_time;
         samplestate_[index] = 1;
@@ -93,7 +95,7 @@ void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
         if ((index < extrasamples_) && (framet > extrasamples_)) {
             samplestate_[index + nogulps_ * gulpsamples_] = 1;
         }
-        framet++;
+        filtime++;
     }
 }
 

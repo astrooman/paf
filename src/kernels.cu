@@ -128,7 +128,7 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
 
   __syncthreads();
 
-    int saveoff = ((framet + blockIdx.x) % (gulpno * gulp)) * nchans;
+    int saveoff = ((framet * 2 + blockIdx.x) % (gulpno * gulp)) * nchans;
 
   /**
    * Here each warp will reduce 32 channels into 2 channels
@@ -144,7 +144,7 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
         }
         //out[NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM * blockIdx.x + threadIdx.x] = sum;
       out[saveoff + threadIdx.x] = sum;
-      if (((framet + blockIdx.x) % (gulpno * gulp)) >= extra) {
+      if (((framet * 2 + blockIdx.x) % (gulpno * gulp)) >= extra) {
           out[saveoff + threadIdx.x + (gulpno * gulp) * nchans] = sum;
       }
     }
