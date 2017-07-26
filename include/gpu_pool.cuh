@@ -30,10 +30,9 @@ class GpuPool
         const unsigned int avgtime_;                 //!< Number of post-FFT time samples to average
         const unsigned int codiflen_;               //!< Length (in bytes) of the single CODIF data packet (just data, no header)
         const unsigned int fftbatchsize_;            //!< The number of 1MHz channels to process
-        const unsigned int fftedsize_;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations        const unsigned int timescrunchedsize_;     //!< (size of single fft - 5) * # 1MHz channels
+        const unsigned int fftedsize_;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
         const unsigned int fftpoints_;               //!< Size of the single FFT
         const unsigned int filbits_;
-        const unsigned int freqscrunchedsize_;     //!< timescrunchedsize_ / # frequency channels to average
         const unsigned int gpuid_;                      //!< Self-explanatory
         const unsigned int headlen_;                //!< Length (in bytes) of the CODIF header
         const unsigned int inbuffsize_;
@@ -43,11 +42,7 @@ class GpuPool
         const unsigned int nostokes_;                //!< Number of stoke parameters to generate and store
         const unsigned int nostreams_;               //!< Number of CUDA streams to use
         const unsigned int poolid_;
-        const unsigned int timescrunchedsize_;          //!< (size of single fft - 5) * # 1MHz channels
         const unsigned int unpackedbuffersize_;         //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
-
-
-        cudaChannelFormatDesc arrangechandesc_;
 
         cudaStream_t dedispstream_;
 
@@ -78,22 +73,18 @@ class GpuPool
         std::vector<std::thread> gputhreads_;
         std::vector<std::thread> receivethreads_;
 
+        bool *readybuffidx_;
+
         cufftComplex *dfftedbuffer_;            //!< Buffer for the signal after the FFT, powerscale() kernel input, holds GpuPool::fftedsize_ * GpuPool::nostreams_ elements
         cufftComplex *dunpackedbuffer_;
 
-        cudaArray **arrange2darray_;
-        cudaResourceDesc *arrangeresdesc_;
         cudaStream_t *gpustreams_;        //<! Pointer to the array of CUDA streams
-        cudaTextureDesc *arrangetexdesc_;
-        cudaTextureObject_t *arrangetexobj_;
         cufftHandle *fftplans_;           //<! Pointer to the array of cuFFT plans
 
         float **dmeans_;
         float **drstdevs_;
-        float **dtimescrunchedbuffer_;
         float **hmeans_;
         float **hrstdevs_;
-        float **htimescrunchedbuffer_;
 
         int *filedesc_;
         int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
@@ -108,34 +99,6 @@ class GpuPool
 
         unsigned int *cudablocks_;       //<! Pointer to the array of block layouts for different kernels
         unsigned int *cudathreads_;      //<! Pointer to the array of thread layouts for different kernels
-
-        // NOTE: Old, bad names
-
-        bool *readybuffidx_;
-
-        unsigned int filsize;
-        // polarisations buffer
-        int pol_begin;
-        // GPU and thread stuff
-        // raw voltage buffers
-        // dstreambuffer_ is a cufftExecC2C() input
-        // the ffted signal buffer
-        // cufftExecC2C() output
-        // powerscale() kernel input
-        // the detected signal buffer
-        // powerscale() kernel output
-        // addtime() kernel input
-        float *d_power;                 //!< No longer in use
-        // the time scrunched signal buffer
-        // addtime() kernel output
-        // addchannel() kernel input
-        float *d_time_scrunch;          //!< No longer in use
-        // the frequency schruned signal buffer
-        // addchannel() kernel output
-        float *d_freq_scrunch;          //!< No longer in use
-        unsigned char *d_dedisp;        //!< Not in use in the dump mode
-        unsigned char *d_search;        //!< Not in use in the dump mode
-
 
     protected:
 
