@@ -413,8 +413,6 @@ void GpuPool::FilterbankData(int stream) {
             std::this_thread::yield();
         }
     }
-
-    cudaCheckError(cudaFree(pdfil));
 }
 
 void GpuPool::SendForDedispersion(void) {

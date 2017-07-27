@@ -52,7 +52,8 @@ inline void SaveFilterbank(unsigned char **phfilterbank, size_t nsamps, size_t s
     char field[60];
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
     size_t tosave = nsamps * head.nchans * head.nbits / 8;
-    for (int istoke = 0; istoke < stokes; istoke++) {
+    size_t true_start = start * head.nbits / 8;
+      for (int istoke = 0; istoke < stokes; istoke++) {
         oss.str("");
         // TODO: Change the naming scheme to utc_beam_I/Q/U/V.fil
         oss << stokesid[istoke] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
@@ -189,7 +190,7 @@ inline void SaveFilterbank(unsigned char **phfilterbank, size_t nsamps, size_t s
             outfile.write(field, length * sizeof(char));
 
             unsigned char *filsave = phfilterbank[istoke];
-            outfile.write(reinterpret_cast<char*>(&filsave[start]), tosave);
+            outfile.write(reinterpret_cast<char*>(&filsave[true_start]), tosave);
 
         } else {
             std::cerr << "Problems with saving the filterbank file" << std::endl;
