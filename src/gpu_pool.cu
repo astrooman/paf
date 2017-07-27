@@ -62,7 +62,6 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         fftpoints_(config.fftsize),
                                         filbits_(config.outbits),
                                         filchans_(config.filchans),
-                                        freqscrunchedsize_(config.nochans * config.accumulate * 128  / config.fftsize * (config.fftsize - 5) / config.timeavg / config.freqavg),
                                         gpuid_(config.gpuids[poolid]),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
@@ -79,7 +78,6 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         // NOTE: Quick hack to switch the scaling off
                                         scaled_(true),
                                         secondstorecord_(config.record),
-                                        timescrunchedsize_(config.nochans * config.accumulate * 128 / config.fftsize * (config.fftsize - 5) / config.timeavg),
                                         unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
 
@@ -147,50 +145,16 @@ void GpuPool::Initialise(void) {
     cudablocks_[2] = 1;
     cudablocks_[3] = 1;
 
-/*
-    arrangechandesc_ = cudaCreateChannelDesc<int2>();
-    cudaCheckError(cudaPeekAtLastError());
-
-    arrange2darray_ = new cudaArray*[nostreams_];
-    arrangetexobj_ = new cudaTextureObject_t[nostreams_];
-    arrangeresdesc_ = new cudaResourceDesc[nostreams_];
-    arrangetexdesc_ = new cudaTextureDesc[nostreams_];
-    for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cudaCheckError(cudaMallocArray(&(arrange2darray_[igstream]), &arrangechandesc_, 7, (inchans_  / 7) * fftpoints_ * avgtime_ * accumulate_));
-
-        memset(&(arrangeresdesc_[igstream]), 0, sizeof(cudaResourceDesc));
-        arrangeresdesc_[igstream].resType = cudaResourceTypeArray;
-        arrangeresdesc_[igstream].res.array.array = arrange2darray_[igstream];
-
-        memset(&(arrangetexdesc_[igstream]), 0, sizeof(cudaTextureDesc));
-        arrangetexdesc_[igstream].addressMode[0] = cudaAddressModeClamp;
-        arrangetexdesc_[igstream].filterMode = cudaFilterModePoint;
-        arrangetexdesc_[igstream].readMode = cudaReadModeElementType;
-
-        arrangetexobj_[igstream] = 0;
-        cudaCheckError(cudaCreateTextureObject(&(arrangetexobj_[igstream]), &(arrangeresdesc_[igstream]), &(arrangetexdesc_[igstream]), NULL));
-    }
-*/
-
     // NOTE: Each stream will have its own incoming buffer to read from
     // NOTE: inchans_ / 7 as each packet receives 7 channels
-    packperbuffer_ = inchans_ / 7 * accumulate_ * nostreams_;
+    packperbuffer_ = NFPGAS * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
-    readybuffidx_ = new bool[packperbuffer_];
+    readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
     cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ * nostreams_ * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
-
-    htimescrunchedbuffer_ = new float*[nostreams_];
-
-    for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cudaCheckError(cudaMalloc((void**)&htimescrunchedbuffer_[igstream], timescrunchedsize_ * nostokes_ * sizeof(float)));
-    }
-
-    cudaCheckError(cudaMalloc((void**)&dtimescrunchedbuffer_, nostreams_ * sizeof(float*)));
-    cudaCheckError(cudaMemcpy(dtimescrunchedbuffer_, htimescrunchedbuffer_, nostreams_ * sizeof(float*), cudaMemcpyHostToDevice));
 
     hmeans_ = new float*[nostokes_];
     hrstdevs_ = new float*[nostokes_];
@@ -231,7 +195,7 @@ void GpuPool::Initialise(void) {
     SetSearchParams(singleparams_, config_);
     // NOTE: Commented out for the filterbank dump mode
     //hd_create_pipeline(&pipeline, params);
-    // NOTE: everything should be ready for single pulse search after this point
+    // NOTE: Everything should be ready for single pulse search after this point
 
     // STAGE: start processing
     // FFT threads
@@ -330,10 +294,6 @@ GpuPool::~GpuPool(void) {
         scalefile.close();
     }
     // cleaning up the stuff
-    for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cudaCheckError(cudaDestroyTextureObject(arrangetexobj_[igstream]));
-        cudaCheckError(cudaFreeArray(arrange2darray_[igstream]));
-    }
 
     // need deallocation in the dedisp buffer destructor as well
     filbuffer_->Deallocate();
@@ -342,10 +302,6 @@ GpuPool::~GpuPool(void) {
     delete [] gpustreams_;
     delete [] cudathreads_;
     delete [] cudablocks_;
-    delete [] arrange2darray_;
-    delete [] arrangetexobj_;
-    delete [] arrangeresdesc_;
-    delete [] arrangetexdesc_;
     delete [] hinbuffer_;
     delete [] readybuffidx_;
     delete [] filedesc_;
@@ -364,13 +320,6 @@ GpuPool::~GpuPool(void) {
     delete [] hrstdevs_;
     cudaCheckError(cudaFree(dmeans_));
     cudaCheckError(cudaFree(drstdevs_));
-
-    for (int igstream = 0; igstream < nostreams_; igstream++) {
-        cudaCheckError(cudaFree(htimescrunchedbuffer_[igstream]));
-    }
-
-    delete [] htimescrunchedbuffer_;
-    cudaCheckError(cudaFree(dtimescrunchedbuffer_));
 
     cudaCheckError(cudaFree(dstreambuffer_));
     cudaCheckError(cudaFree(dfftedbuffer_));
@@ -411,13 +360,8 @@ void GpuPool::FilterbankData(int stream) {
     unsigned int skip = stream * unpackedbuffersize_;
 
     unsigned char **pfil = filbuffer_ -> GetFilPointer();
-    unsigned char **pdfil;
-    cudaMalloc((void**)&pdfil, nostokes_ * sizeof(unsigned char*));
-    cudaMemcpy(pdfil, pfil, nostokes_ * sizeof(unsigned char*), cudaMemcpyHostToDevice);
 
     ObsTime frametime;
-
-    float *ptimescrunchedbuffer_ = htimescrunchedbuffer_[stream];
 
     int skipread = stream * NFPGAS * NACCUMULATE;
     int skiptoend = (stream + 1) * NFPGAS * NACCUMULATE - 1;
@@ -458,14 +402,9 @@ void GpuPool::FilterbankData(int stream) {
             frametime.startsecond = starttime_.startsecond;
 
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
-            //cudaCheckError(cudaMemcpyToArrayAsync(arrange2darray_[stream], 0, 0, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
-//            RearrangeKernel<<<rearrange_b, rearrange_t, 0, gpustreams_[stream]>>>(arrangetexobj_[stream], dstreambuffer_ + skip, accumulate_);
-            UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + skip), dunpackedbuffer_ + skip);
+            UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
             DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
-            //cufftCheckError(cufftExecC2C(fftplans_[stream], dstreambuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-//            GetPowerAddTimeKernel<<<48, 27, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, ptimescrunchedbuffer_, timescrunchedsize_, avgtime_, accumulate_);
-//            AddChannelsScaleKernel<<<cudablocks_[3], cudathreads_[3], 0, gpustreams_[stream]>>>(ptimescrunchedbuffer_, pdfil, filchans_, dedispgulpsamples_, dedispbuffersize_, dedispnobuffers_, timescrunchedsize_, avgfreq_, frametime.framefromstart, accumulate_, dmeans_, drstdevs_);
             cudaStreamSynchronize(gpustreams_[stream]);
             cudaCheckError(cudaGetLastError());
             filbuffer_ -> UpdateFilledTimes(frametime);

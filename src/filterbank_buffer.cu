@@ -81,7 +81,7 @@ void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
     int framet = frame_time.framefromstart;
     int filtime = framet * 2;
     int index = 0;
-    //int index = (frame_time.framefromstart * 2) % (nogulps_ * gulpsamples_);
+    //int index = (frame_time.framefromstart) % (nogulps_ * gulpsamples_);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
 
@@ -116,7 +116,7 @@ ObsTime FilterbankBuffer::GetTime(int index) {
 void FilterbankBuffer::SendToDisk(int idx, header_f header, string outdir) {
   //NOTE [Ewan]: Commented out extrasamples_ as filterbank data should be contiguous on disk
   //SaveFilterbank(rambuffer_, gulpsamples_ + extrasamples_, (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
-  SaveFilterbank(rambuffer_, gulpsamples_ , gulpsamples_ * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
+  SaveFilterbank(rambuffer_, gulpsamples_ , (gulpsamples_ + extrasamples_) * nochans_ * nostokes_ * idx, header, nostokes_, filsaved_, outdir);
         filsaved_++;
 }
 
