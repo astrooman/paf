@@ -149,6 +149,7 @@ void GpuPool::Initialise(void) {
     // NOTE: inchans_ / 7 as each packet receives 7 channels
     packperbuffer_ = NFPGAS * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
+    std::fill(hinbuffer_, hinbuffer_ + inbuffsize_ * nostreams_, 0);
     readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
@@ -227,8 +228,9 @@ void GpuPool::Initialise(void) {
     filedesc_ = new int[noports_];
 
     receivebuffers_ = new unsigned char*[noports_];
-    for (int iport = 0; iport < noports_; iport++)
+    for (int iport = 0; iport < noports_; iport++) {
         receivebuffers_[iport] = new unsigned char[codiflen_ + headlen_];
+    }
 
     std::ostringstream oss;
     std::string strport;
@@ -385,7 +387,8 @@ void GpuPool::FilterbankData(int stream) {
                 readybuffidx_[skiptoend - iidx] = false;
                 readybuffidx_[nextstart - iidx] = false;
             }
-            std::copy(hinbuffer_ + stream * inbuffsize_,  hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);;
+            std::copy(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
+            std::fill(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, 0);
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
                 if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
                     frametime.framefromstart = framenumbers_[stream * accumulate_ + frameidx];
