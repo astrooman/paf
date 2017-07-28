@@ -77,9 +77,9 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
 {
   /**
    * This block is going to do 2 timesamples for all coarse channels.
-   * The fine channels are dealt with by the lanes
+   * The fine channels are dealt with by the lanes, but on the fine 
+   * channel read we perform an fft shift and exclude the band edges. 
    */
-
   // gridDim.x should be Nacc * 128 / (32 * nsamps_to_add) == 256
 
   __shared__ float freq_sum_buffer[NCHAN_FINE_OUT*NCHAN_COARSE]; // 9072 elements
@@ -91,18 +91,22 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
   int block_offset = NCHAN_FINE_IN * NSAMPS_SUMMED * blockIdx.x;
   int nwarps_per_block = blockDim.x/warpSize;
 
-  //Drop first 3 fine channels and last 2 fine channels
-  if ((lane_idx > 2) & (lane_idx < 30))
+
+  //Here we calculate indexes for FFT shift.
+  int offset_lane_idx = (lane_idx + 19)%32;
+  
+  //Here only first 27 lanes are active as we drop
+  //5 channels due to the 32/27 oversampling ratio 
+  if (lane_idx < 27)
     {
       // This warp
       // first sample in inner dimension = (32 * 2 * blockIdx.x)
       // This warp will loop over coarse channels in steps of NWARPS per block coarse_chan_idx (0,335)
-
       for (int coarse_chan_idx = warp_idx; coarse_chan_idx < NCHAN_COARSE; coarse_chan_idx += nwarps_per_block)
         {
           float real = 0.0f;
           float imag = 0.0f;
-          int base_offset = coarse_chan_offet * coarse_chan_idx + block_offset + lane_idx;
+          int base_offset = coarse_chan_offet * coarse_chan_idx + block_offset + offset_lane_idx;
 
           for (int pol_idx=0; pol_idx<NPOL; ++pol_idx)
             {
@@ -115,20 +119,20 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
                   // + blockIdx.x * NCHAN_FINE_IN * NSAMPS_SUMMED
                   // + NCHAN_FINE_IN * sample_idx
                   // + lane_idx;
-                  cuComplex val = in[offset + NCHAN_FINE_IN * sample_idx];
+                  cuComplex val = in[offset + (NCHAN_FINE_IN * sample_idx)]; // load frequencies in right order
                   real += val.x * val.x;
                   imag += val.y * val.y;
                 }
               // 3 is the leading dead lane count
               // sketchy
-              freq_sum_buffer[coarse_chan_idx*NCHAN_FINE_OUT + lane_idx - 3] = real + imag;
+              freq_sum_buffer[coarse_chan_idx*NCHAN_FINE_OUT + lane_idx] = real + imag;
             }
         }
     }
 
   __syncthreads();
 
-    int saveoff = ((framet * 2 + blockIdx.x) % (gulpno * gulp)) * nchans;
+  int saveoff = ((framet * 2 + blockIdx.x) % (gulpno * gulp)) * nchans;
 
   /**
    * Here each warp will reduce 32 channels into 2 channels
@@ -142,11 +146,17 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
         {
           sum += freq_sum_buffer[chan_idx];
         }
-        //out[NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM * blockIdx.x + threadIdx.x] = sum;
       out[saveoff + threadIdx.x] = sum;
-      if (((framet * 2 + blockIdx.x) % (gulpno * gulp)) >= extra) {
+      
+      /**
+       * Note [Ewan]: The code below is commented out as we turned off the
+       * logic for handling the max_delay from the dedispersion. This can 
+       * and should be renabled if the max_delay logic is re-enabled
+       */
+      /*
+      if (((framet * 2 + blockIdx.x) % (gulpno * gulp)) < extra) {
           out[saveoff + threadIdx.x + (gulpno * gulp) * nchans] = sum;
-      }
+	  }*/
     }
   return;
 }
