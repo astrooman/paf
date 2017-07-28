@@ -92,7 +92,7 @@ void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
         samplestate_[index] = 1;
         //std::cout << framet << " " << index << " " << framet % totalsamples_ << std::endl;
         //std::cout.flush();
-        if ((index < extrasamples_) && (framet > extrasamples_)) {
+        if ((index < extrasamples_) && (filtime > extrasamples_)) {
             samplestate_[index + nogulps_ * gulpsamples_] = 1;
         }
         filtime++;

@@ -99,7 +99,7 @@ void GpuPool::Initialise(void) {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 8, &cpuset);
+    CPU_SET((int)(poolid_) * 10, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0) {
@@ -151,6 +151,7 @@ void GpuPool::Initialise(void) {
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
     std::fill(hinbuffer_, hinbuffer_ + inbuffsize_ * nostreams_, 0);
     readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
+    std::fill(readybuffidx_, readybuffidx_ + NFPGAS * accumulate_ * nostreams_, 0);
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
@@ -182,9 +183,24 @@ void GpuPool::Initialise(void) {
     // width is the expected pulse width in microseconds
     // tol is the smearing tolerance factor between two DM trials
     dedispplan_->generate_dm_list(config_.dmstart, config_.dmend, 64.0f, 1.10f);
-    dedispextrasamples_ = dedispplan_->get_max_delay();
+
+
+    /** 
+     * NOTE [Ewan]: We have hardcoded the extra portion of the buffer 
+     * to zero during debugging for Effelsberg. There is no reason to 
+     * believe that this can't be uncommented now, but I am leaving it 
+     * out as we are confident that the system is working right now.
+     */
+    //dedispextrasamples_ = dedispplan_->get_max_delay();
+    dedispextrasamples_ = 0;
     dedispdispersedsamples_ = (size_t)dedispgulpsamples_ + dedispextrasamples_;
-    dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
+    //dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
+
+    /**
+     * Note [Ewan]: Same sentiment as above. This is commented out for debugging, but 
+     * can likely be renabled safely.
+     */
+    dedispnobuffers_  = 2;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
     filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_, filbits_);
     dedispplan_->set_killmask(&config_.killmask[0]);
@@ -345,7 +361,8 @@ void GpuPool::FilterbankData(int stream) {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 8 + 1 + (int)(stream / 1), &cpuset);
+    //Note: changed to 10 for Pacifix machines (this should not be hardcoded)
+    CPU_SET((int)(poolid_) * 10 + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0) {
@@ -368,13 +385,21 @@ void GpuPool::FilterbankData(int stream) {
     int skipread = stream * NFPGAS * NACCUMULATE;
     int skiptoend = (stream + 1) * NFPGAS * NACCUMULATE - 1;
     int nextstart;
+
+    /**
+     * Note [Ewan]: This was an important fix. Previously we had 
+     * nextstart = 128 in the else clause, which meant you only
+     * needed one packet out of order to break the system
+     */
+    
     if (stream != 3) {
-        nextstart = skiptoend + 128;
+        nextstart = skiptoend + 128*NFPGAS;
     } else {
-        nextstart = 128;
+        nextstart = 128*NFPGAS-1;
     }
     bool endready = false;
     bool innext = false;
+    
     while (working_) {
         endready = false;
         innext = false;
@@ -391,27 +416,21 @@ void GpuPool::FilterbankData(int stream) {
             std::fill(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, 0);
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
                 if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
-                    frametime.framefromstart = framenumbers_[stream * accumulate_ + frameidx];
-                    break;
+    		  frametime.framefromstart = framenumbers_[stream * accumulate_ + frameidx] - frameidx;
+                  break;
                 }
             }
-
             std::fill(framenumbers_ + stream * accumulate_, framenumbers_ + (stream + 1) * accumulate_, -1);
-
-            for (int frameidx = 0; frameidx < accumulate_; frameidx++)
-                framenumbers_[stream * accumulate_ + frameidx] = 0;
-
             frametime.startepoch = starttime_.startepoch;
             frametime.startsecond = starttime_.startsecond;
-
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dunpackedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
+	    // Note [Ewan]: bugfix, this kernel was being passed the unpacked rather than fft'd data.
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
             cudaStreamSynchronize(gpustreams_[stream]);
             cudaCheckError(cudaGetLastError());
             filbuffer_ -> UpdateFilledTimes(frametime);
-            //working_ = false;
         } else {
             std::this_thread::yield();
         }
@@ -422,7 +441,9 @@ void GpuPool::SendForDedispersion(void) {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 8, &cpuset);
+
+    //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
+    CPU_SET((int)(poolid_) * 10, &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
@@ -506,7 +527,8 @@ void GpuPool::SendForDedispersion(void) {
 void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 8 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
+    //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
+    CPU_SET((int)(poolid_) * 10 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
@@ -578,6 +600,9 @@ void GpuPool::ReceiveData(int portid, int recport) {
         framenumbers_[frame % (accumulate_ * nostreams_)] = frame;
         // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
+
+	
+	
         readybuffidx_[bufidx] = true;
     }
 }
