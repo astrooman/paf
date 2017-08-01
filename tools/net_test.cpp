@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -144,7 +146,7 @@ void TestFpga(int iport, int usefpga, std::string strip, int toread) {
 
 }
 
-void TestPort(int iport, std::string strip, unsigned int toread) {
+void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::system_clock::time_point recordstart) {
 
     printmutex.lock();
     cout << "Starting receive on port " << iport << endl;
@@ -196,32 +198,41 @@ void TestPort(int iport, std::string strip, unsigned int toread) {
 
     std::vector<size_t> framevals;
 
-    while (true) {
-        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
-        frameno = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-        if (frameno == 0) {
-            cout << "Reached the 27s boundary. Will start recording now...\n";
-            break;
-        }
-    }
-
+    std::this_thread::sleep_until(recordstart);
 
     for (int ipack = 0; ipack < 8 * toread; ipack++) {
         numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
         fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
         framevals.push_back(frameno);
-        if (frameno > highestframe)
-            highestframe = frameno;
-            if (frameno == 249999)
-                highestframe = 0;
     }
 
-    printmutex.lock();
-    //cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
-    cout << (double)(toread)/ (double)(highestframe + 1) * 100.0 << "% received on port " << iport << endl;
-    cout << endl;
-    printmutex.unlock();
+    // while (true) {
+    //     numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+    //     frameno = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+    //     if (frameno == 0) {
+    //         cout << "Reached the 27s boundary. Will start recording now...\n";
+    //         break;
+    //     }
+    // }
+    //
+    //
+    // for (int ipack = 0; ipack < 8 * toread; ipack++) {
+    //     numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+    //     fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+    //     frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+    //     framevals.push_back(frameno);
+    //     if (frameno > highestframe)
+    //         highestframe = frameno;
+    //         if (frameno == 249999)
+    //             highestframe = 0;
+    // }
+
+    // printmutex.lock();
+    // //cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
+    // cout << (double)(toread)/ (double)(highestframe + 1) * 100.0 << "% received on port " << iport << endl;
+    // cout << endl;
+    // printmutex.unlock();
 
     oss.str("");
     oss << "frames_port_" << iport;
@@ -334,6 +345,8 @@ int main(int argc, char *argv[])
     int noports;
     int toread;
 
+    std::chrono::system_clock::time_point recordstart;
+
     string fpgastr;
     string inipstr;
     string portstr;
@@ -362,6 +375,12 @@ int main(int argc, char *argv[])
         } else if (string(argv[iarg]) == "-b") {
             iarg++;
             beam = atoi(argv[iarg]);
+        } else if (string(argv[iarg]) == "-r") {
+            iarg++;
+            string utcstr = string(argv[iarg]);
+            std::tm utctm = {};
+            strptime(utcstr.c_str(), "%Y-%0m-%0dT%0H:%0M:%0S", &utctm);
+            recordstart = std::chrono::system_clock::from_time_t(mktime(&utctm));
         } else if (string(argv[iarg]) == "-t") {
             iarg++;
             testtype = string(argv[iarg]);
@@ -371,6 +390,7 @@ int main(int argc, char *argv[])
                 << "\t-p <port1,port2,...,portn>\n"
                 << "\t-s <packets to read>\n"
                 << "\t-b <beam to use>\n"
+                << "\t-r <UTC time>\n"
                 << "\t-t <p | f>\n\n";
             exit(EXIT_SUCCESS);
         }
@@ -404,7 +424,7 @@ int main(int argc, char *argv[])
     } else if (testtype == "p") {
         // NOTE: This tests the percentage of data the port receives
         for (vector<int>::iterator iport = portvector.begin(); iport != portvector.end(); ++iport) {
-            portthreads.push_back(thread(TestPort, *iport, inipstr, toread));
+            portthreads.push_back(thread(TestPort, *iport, inipstr, toread, recordstart));
         }
 
         for (vector<thread>::iterator ithread = portthreads.begin(); ithread != portthreads.end(); ++ithread) {
