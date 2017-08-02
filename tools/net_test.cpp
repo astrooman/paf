@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <inttypes.h>
@@ -33,6 +35,17 @@ using std::vector;
 mutex printmutex;
 
 #define SIZE 16384
+
+std::mutex mt;
+std::condition_variable startcond;
+
+struct ObsTime {
+    unsigned int refepoch;
+    unsigned int refsecond;
+    unsigned int frametime;
+};
+
+ObsTime obsstart;
 
 void TestFpga(int iport, int usefpga, std::string strip, int toread) {
 
@@ -196,43 +209,41 @@ void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::sy
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
 
-    std::vector<size_t> framevals;
+    std::vector<std::pair<size_t, short>> framevals;
 
     std::this_thread::sleep_until(recordstart);
+    printmutex.lock();
+    cout << "Started recording on port " << iport << endl; 
+    printmutex.unlock();
+
+    if (iport == 17100) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::lock_guard<std::mutex> lg(mt);
+        numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
+        obsstart.refepoch = (unsigned int)(rec_buf[12] >> 2);
+        obsstart.refsecond = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
+        obsstart.frametime = (unsigned int)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        
+        startcond.notify_all();
+    } else {
+        std::unique_lock<std::mutex> ul(mt);
+        startcond.wait(ul, []{return obsstart.refepoch != 0;});
+    }
+
+    unsigned int refsecond;
 
     for (int ipack = 0; ipack < 8 * toread; ipack++) {
         numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
         fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-        framevals.push_back(frameno);
+        refsecond = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
+        frameno = frameno + (refsecond - obsstart.refsecond) / 27 * 250000 - obsstart.frametime;
+        framevals.push_back(std::make_pair(frameno, fpga));
     }
 
-    // while (true) {
-    //     numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
-    //     frameno = (unsigned int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-    //     if (frameno == 0) {
-    //         cout << "Reached the 27s boundary. Will start recording now...\n";
-    //         break;
-    //     }
-    // }
-    //
-    //
-    // for (int ipack = 0; ipack < 8 * toread; ipack++) {
-    //     numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
-    //     fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-    //     frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-    //     framevals.push_back(frameno);
-    //     if (frameno > highestframe)
-    //         highestframe = frameno;
-    //         if (frameno == 249999)
-    //             highestframe = 0;
-    // }
-
-    // printmutex.lock();
-    // //cout << (double)(highestframe)/ (double)(toread - 1) * 100.0 << "% received on port " << iport << endl;
-    // cout << (double)(toread)/ (double)(highestframe + 1) * 100.0 << "% received on port " << iport << endl;
-    // cout << endl;
-    // printmutex.unlock();
+    printmutex.lock();
+    cout << "Done recording on port " << iport << endl;
+    printmutex.unlock();
 
     oss.str("");
     oss << "frames_port_" << iport;
@@ -242,7 +253,7 @@ void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::sy
     std::ofstream outfile(portfile.c_str());
 
     for (auto iframe = framevals.begin(); iframe != framevals.end(); ++iframe)
-        outfile << *iframe << std::endl;
+        outfile << (*iframe).first << " " << (*iframe).second << std::endl;
 
     outfile.close();
 
@@ -345,7 +356,11 @@ int main(int argc, char *argv[])
     int noports;
     int toread;
 
-    std::chrono::system_clock::time_point recordstart;
+    memset(&obsstart, sizeof(obsstart), 0);
+
+    std::chrono::system_clock::time_point recordstart = std::chrono::system_clock::now();
+    time_t t = std::chrono::system_clock::to_time_t(recordstart);
+    cout << "It is currently: " << asctime(gmtime(&t)) << endl;
 
     string fpgastr;
     string inipstr;
