@@ -40,9 +40,9 @@ std::mutex mt;
 std::condition_variable startcond;
 
 struct ObsTime {
-    unsigned int refepoch;
-    unsigned int refsecond;
-    unsigned int frametime;
+    int refepoch;
+    int refsecond;
+    int frametime;
 };
 
 ObsTime obsstart;
@@ -202,14 +202,15 @@ void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::sy
     }
 
     int fpga, numbytes;
-    size_t frameno = 0 , highestframe = 0;
+    int frameno = 0 , highestframe = 0;
     unsigned char *rec_buf = new unsigned char[7168 + 64];
     sockaddr_storage their_addr;
     memset(&their_addr, 0, sizeof(their_addr));
     socklen_t addr_len;
     memset(&addr_len, 0, sizeof(addr_len));
+    addr_len = sizeof(their_addr);
 
-    std::vector<std::pair<size_t, short>> framevals;
+    std::vector<std::pair<int, short>> framevals;
 
     std::this_thread::sleep_until(recordstart);
     printmutex.lock();
@@ -217,17 +218,18 @@ void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::sy
     printmutex.unlock();
 
     if (iport == 17100) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::seconds(2));
         std::lock_guard<std::mutex> lg(mt);
         numbytes = recvfrom(sfd, rec_buf, 7168 + 64, 0, (struct sockaddr*)&their_addr, &addr_len);
         obsstart.refepoch = (unsigned int)(rec_buf[12] >> 2);
         obsstart.refsecond = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
-        obsstart.frametime = (unsigned int)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
-        
+        obsstart.frametime = (int)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
+        fpga = ((short)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&their_addr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;    
         startcond.notify_all();
+//        framevals.push_back(std::make_pair(0, fpga));
     } else {
         std::unique_lock<std::mutex> ul(mt);
-        startcond.wait(ul, []{return obsstart.refepoch != 0;});
+        startcond.wait(ul, []{return obsstart.frametime != -1;});
     }
 
     unsigned int refsecond;
@@ -238,7 +240,8 @@ void TestPort(int iport, std::string strip, unsigned int toread, std::chrono::sy
         frameno = (size_t)(int)(rec_buf[7] | (rec_buf[6] << 8) | (rec_buf[5] << 16) | (rec_buf[4] << 24));
         refsecond = (unsigned int)(rec_buf[3] | (rec_buf[2] << 8) | (rec_buf[1] << 16) | ((rec_buf[0] & 0x3f) << 24));
         frameno = frameno + (refsecond - obsstart.refsecond) / 27 * 250000 - obsstart.frametime;
-        framevals.push_back(std::make_pair(frameno, fpga));
+        if (frameno >= 0)
+            framevals.push_back(std::make_pair(frameno, fpga));
     }
 
     printmutex.lock();
@@ -357,6 +360,7 @@ int main(int argc, char *argv[])
     int toread;
 
     memset(&obsstart, sizeof(obsstart), 0);
+    obsstart.frametime = -1;
 
     std::chrono::system_clock::time_point recordstart = std::chrono::system_clock::now();
     time_t t = std::chrono::system_clock::to_time_t(recordstart);
