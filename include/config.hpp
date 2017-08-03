@@ -2,6 +2,8 @@
 #define _H_PAFRB_CONFIG
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -15,16 +17,18 @@ struct InConfig {
     bool test;
     bool verbose;
 
-    double band;                // sampling rate for each band in MHz
+    double band;                //!< Sampling rate for each band in MHz
     double dmend;
     double dmstart;
-    double foff;                // channel width in MHz
-    double ftop;                // frequency of the top channel in MHz
-    double tsamp;               // sampling time
+    double foff;                //!< Filterbank channel width in MHz
+    double ftop;                //!< Filterbank frequency of the top channel in MHz
+    double tsamp;               //!< Filterbank sampling time
 
     // NOTE: Information from the telescope
     double dec;
     double ra;
+
+    std::chrono::system_clock::time_point recordstart;
 
     std::string outdir;             //!< Product output directory
 
@@ -41,8 +45,8 @@ struct InConfig {
     unsigned int freqavg;           //!< Number of frequency channels to average
     unsigned int gulp;              //!< Dedispersion gulp size
     unsigned int headlen;           //!< Length (in bytes) of the CODIF header
-    unsigned int nobeams;           //!< Number of beams per card
-    unsigned int nochans;           //!< Number of 1MHz channels
+    unsigned int nobeams;           //!< Number of beams per node
+    unsigned int nochans;           //!< Number of '1MHz' channels
     unsigned int nogpus;            //!< Number of GPUs to process the data on; should be the same as gpuids.size()
     unsigned int nopols;            //!< Number of incoming polarisations
     unsigned int noports;           //!< Number of ports to receive the data on; should be the same as ports.size()
@@ -63,6 +67,8 @@ inline void SetDefaultConfig(InConfig &config) {
     config.codiflen = 7168;
     config.dmstart = 0.0;
     config.dmend = 4000.0;
+    // NOTE: This is not correct
+    // TODO: Need to read this information in from the CODIF header
     config.ftop = 1400.0;
     config.headlen = 64;
 
@@ -85,6 +91,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.nostreams = 4;
     config.outbits = 32;
     config.timeavg = 2;
+    config.recordstart = std::chrono::system_clock::now();
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
@@ -94,6 +101,31 @@ inline void SetDefaultConfig(InConfig &config) {
 
     for (int iport = 0; iport < config.noports; iport++)
         config.ports.push_back(17100 + iport);
+}
+
+inline void PrintConfig(const InConfig &config) {
+
+    std::cout << "This is the configurations used: " << std::endl;
+    std::cout << "\t - the number of beams per node: " << config.nobeams << std::endl;;
+    std::cout << "\t - the number of GPUs to use: " << config.nogpus << std::endl;;
+    std::cout << "\t - IP addresses to listen on:" << std::endl;;
+    for (int iip = 0; iip < config.ips.size(); iip++) {
+        std::cout << "\t\t * " << config.ips.at(iip) << std::endl;;
+    }
+    std::cout <<"\t - ports to listen on: " << std::endl;;
+    for (int iport = 0; iport < config.ports.size(); iport++) {
+        std::cout << "\t\t * " << config.ports.at(iport) << std::endl;;
+    }
+    std::cout << "\t - output directory: " << config.outdir << std::endl;;
+    time_t tmptime = std::chrono::system_clock::to_time_t(config.recordstart);
+    std::cout << "\t - recording start time: " << std::asctime(std::gmtime(&tmptime));
+    std::cout << "\t - the number of seconds to record: " << config.record << std::endl;;
+    std::cout << "\t - frequency averaging: " << config.freqavg << std::endl;;
+    std::cout << "\t - time averaging: " << config.timeavg << std::endl;;
+    std::cout << "\t - dedispersion gulp size: " << config.gulp << std::endl;;
+    std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;;
+    std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;;
+
 }
 
 inline void ReadConfig(std::string filename, InConfig &config) {
@@ -154,6 +186,11 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 while(std::getline(svalue, sep, ','))
                     config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
+            } else if (paraname == "START_TIME") {
+                std::tm caltime;
+                // NOTE: The date format must be the following: 2017-07-31T21:59:02
+                strptime(paravalue.c_str(), "%Y-%0m-%0dT%0H:%0M:%0S", &caltime);
+                config.recordstart = std::chrono::system_clock::from_time_t(mktime(&caltime));
             } else if (paraname == "TIMEAVG") {
                 config.timeavg = (unsigned int)(std::stoi(paravalue));
             } else {
@@ -164,7 +201,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
         std::cerr << "Error opening the configuration file!!\n Will use the default configuration instead." << std::endl;
     }
 
-    // NOTE: Need to restart these values, as they depend on variables that can be enter through configuration file
+    // NOTE: Need to restart these values, as they depend on variables that can be entered through the configuration file
+    config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
     config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;

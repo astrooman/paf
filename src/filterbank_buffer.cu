@@ -78,10 +78,10 @@ void FilterbankBuffer::Deallocate(void) {
 
 void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
     lock_guard<mutex> addguard(statemutex_);
-    int framet = frame_time.framefromstart;
+    int framet = frame_time.refframe;
     int filtime = framet * 2;
     int index = 0;
-    //int index = (frame_time.framefromstart) % (nogulps_ * gulpsamples_);
+    //int index = (frame_time.refframe) % (nogulps_ * gulpsamples_);
     //std::cout << framet << " " << index << std::endl;
     //std::cout.flush();
 

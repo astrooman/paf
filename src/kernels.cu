@@ -77,8 +77,8 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
 {
   /**
    * This block is going to do 2 timesamples for all coarse channels.
-   * The fine channels are dealt with by the lanes, but on the fine 
-   * channel read we perform an fft shift and exclude the band edges. 
+   * The fine channels are dealt with by the lanes, but on the fine
+   * channel read we perform an fft shift and exclude the band edges.
    */
   // gridDim.x should be Nacc * 128 / (32 * nsamps_to_add) == 256
 
@@ -94,9 +94,9 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
 
   //Here we calculate indexes for FFT shift.
   int offset_lane_idx = (lane_idx + 19)%32;
-  
+
   //Here only first 27 lanes are active as we drop
-  //5 channels due to the 32/27 oversampling ratio 
+  //5 channels due to the 32/27 oversampling ratio
   if (lane_idx < 27)
     {
       // This warp
@@ -147,10 +147,10 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
           sum += freq_sum_buffer[chan_idx];
         }
       out[saveoff + threadIdx.x] = sum;
-      
+
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
-       * logic for handling the max_delay from the dedispersion. This can 
+       * logic for handling the max_delay from the dedispersion. This can
        * and should be renabled if the max_delay logic is re-enabled
        */
       /*
@@ -282,8 +282,6 @@ __global__ void AddChannelsScaleKernel(float* __restrict__ in, float** __restric
     float avgfactor = 1.0f / factorc;
     // thats the starting save position for the chunk of length acc time samples
     int saveidx;
-
-    float tmp0, tmp1, tmp2, tmp3;
 
     int inskip;
 

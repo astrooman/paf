@@ -101,28 +101,9 @@ int main(int argc, char *argv[])
 
     }
 
-    // TODO: Expand the configuration output a bit
     if (config.verbose) {
         cout << "Starting up. This may take few seconds..." << endl;
-
-        cout << "This is the configuration used:" << endl;
-        cout << "\t - the number of beams per node: " << config.nobeams << endl;
-        cout << "\t - the number of GPUs to use: " << config.nogpus << endl;
-        cout << "\t - IP addresses to listen on:" << endl;
-        for (int iip = 0; iip < config.ips.size(); iip++) {
-            cout << "\t\t * " << config.ips.at(iip) << endl;
-        }
-        cout << "\t - ports to listen on: " << endl;
-        for (int iport = 0; iport < config.ports.size(); iport++) {
-            cout << "\t\t * " << config.ports.at(iport) << endl;
-        }
-        cout << "\t - output directory: " << config.outdir << endl;
-        cout << "\t - the number of seconds to record: " << config.record << endl;
-        cout << "\t - frequency averaging: " << config.freqavg << endl;
-        cout << "\t - time averaging: " << config.timeavg << endl;
-        cout << "\t - dedispersion gulp size: " << config.gulp << endl;
-        cout << "\t - first DM to dedisperse to: " << config.dmstart << endl;
-        cout << "\t - last DM to dedisperse to: " << config.dmend << endl;
+        PrintConfig(config);
     }
 
     MainPool pafpool(config);

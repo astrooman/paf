@@ -2,11 +2,9 @@
 #define _H_PAFRB_OBS_TIME
 
 struct ObsTime {
-
-    unsigned int startepoch;            // reference epoch at the start of the observation
-    unsigned int startsecond;           // seconds from the reference epoch at the start of the observation
-    unsigned int framefromstart;                // frame number from the start of the observation
-
+    int refepoch;            // reference epoch at the start of the observation
+    int refsecond;           // seconds from the reference epoch at the start of the observation
+    int refframe;                // frame number from the start of the observation
 };
 
 #endif
