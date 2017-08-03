@@ -251,6 +251,9 @@ void GpuPool::Initialise(void) {
     std::ostringstream oss;
     std::string strport;
 
+    memset(&starttime_, sizeof(starttime_), 0);
+    starttime_.refframe = -1;
+
     // all the magic happens here
     for (int iport = 0; iport < noports_; iport++) {
         // TODO: Read port numbers from the config file
@@ -416,13 +419,13 @@ void GpuPool::FilterbankData(int stream) {
             std::fill(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, 0);
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
                 if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
-    		  frametime.framefromstart = framenumbers_[stream * accumulate_ + frameidx] - frameidx;
+    		  frametime.refframe = framenumbers_[stream * accumulate_ + frameidx] - frameidx;
                   break;
                 }
             }
             std::fill(framenumbers_ + stream * accumulate_, framenumbers_ + (stream + 1) * accumulate_, -1);
-            frametime.startepoch = starttime_.startepoch;
-            frametime.startsecond = starttime_.startsecond;
+            frametime.refepoch = starttime_.startepoch;
+            frametime.refsecond = starttime_.startsecond;
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
@@ -542,6 +545,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     memset(&senderaddr, 0, sizeof(senderaddr));
     socklen_t addrlen;
     memset(&addrlen, 0, sizeof(addrlen));
+    addrlen = sizeof(senderaddr);
 
     const int pack_per_worker_buf = packperbuffer_ / nostreams_;
     int numbytes{0};
@@ -557,24 +561,17 @@ void GpuPool::ReceiveData(int portid, int recport) {
     std::this_thread::sleep_until(config_ .recordstart);
 
     if (portid == 0) {
+        std::lock_guard<std::mutex> frameguard(framemutex_);
         unsigned char *tmpbuffer = receivebuffers_[0];
         numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen);
-        starttime_.startepoch = (int)(tmpbuffer[12] >> 2);
-        starttime_.startsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
+        starttime_.refepoch = (int)(tmpbuffer[12] >> 2);
+        starttime_.refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
+        starttime_.refframe = (int)(tmpbuffer[portid][7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
-    }
-
-    while (true) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
-            PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
-
-        if (numbytes == 0)
-            continue;
-        frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
-        // NOTE: Wait until the start of the 27s boundary
-        if (frame == 0) {
-            break;
-        }
+        startrecord_.notify_all();
+    } else {
+        std::unique_lock<std::mutex> framelock(framemutex_);
+        startrecord_.wait(framelock, []{return starttime_.refframe != -1;});
     }
 
     while(working_) {
@@ -586,7 +583,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
         fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        frame = frame + (refsecond - starttime_.startsecond - 27) / 27 * 250000;
+        frame = frame + (refsecond - starttime_.startsecond) / 27 * 250000 - starttime_.refframe;
 
         // TODO: Add some mininal missing frames checks later anyway
         // NOTE: Which stream buffer the data is saved to

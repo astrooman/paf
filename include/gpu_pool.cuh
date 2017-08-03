@@ -1,6 +1,7 @@
 #ifndef _H_PAFRB_GPU_POOL
 #define _H_PAFRB_GPU_POOL
 
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -54,6 +55,10 @@ class GpuPool
         int fftsizes_[1];                   //<! Used to store GpuPool::fftpoint - cufftPlanMany() requirement
 
         ObsTime starttime_;
+
+        std::condition_variable startrecord_;
+
+        std::mutex framemutex_;
 
         std::string ipstring_;
 
