@@ -424,13 +424,13 @@ void GpuPool::FilterbankData(int stream) {
                 }
             }
             std::fill(framenumbers_ + stream * accumulate_, framenumbers_ + (stream + 1) * accumulate_, -1);
-            frametime.refepoch = starttime_.startepoch;
-            frametime.refsecond = starttime_.startsecond;
+            frametime.refepoch = starttime_.refepoch;
+            frametime.refsecond = starttime_.refsecond;
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 	    // Note [Ewan]: bugfix, this kernel was being passed the unpacked rather than fft'd data.
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.framefromstart);
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.refframe);
             cudaStreamSynchronize(gpustreams_[stream]);
             cudaCheckError(cudaGetLastError());
             filbuffer_ -> UpdateFilledTimes(frametime);
@@ -480,7 +480,7 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.rdm = 0.0;
                 headerfil.tsamp = config_.tsamp;
                 // TODO: this totally doesn't work when something is skipped
-                headerfil.tstart = GetMjd(starttime_.startepoch, starttime_.startsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+                headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
                 sendtime = filbuffer_->GetTime(ready-1);
                 //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
                 // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
@@ -556,9 +556,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
     int refsecond{0};
     int group{0};
 
-    // TODO: Need something to make sure that all threads reach this place at the same time
     // NOTE: The thread will start executing immediately if the config_.recordstart is in the past
-    std::this_thread::sleep_until(config_ .recordstart);
+    std::this_thread::sleep_until(config_.recordstart);
 
     if (portid == 0) {
         std::lock_guard<std::mutex> frameguard(framemutex_);
@@ -566,12 +565,12 @@ void GpuPool::ReceiveData(int portid, int recport) {
         numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen);
         starttime_.refepoch = (int)(tmpbuffer[12] >> 2);
         starttime_.refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
-        starttime_.refframe = (int)(tmpbuffer[portid][7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
+        starttime_.refframe = (int)(tmpbuffer[7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
         startrecord_.notify_all();
     } else {
         std::unique_lock<std::mutex> framelock(framemutex_);
-        startrecord_.wait(framelock, []{return starttime_.refframe != -1;});
+        startrecord_.wait(framelock, [this]{return starttime_.refframe != -1;});
     }
 
     while(working_) {
@@ -583,9 +582,13 @@ void GpuPool::ReceiveData(int portid, int recport) {
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
         fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
-        frame = frame + (refsecond - starttime_.startsecond) / 27 * 250000 - starttime_.refframe;
+        frame = frame + (refsecond - starttime_.refsecond) / 27 * 250000 - starttime_.refframe;
+        // NOTE: If we get a late frame coming in, it can have an absolute number less than 0
+        // This will happen only at the beginning of receiving and should be unnecesary after first few packets
+        if (frame < 0) {
+            continue;
+        }
 
-        // TODO: Add some mininal missing frames checks later anyway
         // NOTE: Which stream buffer the data is saved to
         bufidx = (int)(frame / accumulate_) % nostreams_;
         // NOTE: Number of packets to skip to get to the start of the stream buffer
@@ -601,9 +604,6 @@ void GpuPool::ReceiveData(int portid, int recport) {
         framenumbers_[frame % (accumulate_ * nostreams_)] = frame;
         // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
-
-
-
         readybuffidx_[bufidx] = true;
     }
 }
