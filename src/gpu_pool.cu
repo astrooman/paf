@@ -482,7 +482,7 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
-                headerfil.machine_id = 8;
+                headerfil.machine_id = 2;
                 headerfil.nbeams = 1;
                 headerfil.nbits = filbits_;
                 headerfil.nchans = filchans_;
