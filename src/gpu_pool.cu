@@ -492,7 +492,7 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.nbits = filbits_;
                 headerfil.nchans = filchans_;
                 headerfil.nifs = 1;
-                headerfil.telescope_id = 2;
+                headerfil.telescope_id = 8;
 
                 if (verbose_)
                     PrintSafe(ready - 1, "buffer ready on pool", poolid_);
