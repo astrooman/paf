@@ -184,10 +184,10 @@ void GpuPool::Initialise(void) {
     dedispplan_->generate_dm_list(config_.dmstart, config_.dmend, 64.0f, 1.10f);
 
 
-    /** 
-     * NOTE [Ewan]: We have hardcoded the extra portion of the buffer 
-     * to zero during debugging for Effelsberg. There is no reason to 
-     * believe that this can't be uncommented now, but I am leaving it 
+    /**
+     * NOTE [Ewan]: We have hardcoded the extra portion of the buffer
+     * to zero during debugging for Effelsberg. There is no reason to
+     * believe that this can't be uncommented now, but I am leaving it
      * out as we are confident that the system is working right now.
      */
     //dedispextrasamples_ = dedispplan_->get_max_delay();
@@ -196,7 +196,7 @@ void GpuPool::Initialise(void) {
     //dedispnobuffers_ = (dedispdispersedsamples_ - 1) / dedispgulpsamples_ + 1;
 
     /**
-     * Note [Ewan]: Same sentiment as above. This is commented out for debugging, but 
+     * Note [Ewan]: Same sentiment as above. This is commented out for debugging, but
      * can likely be renabled safely.
      */
     dedispnobuffers_  = 2;
@@ -239,6 +239,7 @@ void GpuPool::Initialise(void) {
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
+    //hints.ai_protocol = IPPROTO_UDP
 
     filedesc_ = new int[noports_];
 
@@ -385,11 +386,11 @@ void GpuPool::FilterbankData(int stream) {
     int nextstart;
 
     /**
-     * Note [Ewan]: This was an important fix. Previously we had 
+     * Note [Ewan]: This was an important fix. Previously we had
      * nextstart = 128 in the else clause, which meant you only
      * needed one packet out of order to break the system
      */
-    
+
     if (stream != 3) {
         nextstart = skiptoend + 128*NFPGAS;
     } else {
@@ -397,7 +398,7 @@ void GpuPool::FilterbankData(int stream) {
     }
     bool endready = false;
     bool innext = false;
-    
+
     while (working_) {
         endready = false;
         innext = false;
@@ -481,12 +482,12 @@ void GpuPool::SendForDedispersion(void) {
                 headerfil.za = 0.0;
                 headerfil.data_type = 1;
                 headerfil.ibeam = beamno_;
-                headerfil.machine_id = 2;
+                headerfil.machine_id = 8;
                 headerfil.nbeams = 1;
                 headerfil.nbits = filbits_;
                 headerfil.nchans = filchans_;
                 headerfil.nifs = 1;
-                headerfil.telescope_id = 2;
+                headerfil.telescope_id = 8;
 
                 if (verbose_)
                     PrintSafe(ready - 1, "buffer ready on pool", poolid_);
@@ -598,8 +599,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
 
-	
-	
+
+
         readybuffidx_[bufidx] = true;
     }
 }
