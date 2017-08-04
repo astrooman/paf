@@ -94,6 +94,8 @@ class GpuPool
         int *filedesc_;
         int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
 
+        long long int *filledbuffer_;
+
         std::unique_ptr<FilterbankBuffer> filbuffer_;
         std::unique_ptr<DedispPlan> dedispplan_;
 

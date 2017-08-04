@@ -153,6 +153,9 @@ void GpuPool::Initialise(void) {
     readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
     std::fill(readybuffidx_, readybuffidx_ + NFPGAS * accumulate_ * nostreams_, 0);
 
+    filledbuffer_ = new long long int[accumulate_ * nostreams_];
+    std::fill(filledbuffer_, filledbuffer_ + accumulate_ * nostreams_, static_cast<long long int>(0));
+
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
     cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ * nostreams_ * sizeof(cufftComplex)));
@@ -574,11 +577,14 @@ void GpuPool::ReceiveData(int portid, int recport) {
     }
 
     while(working_) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1) {
             PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
-
-        if (numbytes == 0)
             continue;
+        }
+        if (numbytes == 0) {
+            continue;
+        }
+
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
         fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
@@ -605,5 +611,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         readybuffidx_[bufidx] = true;
+
+        filledbuffer_[frame % (accumulate_ * nostreams_)] |= (static_cast<long long int>(1)  << fpga);
+        
     }
 }
