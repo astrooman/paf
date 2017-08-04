@@ -146,7 +146,7 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
         {
           sum += freq_sum_buffer[chan_idx];
         }
-      out[saveoff + threadIdx.x] = sum;
+      out[saveoff + (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM) - 1 - threadIdx.x] = sum;
       
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
