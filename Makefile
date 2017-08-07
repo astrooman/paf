@@ -8,9 +8,9 @@ BIN_DIR = ./bin
 DEDISP_DIR = ./dedisp_paf
 CC=g++
 NVCC=/usr/local/cuda-8.0/bin/nvcc
-DEBUG=#-g -G
+#DEBUG=-g -G
 endif
-DEBUG=-g -G
+#DEBUG=-g -G
 INCLUDE = -I${INC_DIR}
 LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
 
