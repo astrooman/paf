@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <sys/stat.h>
 #include <thread>
@@ -15,6 +16,7 @@
 using std::cerr;
 using std::cout;
 using std::endl;
+using std::exception;
 using std::string;
 using std::thread;
 using std::vector;
@@ -31,8 +33,14 @@ int main(int argc, char *argv[])
             if (string(argv[iarg]) == "--config") {      // configuration file
                 iarg++;
                 configfile = string(argv[iarg]);
-                ReadConfig(configfile, config);
-                //TODO: Shall we break at this point or allow to add extra or change some parameters?
+                try {
+                    ReadConfig(configfile, config);
+                } catch (const exception &exc) {
+                    cout << exc.what() << endl;
+                    // NOTE: Currently can to nothing with certain values missing from the config file.
+                    // TODO: Make sure that the pipeline can run with defaul configuration only.
+                    return 1;
+                }
             } else if (string(argv[iarg]) == "-r") {
                 iarg++;
                 config.record = atoi(argv[iarg]);
@@ -107,7 +115,6 @@ int main(int argc, char *argv[])
     }
 
     MainPool pafpool(config);
-
     cudaDeviceReset();
 
     return 0;

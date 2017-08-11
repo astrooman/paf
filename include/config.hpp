@@ -4,9 +4,11 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -130,7 +132,10 @@ inline void PrintConfig(const InConfig &config) {
 
 inline void ReadConfig(std::string filename, InConfig &config) {
 
-    std::fstream inconfig(filename.c_str(), std::ios_base::in);
+    std::ifstream inconfig(filename.c_str());
+    if (!inconfig) {
+        throw std::invalid_argument("Unable to open the configuration file " + filename);
+    }
     std::string line;
     std::string paraname;
     std::string paravalue;
@@ -178,6 +183,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.nostreams = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "OUTBITS") {
                 config.outbits = (unsigned int)(std::stoi(paravalue));
+            } else if (paraname == "OUTDIR") {
+                config.outdir = paravalue;
             } else if (paraname == "PORTS") {
                 std::stringstream svalue(paravalue);
                 std::string sep;
@@ -186,13 +193,15 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 while(std::getline(svalue, sep, ','))
                     config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
-            } else if (paraname == "START_TIME") {
+            } else if (paraname == "STARTTIME") {
                 std::tm caltime;
                 // NOTE: The date format must be the following: 2017-07-31T21:59:02
                 strptime(paravalue.c_str(), "%Y-%0m-%0dT%0H:%0M:%0S", &caltime);
                 config.recordstart = std::chrono::system_clock::from_time_t(mktime(&caltime));
             } else if (paraname == "TIMEAVG") {
                 config.timeavg = (unsigned int)(std::stoi(paravalue));
+            } else if (paraname == "TOPFREQ") {
+                config.ftop = std::stod(paravalue);
             } else {
                 std::cerr << "Error: unrecognised parameter: " << paraname << std::endl;
             }

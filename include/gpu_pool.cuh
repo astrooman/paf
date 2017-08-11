@@ -63,6 +63,7 @@ class GpuPool
         std::string ipstring_;
 
         unsigned int beamno_;
+        unsigned int cores_;
         unsigned int dedispbuffersize_;
         unsigned int dedispdispersedsamples_;
         unsigned int dedispextrasamples_;
@@ -72,7 +73,6 @@ class GpuPool
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
         unsigned int secondstorecord_;
-        unsigned int usethreads_;
 
         std::vector<int> ports_;
         std::vector<std::thread> gputhreads_;

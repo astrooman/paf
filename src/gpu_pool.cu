@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <signal.h>
 
+using std::cerr;
 using std::endl;
 using std::string;
 using std::thread;
@@ -81,9 +82,13 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
 
-    // TODO: This statement doesn't make sense - we eiather have enough cores or not
-    // NOTE: usethreads_ is not used anywhere
-    usethreads_ = min(nostreams_ + 2, thread::hardware_concurrency());
+    cores_ = thread::hardware_concurrency();
+    if (cores_ == 0) {
+        cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
+        cerr << "Will set to 10!" << endl;
+        // NOTE: That should be 10 for the Effelsberg PAF machines - need to be careful when used on different machines.
+        cores_ = 10;
+    }
 
     if (verbose_)
         PrintSafe("Starting GPU pool", gpuid_);
@@ -99,7 +104,7 @@ void GpuPool::Initialise(void) {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    CPU_SET((int)(poolid_) * 10, &cpuset);
+    CPU_SET((int)(poolid_) * cores_, &cpuset);
     int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0) {
@@ -295,7 +300,7 @@ GpuPool::~GpuPool(void) {
     for (int ithread = 0; ithread < noports_; ithread++)
         receivethreads_[ithread].join();
 
-    //save the scaling factors before quitting
+    // NOTE: Save the scaling factors before quitting
     if (scaled_) {
         string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
         std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
@@ -314,11 +319,9 @@ GpuPool::~GpuPool(void) {
         }
         scalefile.close();
     }
-    // cleaning up the stuff
 
-    // need deallocation in the dedisp buffer destructor as well
+    // NOTE: The filterbank buffer has to be deallocated separately
     filbuffer_->Deallocate();
-    // this stuff is deleted in order it appears in the code
     delete [] framenumbers_;
     delete [] gpustreams_;
     delete [] cudathreads_;
@@ -364,8 +367,7 @@ void GpuPool::FilterbankData(int stream) {
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    //Note: changed to 10 for Pacifix machines (this should not be hardcoded)
-    CPU_SET((int)(poolid_) * 10 + 1 + (int)(stream / 1), &cpuset);
+    CPU_SET((int)(poolid_) * cores_ + 1 + (int)(stream / 1), &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0) {
@@ -385,7 +387,6 @@ void GpuPool::FilterbankData(int stream) {
 
     ObsTime frametime;
 
-    int skipread = stream * NFPGAS * NACCUMULATE;
     int skiptoend = (stream + 1) * NFPGAS * NACCUMULATE - 1;
     int nextstart;
 
@@ -446,7 +447,7 @@ void GpuPool::SendForDedispersion(void) {
     CPU_ZERO(&cpuset);
 
     //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
-    CPU_SET((int)(poolid_) * 10, &cpuset);
+    CPU_SET((int)(poolid_) * cores_ , &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
@@ -454,6 +455,23 @@ void GpuPool::SendForDedispersion(void) {
     }
 
     ObsTime sendtime;
+
+    header_f headerfil;
+    headerfil.raw_file = "tastytastytest";
+    headerfil.source_name = "J1641-45";
+    headerfil.fch1 = config_.ftop;
+    // NOTE: For channels in decreasing order
+    headerfil.foff = -1.0 * abs(config_.foff);
+    headerfil.rdm = 0.0;
+    headerfil.tsamp = config_.tsamp;
+    headerfil.data_type = 1;
+    headerfil.ibeam = beamno_;
+    headerfil.machine_id = 2;
+    headerfil.nbeams = 1;
+    headerfil.nbits = filbits_;
+    headerfil.nchans = filchans_;
+    headerfil.nifs = 1;
+    headerfil.telescope_id = 8;
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
@@ -464,35 +482,17 @@ void GpuPool::SendForDedispersion(void) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
             if (scaled_) {
-                // TODO: Prefil the header with non-changing infomation
-                header_f headerfil;
-                headerfil.raw_file = "tastytastytest";
-                headerfil.source_name = "J1641-45";
+                // TODO: Will we be able to update this information during the observation?
                 headerfil.az = 0.0;
+                headerfil.za = 0.0;
                 headerfil.ra = config_.ra;
                 headerfil.dec = config_.dec;
-                // for channels in decreasing order
-                headerfil.fch1 = 1173.0 - (16.0 / 27.0) + filchans_ * config_.foff;
-                headerfil.foff = -1.0 * abs(config_.foff);
-                // for channels in increasing order
-                // headerfil.fch1 = 1173.0 - (16.0 / 27.0);
-                // headerfil.foff = config_.foff;
-                headerfil.rdm = 0.0;
-                headerfil.tsamp = config_.tsamp;
-                // TODO: this totally doesn't work when something is skipped
+                // TODO: This totally doesn't work when something is skipped
+                // Need to move to the version that uses the frame number of the chunk being sent
                 headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
                 sendtime = filbuffer_->GetTime(ready-1);
                 //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
                 // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
-                headerfil.za = 0.0;
-                headerfil.data_type = 1;
-                headerfil.ibeam = beamno_;
-                headerfil.machine_id = 2;
-                headerfil.nbeams = 1;
-                headerfil.nbits = filbits_;
-                headerfil.nchans = filchans_;
-                headerfil.nifs = 1;
-                headerfil.telescope_id = 8;
 
                 if (verbose_)
                     PrintSafe(ready - 1, "buffer ready on pool", poolid_);
@@ -505,6 +505,8 @@ void GpuPool::SendForDedispersion(void) {
                 if (verbose_)
                     PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
 
+                // NOTE: This fails from time to time and pipeline finishes much earlier than expected
+                // TODO: Fix it!
                 if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_)
                     working_ = false;
 
@@ -531,7 +533,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
-    CPU_SET((int)(poolid_) * 10 + 1 + nostreams_ + (int)(portid / 3), &cpuset);
+    CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ + (int)(portid / 3), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
@@ -547,17 +549,17 @@ void GpuPool::ReceiveData(int portid, int recport) {
     memset(&addrlen, 0, sizeof(addrlen));
     addrlen = sizeof(senderaddr);
 
-    const int pack_per_worker_buf = packperbuffer_ / nostreams_;
     int numbytes{0};
     short fpga{0};
     short bufidx{0};
 
     int frame{0};
     int refsecond{0};
-    int group{0};
 
-    // NOTE: The thread will start executing immediately if the config_.recordstart is in the past
-    std::this_thread::sleep_until(config_.recordstart);
+    while (std::chrono::high_resolution_clock::now() < config_.recordstart) {
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
+            PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
+    }
 
     if (portid == 0) {
         std::lock_guard<std::mutex> frameguard(framemutex_);
@@ -581,8 +583,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
             continue;
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
-        fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         frame = frame + (refsecond - starttime_.refsecond) / 27 * 250000 - starttime_.refframe;
+        fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
         // NOTE: If we get a late frame coming in, it can have an absolute number less than 0
         // This will happen only at the beginning of receiving and should be unnecesary after first few packets
         if (frame < 0) {
