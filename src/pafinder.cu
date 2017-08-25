@@ -115,7 +115,6 @@ int main(int argc, char *argv[])
     }
 
     MainPool pafpool(config);
-    cudaDeviceReset();
 
     return 0;
 }

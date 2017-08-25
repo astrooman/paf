@@ -1,6 +1,7 @@
 #ifndef _H_PAFRB_GPU_POOL
 #define _H_PAFRB_GPU_POOL
 
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -73,6 +74,9 @@ class GpuPool
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
         unsigned int secondstorecord_;
+
+        std::chrono::system_clock::time_point start_;
+        std::chrono::system_clock::time_point stop_;
 
         std::vector<int> ports_;
         std::vector<std::thread> gputhreads_;

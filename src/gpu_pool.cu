@@ -34,6 +34,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -82,6 +83,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
 
+    start_ = std::chrono::system_clock::now();
     cores_ = thread::hardware_concurrency();
     if (cores_ == 0) {
         cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
@@ -126,37 +128,45 @@ void GpuPool::Initialise(void) {
     if (verbose_)
         PrintSafe("Preparing the memory on pool", poolid_, "...");
 
-    dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
-    filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
+    // Start of the page-locked memory allocation
 
     framenumbers_ = new int[accumulate_ * nostreams_];
+    if (mlock(framenumbers_, accumulate_ * nostreams_ * sizeof(int))) {
+        PrintSafe("Error on framenumbers_ mlock:", errno);
+    }
     std::fill(framenumbers_, framenumbers_ + accumulate_ * nostreams_, -1);
-    gpustreams_ = new cudaStream_t[nostreams_];
-    fftplans_ = new cufftHandle[nostreams_];
-
-    // TODO: Can really remove this array
-    // Wait until we put the final optimised verions of kernels
-    int nokernels = 4;
-    cudathreads_ = new unsigned int[nokernels];
-    cudablocks_ = new unsigned int[nokernels];
-
-    cudathreads_[0] = 7;
-    cudathreads_[1] = fftpoints_ * avgtime_ * inchans_ / 42;
-    cudathreads_[2] = inchans_;
-    cudathreads_[3] = filchans_;
-
-    cudablocks_[0] = 48;
-    cudablocks_[1] = 42;
-    cudablocks_[2] = 1;
-    cudablocks_[3] = 1;
 
     // NOTE: Each stream will have its own incoming buffer to read from
-    // NOTE: inchans_ / 7 as each packet receives 7 channels
-    packperbuffer_ = NFPGAS * accumulate_ * nostreams_;
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
+    if (mlock(hinbuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char))) {
+        PrintSafe("Error on hinbuffer_ mlock:", errno);
+    }
     std::fill(hinbuffer_, hinbuffer_ + inbuffsize_ * nostreams_, 0);
+
     readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
+    if (mlock(readybuffidx_, (NFPGAS * accumulate_ * nostreams_) * sizeof(bool))) {
+        PrintSafe("Error on readybuffidx_ mlock:", errno);
+    }
     std::fill(readybuffidx_, readybuffidx_ + NFPGAS * accumulate_ * nostreams_, 0);
+
+    receivebuffers_ = new unsigned char*[noports_];
+    if (mlock(receivebuffers_, noports_ * sizeof(unsigned char*))) {
+        PrintSafe("Error on receivebuffers_ mlock:", errno);
+    }
+    for (int iport = 0; iport < noports_; iport++) {
+        receivebuffers_[iport] = new unsigned char[codiflen_ + headlen_];
+        if (mlock(receivebuffers_[iport], (codiflen_ + headlen_) * sizeof(unsigned char))) {
+            PrintSafe("Error on receivebuffers_ mlock for port", iport, ":", errno);
+        }
+    }
+
+    // End of the page-locked memory allocation
+
+
+    dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
+    filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
+    gpustreams_ = new cudaStream_t[nostreams_];
+    fftplans_ = new cufftHandle[nostreams_];
 
     cudaCheckError(cudaHostAlloc((void**)&hstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char), cudaHostAllocDefault));
     cudaCheckError(cudaMalloc((void**)&dstreambuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char)));
@@ -248,11 +258,6 @@ void GpuPool::Initialise(void) {
 
     filedesc_ = new int[noports_];
 
-    receivebuffers_ = new unsigned char*[noports_];
-    for (int iport = 0; iport < noports_; iport++) {
-        receivebuffers_[iport] = new unsigned char[codiflen_ + headlen_];
-    }
-
     std::ostringstream oss;
     std::string strport;
 
@@ -300,6 +305,12 @@ GpuPool::~GpuPool(void) {
     for (int ithread = 0; ithread < noports_; ithread++)
         receivethreads_[ithread].join();
 
+    stop_ = std::chrono::system_clock::now();
+
+    std::chrono::duration<double> diff = stop_ - start_;
+
+    cout << "Pipeline execution time: " << std::chrono::duration_cast<std::chrono::seconds>(diff).count() << "s" << endl;
+
     // NOTE: Save the scaling factors before quitting
     if (scaled_) {
         string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
@@ -324,8 +335,6 @@ GpuPool::~GpuPool(void) {
     filbuffer_->Deallocate();
     delete [] framenumbers_;
     delete [] gpustreams_;
-    delete [] cudathreads_;
-    delete [] cudablocks_;
     delete [] hinbuffer_;
     delete [] readybuffidx_;
     delete [] filedesc_;
@@ -417,7 +426,6 @@ void GpuPool::FilterbankData(int stream) {
                 readybuffidx_[nextstart - iidx] = false;
             }
             std::copy(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
-            std::fill(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, 0);
             for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
                 if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
     		  frametime.refframe = framenumbers_[stream * accumulate_ + frameidx] - frameidx;
@@ -600,11 +608,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // NOTE: Correct frame packet within the stream buffer
         bufidx += (frame % accumulate_);
 
-        // bufidx = ((int)(frame / accumulate_) % nostreams_) * pack_per_worker_buf;
-        // bufidx += (frame % accumulate_) * 48;
-
         framenumbers_[frame % (accumulate_ * nostreams_)] = frame;
-        // bufidx += fpga;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         readybuffidx_[bufidx] = true;
     }
