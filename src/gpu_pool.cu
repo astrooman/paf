@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <bitset>
 #include <cmath>
 #include <iomanip>
@@ -40,8 +41,11 @@
 #include <unistd.h>
 #include <signal.h>
 
+using std::atomic;
 using std::cerr;
 using std::endl;
+using std::mutex;
+using std::pair;
 using std::string;
 using std::thread;
 using std::unique_ptr;
@@ -135,6 +139,14 @@ void GpuPool::Initialise(void) {
         PrintSafe("Error on framenumbers_ mlock:", errno);
     }
     std::fill(framenumbers_, framenumbers_ + accumulate_ * nostreams_, -1);
+
+    fpgaready_ = new atomic<long long>[accumulate_ * nostreams_];
+    if (mlock(fpgaready_, accumulate_ * nostreams_ * sizeof(atomic<long long>))) {
+        PrintSafe("Error on fpgaready_ mlock:", errno);
+    }
+    for (int isamp = 0; isamp < accumulate_ * nostreams_; ++isamp) {
+        fpgaready_[isamp].store(0LL);
+    }
 
     // NOTE: Each stream will have its own incoming buffer to read from
     hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
@@ -264,6 +276,8 @@ void GpuPool::Initialise(void) {
     memset(&starttime_, sizeof(starttime_), 0);
     starttime_.refframe = -1;
 
+    someonechecking_.store(false);
+
     // all the magic happens here
     for (int iport = 0; iport < noports_; iport++) {
         // TODO: Read port numbers from the config file
@@ -374,6 +388,7 @@ void GpuPool::HandleSignal(int signum) {
 
 void GpuPool::FilterbankData(int stream) {
 
+    cudaCheckError(cudaSetDevice(gpuid_));
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * cores_ + 1 + (int)(stream / 1), &cpuset);
@@ -387,65 +402,37 @@ void GpuPool::FilterbankData(int stream) {
     if (verbose_)
         PrintSafe("Starting worker", stream, "on pool", poolid_, "on CPU", sched_getcpu());
 
-    cudaSetDevice(gpuid_);
-    dim3 rearrange_b(1,48,1);
-    dim3 rearrange_t(7,1,1);
     unsigned int skip = stream * unpackedbuffersize_;
-
     unsigned char **pfil = filbuffer_ -> GetFilPointer();
 
-    ObsTime frametime;
-
-    int skiptoend = (stream + 1) * NFPGAS * NACCUMULATE - 1;
-    int nextstart;
-
-    /**
-     * Note [Ewan]: This was an important fix. Previously we had
-     * nextstart = 128 in the else clause, which meant you only
-     * needed one packet out of order to break the system
-     */
-
-    if (stream != 3) {
-        nextstart = skiptoend + 128*NFPGAS;
-    } else {
-        nextstart = 128*NFPGAS-1;
-    }
-    bool endready = false;
-    bool innext = false;
+    pair<unsigned char*, int> bufferinfo;
+    unsigned char* incoming;
+    ObsTime incomingtime = {0, 0, 0};
 
     while (working_) {
-        endready = false;
-        innext = false;
-        for (int iidx = 0; iidx < 64; iidx++) {
-            endready = endready || readybuffidx_[skiptoend - iidx];
-            innext = innext || readybuffidx_[nextstart - iidx];
-        }
-        if (endready && innext) {
-            for (int iidx = 0; iidx < 64; iidx++) {
-                readybuffidx_[skiptoend - iidx] = false;
-                readybuffidx_[nextstart - iidx] = false;
-            }
-            std::copy(hinbuffer_ + stream * inbuffsize_, hinbuffer_ + stream * inbuffsize_ + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
-            for (int frameidx = 0; frameidx < accumulate_; frameidx++) {
-                if (framenumbers_[stream * accumulate_ + frameidx] != -1) {
-    		  frametime.refframe = framenumbers_[stream * accumulate_ + frameidx] - frameidx;
-                  break;
-                }
-            }
-            std::fill(framenumbers_ + stream * accumulate_, framenumbers_ + (stream + 1) * accumulate_, -1);
-            frametime.refepoch = starttime_.refepoch;
-            frametime.refsecond = starttime_.refsecond;
-            cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
-            UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
-            cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-	    // Note [Ewan]: bugfix, this kernel was being passed the unpacked rather than fft'd data.
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.refframe);
-            cudaStreamSynchronize(gpustreams_[stream]);
-            cudaCheckError(cudaGetLastError());
-            filbuffer_ -> UpdateFilledTimes(frametime);
-        } else {
-            std::this_thread::yield();
-        }
+        // NOTE: Time this portion of the code arefully as unique_lock can be a bit expensive
+        std::unique_lock<mutex> worklock(workmutex_);
+        workready_.wait(worklock, [this]{return !workqueue_.empty();});
+        // TODO: Copy the data using the information in the queue
+        bufferinfo = workqueue_.front();
+        workqueue_.pop();
+        worklock.unlock();
+
+        // NOTE: This already has the correct offset for a given buffer chunk included
+        incoming = bufferinfo.first;
+        incomingtime.refframe = bufferinfo.second;
+        // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
+        std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
+
+        incomingtime.refepoch = starttime_.refepoch;
+        incomingtime.refsecond = starttime_.refsecond;
+        cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
+        UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
+        cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
+        DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+        cudaStreamSynchronize(gpustreams_[stream]);
+        cudaCheckError(cudaGetLastError());
+        filbuffer_ -> UpdateFilledTimes(incomingtime);
     }
 }
 
@@ -540,8 +527,8 @@ void GpuPool::SendForDedispersion(void) {
 void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
-    CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ + (int)(portid / 3), &cpuset);
+    // NOTE: 2 ports per CPU core
+    CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ + (int)(portid / 2), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
@@ -562,7 +549,11 @@ void GpuPool::ReceiveData(int portid, int recport) {
     short bufidx{0};
 
     int frame{0};
+    int modframe{0};
     int refsecond{0};
+    int refframe{0};
+
+    bool checkexpected;
 
     while (std::chrono::high_resolution_clock::now() < config_.recordstart) {
         if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
@@ -608,8 +599,42 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // NOTE: Correct frame packet within the stream buffer
         bufidx += (frame % accumulate_);
 
-        framenumbers_[frame % (accumulate_ * nostreams_)] = frame;
+        modframe = frame % (accumulate_ * nostreams_);
+
+        framenumbers_[modframe] = frame;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         readybuffidx_[bufidx] = true;
+        fpgaready_[modframe] |= (1LL << fpga);
+
+        checkexpected = false;
+
+        if (someonechecking_.compare_exchange_strong(checkexpected,true)) {
+            // NOTE: Check the last sample of the current stream and something inside of the next
+            for (int istream = 0; istream < nostreams_; ++istream) {
+                // NOTE: Checking for at least 24 FPGAS - doesn't make much sense to be processing with less than half of the band
+                // TODO: Make this a more strict constraint when FPGA problems are sorted out - a quarter or a third
+                // NOTE: Check in the quarter of next stream - should give enough time for latecomers
+                // NOTE: This part is not overly atomic - the value can be changed when it is being checked
+                // TODO: Is it going to be much of a problem?
+                if ((__builtin_popcountll(fpgaready_[(istream + 1) * accumulate_ - 1]) >= 24) && (__builtin_popcountll(fpgaready_[((istream + 1) % nostreams_) * accumulate_ + accumulate_ / 4]) >= 24)) {
+                    for (int isamp = 0; isamp < accumulate_; ++isamp) {
+                        fpgaready_[istream * accumulate_ + isamp].store(0LL);
+                    }
+                    for (int frameidx = 0; frameidx < accumulate_; ++frameidx) {
+                        if (framenumbers_[istream * accumulate_ + frameidx] != -1) {
+                            refframe = framenumbers_[istream * accumulate_ + frameidx] - frameidx;
+                        }
+                    }
+                    // TODO: Fill the frame numbers with -1 again
+                    std::lock_guard<mutex> worklock(workmutex_);
+                    // NOTE: Push data onto the worker queue
+                    // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
+                    workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
+                    workready_.notify_one();
+                    break;
+                }
+            }
+            someonechecking_.store(false);
+        }
     }
 }

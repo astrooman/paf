@@ -1,6 +1,7 @@
 #ifndef _H_PAFRB_GPU_POOL
 #define _H_PAFRB_GPU_POOL
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -8,6 +9,7 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <cuda.h>
@@ -57,11 +59,29 @@ class GpuPool
 
         ObsTime starttime_;
 
-        std::condition_variable startrecord_;
+        std::atomic<bool> someonechecking_;
+        std::atomic<long long> *fpgaready_;
 
+        std::chrono::system_clock::time_point stop_;
+        std::chrono::system_clock::time_point start_;
+
+        std::condition_variable startrecord_;
+        std::condition_variable workready_;
+
+        std::mutex checkwork_;
         std::mutex framemutex_;
+        std::mutex workmutex_;
+
+        std::queue<std::pair<unsigned char*, int>> workqueue_;
 
         std::string ipstring_;
+
+        std::unique_ptr<DedispPlan> dedispplan_;
+        std::unique_ptr<FilterbankBuffer> filbuffer_;
+
+        std::vector<int> ports_;
+        std::vector<std::thread> gputhreads_;
+        std::vector<std::thread> receivethreads_;
 
         unsigned int beamno_;
         unsigned int cores_;
@@ -74,13 +94,6 @@ class GpuPool
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
         unsigned int secondstorecord_;
-
-        std::chrono::system_clock::time_point start_;
-        std::chrono::system_clock::time_point stop_;
-
-        std::vector<int> ports_;
-        std::vector<std::thread> gputhreads_;
-        std::vector<std::thread> receivethreads_;
 
         bool *readybuffidx_;
 
@@ -97,9 +110,6 @@ class GpuPool
 
         int *filedesc_;
         int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers
-
-        std::unique_ptr<FilterbankBuffer> filbuffer_;
-        std::unique_ptr<DedispPlan> dedispplan_;
 
         unsigned char *dstreambuffer_;
         unsigned char *hinbuffer_;           //!< Buffer for semi-arranged packets for the whole bandwidth and 128 time samples
