@@ -380,10 +380,8 @@ GpuPool::~GpuPool(void) {
 }
 
 void GpuPool::HandleSignal(int signum) {
-
     PrintSafe("Captured the signal!\nWill now terminate!\n");
     working_ = false;
-
 }
 
 void GpuPool::FilterbankData(int stream) {
@@ -410,29 +408,31 @@ void GpuPool::FilterbankData(int stream) {
     ObsTime incomingtime = {0, 0, 0};
 
     while (working_) {
-        // NOTE: Time this portion of the code arefully as unique_lock can be a bit expensive
+        // NOTE: Time this portion of the code has to be profiled carefully as unique_lock can be a bit expensive
         std::unique_lock<mutex> worklock(workmutex_);
-        workready_.wait(worklock, [this]{return !workqueue_.empty();});
-        // TODO: Copy the data using the information in the queue
-        bufferinfo = workqueue_.front();
-        workqueue_.pop();
-        worklock.unlock();
+        workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
+        if (working_) {
+            // TODO: Copy the data using the information in the queue
+            bufferinfo = workqueue_.front();
+            workqueue_.pop();
+            worklock.unlock();
 
-        // NOTE: This already has the correct offset for a given buffer chunk included
-        incoming = bufferinfo.first;
-        incomingtime.refframe = bufferinfo.second;
-        // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
-        std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
+            // NOTE: This already has the correct offset for a given buffer chunk included
+            incoming = bufferinfo.first;
+            incomingtime.refframe = bufferinfo.second;
+            // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
+            std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
 
-        incomingtime.refepoch = starttime_.refepoch;
-        incomingtime.refsecond = starttime_.refsecond;
-        cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
-        UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
-        cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-        DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
-        cudaStreamSynchronize(gpustreams_[stream]);
-        cudaCheckError(cudaGetLastError());
-        filbuffer_ -> UpdateFilledTimes(incomingtime);
+            incomingtime.refepoch = starttime_.refepoch;
+            incomingtime.refsecond = starttime_.refsecond;
+            cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
+            UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
+            cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.refframe);
+            cudaStreamSynchronize(gpustreams_[stream]);
+            cudaCheckError(cudaGetLastError());
+            filbuffer_ -> UpdateFilledTimes(frametime);
+        }
     }
 }
 
@@ -625,7 +625,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
                             refframe = framenumbers_[istream * accumulate_ + frameidx] - frameidx;
                         }
                     }
-                    // TODO: Fill the frame numbers with -1 again
+                    // TODO: Fill the frame numbers with -1
                     std::lock_guard<mutex> worklock(workmutex_);
                     // NOTE: Push data onto the worker queue
                     // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
@@ -637,4 +637,6 @@ void GpuPool::ReceiveData(int portid, int recport) {
             someonechecking_.store(false);
         }
     }
+    // NOTE: Wakes the consumer threads up to let them know their struggle is over
+    workready_.notify_all();
 }
