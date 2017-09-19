@@ -428,10 +428,10 @@ void GpuPool::FilterbankData(int stream) {
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, frametime.refframe);
+            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
             cudaStreamSynchronize(gpustreams_[stream]);
             cudaCheckError(cudaGetLastError());
-            filbuffer_ -> UpdateFilledTimes(frametime);
+            filbuffer_ -> UpdateFilledTimes(incomingtime);
         }
     }
 }
