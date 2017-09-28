@@ -1,4 +1,3 @@
-#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -29,7 +28,7 @@ int main(int argc, char *argv[])
 
     // too many parameters to load as arguments - use config file
     if (argc >= 2) {
-        for (int iarg = 0; iarg < argc; iarg  ++) {
+        for (int iarg = 0; iarg < argc; iarg++) {
             if (string(argv[iarg]) == "--config") {      // configuration file
                 iarg++;
                 configfile = string(argv[iarg]);
@@ -44,9 +43,9 @@ int main(int argc, char *argv[])
             } else if (string(argv[iarg]) == "-r") {
                 iarg++;
                 config.record = atoi(argv[iarg]);
-            } else if (string(argv[iarg]) == "-s") {     // the number of streams to use
+            } else if (string(argv[iarg]) == "-s") {
                 iarg++;
-                config.nostreams = atoi(argv[iarg]);
+                config.scaleseconds = atof(argv[iarg]);
             } else if (string(argv[iarg]) == "-b") {     // the number of beams to accept the data from
                 iarg++;
                 config.nobeams = atoi(argv[iarg]);
@@ -98,7 +97,7 @@ int main(int argc, char *argv[])
                         << "\t -n - the number of GPUs to use\n"
                         << "\t -o <directory> - output directory\n"
                         << "\t -r - the number of seconds to record\n"
-                        << "\t -s - the number of CUDA streams per GPU to use\n"
+                        << "\t -s - the number of seconds to record for scaling factors\n"
                         << "\t -t - the number of time samples to average\n"
                         << "\t -v - use verbose mode\n"
                         << "\t --gpuid - GPU IDs to use - the number must be the same as 'n'\n"

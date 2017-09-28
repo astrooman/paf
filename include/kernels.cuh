@@ -22,12 +22,19 @@ __global__ void InitScaleFactors(float **means, float **rstdevs, int stokes);
 
 __global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes);
 
-__global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param);
+//__global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param);
+
 
 // NOTE: New kernels
 __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ out);
 
-__global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restrict__ out, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet);
+__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet);
+
+__global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restrict__ out, short nchans);
+
+__global__ void InitDivFactors(float *factors);
+
+__global__ void GetScaleFactorsKernel(float *indata, float *base, float *stdev, float *factors, int nchans, int processed);
 
 // TODO: This will become the kernel to calculate scaling factors
 __global__ void bandpass();

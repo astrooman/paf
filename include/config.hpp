@@ -30,6 +30,8 @@ struct InConfig {
     double dec;
     double ra;
 
+    float scaleseconds;
+
     std::chrono::system_clock::time_point recordstart;
 
     std::string outdir;             //!< Product output directory
@@ -94,6 +96,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.outbits = 32;
     config.timeavg = 2;
     config.recordstart = std::chrono::system_clock::now();
+    config.scaleseconds = 5.0f;
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
@@ -193,6 +196,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 while(std::getline(svalue, sep, ','))
                     config.ports.push_back(std::stoi(sep));
                 config.noports = config.ports.size();
+            } else if (paraname == "SCALE") {
+                config.scaleseconds = std::stof(paravalue);
             } else if (paraname == "STARTTIME") {
                 std::tm caltime;
                 // NOTE: The date format must be the following: 2017-07-31T21:59:02

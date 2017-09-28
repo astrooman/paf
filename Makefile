@@ -1,6 +1,3 @@
-ifneq ("$(wildcard Makefile.inc)","")
-include Makefile.inc
-else
 SRC_DIR = ./src
 INC_DIR = ./include
 OBJ_DIR = ./obj
@@ -8,11 +5,9 @@ BIN_DIR = ./bin
 DEDISP_DIR = ./dedisp_paf
 CC=g++
 NVCC=/usr/local/cuda-8.0/bin/nvcc
-#DEBUG=-g -G
-endif
-#DEBUG=-g -G
-INCLUDE = -I${INC_DIR}
-LIBS = -L${DEDISP_DIR}/lib -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
+DEBUG=#-g -G
+INCLUDE = -I${INC_DIR} -I/usr/local/cuda-8.0/include
+LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda-8.0/lib64 -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
 
 CFLAGS = -Wall -Wextra -std=c++11
 NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread

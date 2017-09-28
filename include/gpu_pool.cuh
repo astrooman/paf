@@ -14,6 +14,7 @@
 
 #include <cuda.h>
 #include <cufft.h>
+#include <thrust/device_vector.h>
 
 #include "config.hpp"
 #include "dedisp/DedispPlan.hpp"
@@ -46,6 +47,7 @@ class GpuPool
         const unsigned int nostokes_;                //!< Number of stoke parameters to generate and store
         const unsigned int nostreams_;               //!< Number of CUDA streams to use
         const unsigned int poolid_;
+        const unsigned int scalesamples_;
         const unsigned int unpackedbuffersize_;         //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
 
         cudaStream_t dedispstream_;
@@ -61,6 +63,7 @@ class GpuPool
 
         std::atomic<bool> someonechecking_;
         std::atomic<long long> *fpgaready_;
+        std::atomic<unsigned int> alreadyscaled_;
 
         std::chrono::system_clock::time_point stop_;
         std::chrono::system_clock::time_point start_;
@@ -83,6 +86,10 @@ class GpuPool
         std::vector<std::thread> gputhreads_;
         std::vector<std::thread> receivethreads_;
 
+        thrust::device_vector<float> dfactors_;
+        thrust::device_vector<float> dmeans_;
+        thrust::device_vector<float> dstdevs_;
+
         unsigned int beamno_;
         unsigned int cores_;
         unsigned int dedispbuffersize_;
@@ -94,8 +101,7 @@ class GpuPool
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
         unsigned int secondstorecord_;
-
-        bool *readybuffidx_;
+        unsigned int userecbuffers_;
 
         cufftComplex *dfftedbuffer_;            //!< Buffer for the signal after the FFT, powerscale() kernel input, holds GpuPool::fftedsize_ * GpuPool::nostreams_ elements
         cufftComplex *dunpackedbuffer_;
@@ -103,10 +109,9 @@ class GpuPool
         cudaStream_t *gpustreams_;        //<! Pointer to the array of CUDA streams
         cufftHandle *fftplans_;           //<! Pointer to the array of cuFFT plans
 
-        float **dmeans_;
-        float **drstdevs_;
-        float **hmeans_;
-        float **hrstdevs_;
+        float *pdfactors_;
+        float *pdmeans_;
+        float *pdstdevs_;
 
         int *filedesc_;
         int *framenumbers_;               //!< Array for the absolute frame numbers for given buffers

@@ -15,6 +15,21 @@
 #include <cuda.h>
 #include <numa.h>
 #include <pthread.h>
+#include <thrust/device_vector.h>
+#include <thrust/fill.h>
+#include <thrust/sequence.h>
+#include <thrust/transform.h>
+
+#include <inttypes.h>
+#include <errno.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
 
 #include "config.hpp"
 #include "dedisp/dedisp.hpp"
@@ -30,16 +45,6 @@
 #include "pdif.hpp"
 #include "print_safe.hpp"
 
-#include <inttypes.h>
-#include <errno.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <signal.h>
 
 using std::atomic;
 using std::cerr;
@@ -55,6 +60,26 @@ bool GpuPool::working_ = true;
 
 #define NFPGAS 48
 #define NACCUMULATE 128
+
+struct FactorFunctor {
+    __host__ __device__ float operator()(float val) {
+        return val != 0 ? 1.0f/val : val;
+    }
+};
+
+struct MeanFunctor {
+    __host__ __device__ float operator()(float val) {
+        if (val == 0.0f) {
+            return 4.0f;
+        }
+    }
+};
+
+struct StdevFunctor {
+    __host__ __device__ float operator()(float val) {
+        return val == 0.0f ? 1.0f : val;
+    }
+};
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         avgfreq_(config.freqavg),
@@ -83,6 +108,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         ports_(config.ports),
                                         // NOTE: Quick hack to switch the scaling off
                                         scaled_(true),
+                                        scalesamples_((unsigned int)config.scaleseconds / config.tsamp),
                                         secondstorecord_(config.record),
                                         unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
@@ -134,32 +160,29 @@ void GpuPool::Initialise(void) {
 
     // Start of the page-locked memory allocation
 
-    framenumbers_ = new int[accumulate_ * nostreams_];
-    if (mlock(framenumbers_, accumulate_ * nostreams_ * sizeof(int))) {
+    alreadyscaled_.store(0);
+
+    userecbuffers_ = min(2, nostreams_);
+    framenumbers_ = new int[accumulate_ * userecbuffers_];
+    if (mlock(framenumbers_, accumulate_ * userecbuffers_ * sizeof(int))) {
         PrintSafe("Error on framenumbers_ mlock:", errno);
     }
-    std::fill(framenumbers_, framenumbers_ + accumulate_ * nostreams_, -1);
+    std::fill(framenumbers_, framenumbers_ + accumulate_ * userecbuffers_, -1);
 
-    fpgaready_ = new atomic<long long>[accumulate_ * nostreams_];
-    if (mlock(fpgaready_, accumulate_ * nostreams_ * sizeof(atomic<long long>))) {
+    fpgaready_ = new atomic<long long>[accumulate_ * userecbuffers_];
+    if (mlock(fpgaready_, accumulate_ * userecbuffers_ * sizeof(atomic<long long>))) {
         PrintSafe("Error on fpgaready_ mlock:", errno);
     }
-    for (int isamp = 0; isamp < accumulate_ * nostreams_; ++isamp) {
+
+    for (int isamp = 0; isamp < accumulate_ * userecbuffers_; ++isamp) {
         fpgaready_[isamp].store(0LL);
     }
 
-    // NOTE: Each stream will have its own incoming buffer to read from
-    hinbuffer_ = new unsigned char[inbuffsize_ * nostreams_];
-    if (mlock(hinbuffer_, inbuffsize_ * nostreams_ * sizeof(unsigned char))) {
+    hinbuffer_ = new unsigned char[inbuffsize_ * userecbuffers_];
+    if (mlock(hinbuffer_, inbuffsize_ * userecbuffers_ * sizeof(unsigned char))) {
         PrintSafe("Error on hinbuffer_ mlock:", errno);
     }
-    std::fill(hinbuffer_, hinbuffer_ + inbuffsize_ * nostreams_, 0);
-
-    readybuffidx_ = new bool[NFPGAS * accumulate_ * nostreams_];
-    if (mlock(readybuffidx_, (NFPGAS * accumulate_ * nostreams_) * sizeof(bool))) {
-        PrintSafe("Error on readybuffidx_ mlock:", errno);
-    }
-    std::fill(readybuffidx_, readybuffidx_ + NFPGAS * accumulate_ * nostreams_, 0);
+    std::fill(hinbuffer_, hinbuffer_ + inbuffsize_ * userecbuffers_, 0);
 
     receivebuffers_ = new unsigned char*[noports_];
     if (mlock(receivebuffers_, noports_ * sizeof(unsigned char*))) {
@@ -185,25 +208,18 @@ void GpuPool::Initialise(void) {
     cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ * nostreams_ * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
 
-    hmeans_ = new float*[nostokes_];
-    hrstdevs_ = new float*[nostokes_];
+    dfactors_.resize(scalesamples_);
+    dmeans_.resize(filchans_);
+    dstdevs_.resize(filchans_);
 
-    // NOTE: Need to be careful what to fill the starting values with
-    // We want to have the original data after the scaling in the fist run
-    // So we can actually obtain the first scaling factors
-    for (int istoke = 0; istoke < nostokes_; istoke++) {
-        cudaCheckError(cudaMalloc((void**)&hmeans_[istoke], filchans_ * sizeof(float)));
-        cudaCheckError(cudaMalloc((void**)&hrstdevs_[istoke], filchans_ * sizeof(float)));
-    }
+    thrust::sequence(dfactors_.begin(), dfactors_.end());
+    thrust::transform(dfactors_.begin(), dfactors_.end(), dfactors_.begin(), FactorFunctor());
+    thrust::fill(dmeans_.begin(), dmeans_.end(), 0.0f);
+    thrust::fill(dstdevs_.begin(), dstdevs_.end(), 0.0f);
 
-    cudaCheckError(cudaMalloc((void**)&dmeans_, nostokes_ * sizeof(float*)));
-    cudaCheckError(cudaMalloc((void**)&drstdevs_, nostokes_ * sizeof(float*)));
-    cudaCheckError(cudaMemcpy(dmeans_, hmeans_, nostokes_ * sizeof(float*), cudaMemcpyHostToDevice));
-    cudaCheckError(cudaMemcpy(drstdevs_, hrstdevs_, nostokes_ * sizeof(float*), cudaMemcpyHostToDevice));
-
-    InitScaleFactors<<<1,filchans_,0,0>>>(dmeans_, drstdevs_, nostokes_);
-    cudaCheckError(cudaDeviceSynchronize());
-    cudaCheckError(cudaGetLastError());
+    pdfactors_ = thrust::raw_pointer_cast(dfactors_.data());
+    pdmeans_ = thrust::raw_pointer_cast(dmeans_.data());
+    pdstdevs_ = thrust::raw_pointer_cast(dstdevs_.data());
 
     // STAGE: PREPARE THE DEDISPERSION
     // NOTE: generate_dm_list(dm_start, dm_end, width, tol)
@@ -331,15 +347,8 @@ GpuPool::~GpuPool(void) {
         std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
 
         if (scalefile) {
-            float *means = new float[filchans_];
-            float *stdevs = new float[filchans_];
-            for (int istoke = 0; istoke < nostokes_; istoke++) {
-                cudaCheckError(cudaMemcpy(means, hmeans_[istoke], filchans_ * sizeof(float), cudaMemcpyDeviceToHost));
-                cudaCheckError(cudaMemcpy(stdevs, hrstdevs_[istoke], filchans_ * sizeof(float), cudaMemcpyDeviceToHost));
-                for (int jj = 0; jj < filchans_; jj++) {
-                    scalefile << means[jj] << " " << stdevs[jj] << endl;
-                }
-                scalefile << endl << endl;
+            for (int ichan = 0; ichan < filchans_; ++ichan) {
+                scalefile << dmeans_[ichan] << " " << dstdevs_[ichan] << endl;
             }
         }
         scalefile.close();
@@ -350,23 +359,11 @@ GpuPool::~GpuPool(void) {
     delete [] framenumbers_;
     delete [] gpustreams_;
     delete [] hinbuffer_;
-    delete [] readybuffidx_;
     delete [] filedesc_;
     for (int iport = 0; iport < noports_; iport++) {
         delete [] receivebuffers_[iport];
     }
     delete [] receivebuffers_;
-
-
-    for (int istoke = 0; istoke < nostokes_; istoke++) {
-        cudaCheckError(cudaFree(hmeans_[istoke]));
-        cudaCheckError(cudaFree(hrstdevs_[istoke]));
-    }
-
-    delete [] hmeans_;
-    delete [] hrstdevs_;
-    cudaCheckError(cudaFree(dmeans_));
-    cudaCheckError(cudaFree(drstdevs_));
 
     cudaCheckError(cudaFree(dstreambuffer_));
     cudaCheckError(cudaFree(dfftedbuffer_));
@@ -407,6 +404,9 @@ void GpuPool::FilterbankData(int stream) {
     unsigned char* incoming;
     ObsTime incomingtime = {0, 0, 0};
 
+    float *dscalepower;
+    cudaCheckError(cudaMalloc((void**)&dscalepower, 2 * NACCUMULATE * filchans_ * sizeof(float)));
+
     while (working_) {
         // NOTE: Time this portion of the code has to be profiled carefully as unique_lock can be a bit expensive
         std::unique_lock<mutex> worklock(workmutex_);
@@ -428,12 +428,32 @@ void GpuPool::FilterbankData(int stream) {
             cudaCheckError(cudaMemcpyAsync(dstreambuffer_ + stream * inbuffsize_, hstreambuffer_ + stream * inbuffsize_, inbuffsize_, cudaMemcpyHostToDevice, gpustreams_[stream]));
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
-            DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
-            cudaStreamSynchronize(gpustreams_[stream]);
-            cudaCheckError(cudaGetLastError());
-            filbuffer_ -> UpdateFilledTimes(incomingtime);
+
+            // TODO: Secure it for multithreading or move to a single stream execution
+            // NOTE: Protecting this whole section with mutex is over the top - defeats the whole purpose of concurrent processing
+            if (scaled_) {
+                // NOTE: Path for when the scaling factors have already been obtained
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                cudaStreamSynchronize(gpustreams_[stream]);
+                cudaCheckError(cudaGetLastError());
+                filbuffer_ -> UpdateFilledTimes(incomingtime);
+            } else {
+                // NOTE: Path for when we still have to obtain scaling factors
+                DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, filchans_);
+                GetScaleFactorsKernel<<<1, 567, 0, gpustreams_[stream]>>>(dscalepower, pdmeans_, pdstdevs_, pdfactors_, filchans_, alreadyscaled_);
+                cudaStreamSynchronize(gpustreams_[stream]);
+                cudaCheckError(cudaGetLastError());
+                alreadyscaled_ += 2 * NACCUMULATE;
+                if (alreadyscaled_ >= scalesamples_) {
+                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dmeans_.begin(), MeanFunctor());
+                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dstdevs_.begin(), StdevFunctor());
+                    scaled_ = true;
+                    PrintSafe("Scaling factors on pool", poolid_, "have been obtained");
+                }
+            }
         }
     }
+    cudaFree(dscalepower);
 }
 
 void GpuPool::SendForDedispersion(void) {
@@ -476,48 +496,34 @@ void GpuPool::SendForDedispersion(void) {
     while(working_) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
-            if (scaled_) {
-                // TODO: Will we be able to update this information during the observation?
-                headerfil.az = 0.0;
-                headerfil.za = 0.0;
-                headerfil.ra = config_.ra;
-                headerfil.dec = config_.dec;
-                // TODO: This totally doesn't work when something is skipped
-                // Need to move to the version that uses the frame number of the chunk being sent
-                headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
-                sendtime = filbuffer_->GetTime(ready-1);
-                //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
-                // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
+            // TODO: Will we be able to update this information during the observation?
+            headerfil.az = 0.0;
+            headerfil.za = 0.0;
+            headerfil.ra = config_.ra;
+            headerfil.dec = config_.dec;
+            // TODO: This totally doesn't work when something is skipped
+            // Need to move to the version that uses the frame number of the chunk being sent
+            headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+            sendtime = filbuffer_->GetTime(ready-1);
+            //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
+            // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
 
-                if (verbose_)
-                    PrintSafe(ready - 1, "buffer ready on pool", poolid_);
+            if (verbose_)
+                PrintSafe(ready - 1, "buffer ready on pool", poolid_);
 
-                filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
-                filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
-                // TODO: Possible race condition
-                gulpssent_++;
+            filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
+            filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
+            // TODO: Possible race condition
+            gulpssent_++;
 
-                if (verbose_)
-                    PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
+            if (verbose_)
+                PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
 
-                // NOTE: This fails from time to time and pipeline finishes much earlier than expected
-                // TODO: Fix it!
-                if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_)
-                    working_ = false;
-
-            }   else {
-                // perform the scaling
-                // NOTE: Scaling breaks down when there is no data - division by a standard deviation of 0
-                // TODO: Need to come up with a more clever way of dealing with that
-                // filbuffer_->GetScaling(ready, dedispstream_, dmeans_, drstdevs_);
-                cudaCheckError(cudaGetLastError());
-                scaled_ = true;
-                ready = 0;
-
-                if (verbose_)
-                    PrintSafe("Scaling factors have been obtained on pool", poolid_);
+            // NOTE: This fails from time to time and pipeline finishes much earlier than expected
+            // TODO: Fix it!
+            if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_) {
+                working_ = false;
             }
-
         } else {
             std::this_thread::yield();
         }
@@ -591,7 +597,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         }
 
         // NOTE: Which stream buffer the data is saved to
-        bufidx = (int)(frame / accumulate_) % nostreams_;
+        bufidx = (int)(frame / accumulate_) % userecbuffers_;
         // NOTE: Number of packets to skip to get to the start of the stream buffer
         bufidx *= NFPGAS * NACCUMULATE;
         // NOTE: Correct FPGA within the stream buffer
@@ -599,24 +605,23 @@ void GpuPool::ReceiveData(int portid, int recport) {
         // NOTE: Correct frame packet within the stream buffer
         bufidx += (frame % accumulate_);
 
-        modframe = frame % (accumulate_ * nostreams_);
+        modframe = frame % (accumulate_ * userecbuffers_);
 
         framenumbers_[modframe] = frame;
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
-        readybuffidx_[bufidx] = true;
         fpgaready_[modframe] |= (1LL << fpga);
 
         checkexpected = false;
 
         if (someonechecking_.compare_exchange_strong(checkexpected,true)) {
             // NOTE: Check the last sample of the current stream and something inside of the next
-            for (int istream = 0; istream < nostreams_; ++istream) {
+            for (int istream = 0; istream < userecbuffers_; ++istream) {
                 // NOTE: Checking for at least 24 FPGAS - doesn't make much sense to be processing with less than half of the band
                 // TODO: Make this a more strict constraint when FPGA problems are sorted out - a quarter or a third
                 // NOTE: Check in the quarter of next stream - should give enough time for latecomers
                 // NOTE: This part is not overly atomic - the value can be changed when it is being checked
                 // TODO: Is it going to be much of a problem?
-                if ((__builtin_popcountll(fpgaready_[(istream + 1) * accumulate_ - 1]) >= 24) && (__builtin_popcountll(fpgaready_[((istream + 1) % nostreams_) * accumulate_ + accumulate_ / 4]) >= 24)) {
+                if ((__builtin_popcountll(fpgaready_[(istream + 1) * accumulate_ - 1]) >= 24) && (__builtin_popcountll(fpgaready_[((istream + 1) % userecbuffers_) * accumulate_ + accumulate_ / 4]) >= 24)) {
                     for (int isamp = 0; isamp < accumulate_; ++isamp) {
                         fpgaready_[istream * accumulate_ + isamp].store(0LL);
                     }

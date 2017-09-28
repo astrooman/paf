@@ -19,7 +19,6 @@
 #include "obs_time.hpp"
 
 // NOTE: For the time being, only unsigned char scaled output will be supporded.
-// THe current FilterbankBuffer implementation should however support 8, 16 or 32 output bits
 class FilterbankBuffer
 {
     private:

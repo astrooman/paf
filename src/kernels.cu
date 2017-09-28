@@ -73,7 +73,7 @@ __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ o
     }
 }
 
-__global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restrict__ out, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
+__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
 {
   /**
    * This block is going to do 2 timesamples for all coarse channels.
@@ -139,14 +139,17 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
    * The last warp will have a problem that there will only be 16 values to process
    *
    */
-  if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM))
-    {
-      float sum = 0.0;
-      for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx)
-        {
-          sum += freq_sum_buffer[chan_idx];
+
+    if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
+        float sum = 0.0;
+        float scaled = 0.0;
+
+        for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
+            sum += freq_sum_buffer[chan_idx];
         }
-      out[saveoff + threadIdx.x] = sum;
+
+        scaled = (sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f;
+        out[saveoff + threadIdx.x] = scaled;
 
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
@@ -155,10 +158,122 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
        */
       /*
       if (((framet * 2 + blockIdx.x) % (gulpno * gulp)) < extra) {
-          out[saveoff + threadIdx.x + (gulpno * gulp) * nchans] = sum;
+          out[saveoff + threadIdx.x + (gulpno * gulp) * nchans] = scaled;
 	  }*/
     }
-  return;
+    return;
+}
+
+__global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restrict__ out, short nchans)
+{
+  /**
+   * This block is going to do 2 timesamples for all coarse channels.
+   * The fine channels are dealt with by the lanes, but on the fine
+   * channel read we perform an fft shift and exclude the band edges.
+   */
+  // gridDim.x should be Nacc * 128 / (32 * nsamps_to_add) == 256
+
+  __shared__ float freq_sum_buffer[NCHAN_FINE_OUT*NCHAN_COARSE]; // 9072 elements
+
+  int warp_idx = threadIdx.x >> 0x5;
+  int lane_idx = threadIdx.x & 0x1f;
+  int pol_offset = NCHAN_COARSE * NSAMPS * NCHAN_FINE_IN * NACCUMULATE;
+  int coarse_chan_offet = NACCUMULATE * NCHAN_FINE_IN * NSAMPS;
+  int block_offset = NCHAN_FINE_IN * NSAMPS_SUMMED * blockIdx.x;
+  int nwarps_per_block = blockDim.x/warpSize;
+
+
+  //Here we calculate indexes for FFT shift.
+  int offset_lane_idx = (lane_idx + 19)%32;
+
+  //Here only first 27 lanes are active as we drop
+  //5 channels due to the 32/27 oversampling ratio
+  if (lane_idx < 27)
+    {
+      // This warp
+      // first sample in inner dimension = (32 * 2 * blockIdx.x)
+      // This warp will loop over coarse channels in steps of NWARPS per block coarse_chan_idx (0,335)
+      for (int coarse_chan_idx = warp_idx; coarse_chan_idx < NCHAN_COARSE; coarse_chan_idx += nwarps_per_block)
+        {
+          float real = 0.0f;
+          float imag = 0.0f;
+          int base_offset = coarse_chan_offet * coarse_chan_idx + block_offset + offset_lane_idx;
+
+          for (int pol_idx=0; pol_idx<NPOL; ++pol_idx)
+            {
+              int offset = base_offset + pol_offset * pol_idx;
+              for (int sample_idx=0; sample_idx<NSAMPS_SUMMED; ++sample_idx)
+                {
+                  //Get first channel
+                  // IDX = NCHAN_COARSE * NSAMPS * NCHAN_FINE_IN * NACCUMULATE * pol_idx
+                  // + NACCUMULATE * NCHAN_FINE_IN * NSAMPS * coarse_chan_idx
+                  // + blockIdx.x * NCHAN_FINE_IN * NSAMPS_SUMMED
+                  // + NCHAN_FINE_IN * sample_idx
+                  // + lane_idx;
+                  cuComplex val = in[offset + (NCHAN_FINE_IN * sample_idx)]; // load frequencies in right order
+                  real += val.x * val.x;
+                  imag += val.y * val.y;
+                }
+              // 3 is the leading dead lane count
+              // sketchy
+              freq_sum_buffer[coarse_chan_idx*NCHAN_FINE_OUT + lane_idx] = real + imag;
+            }
+        }
+    }
+
+    __syncthreads();
+
+    int saveoff = blockIdx.x * nchans;
+
+    if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
+        float sum = 0.0;
+        for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
+            sum += freq_sum_buffer[chan_idx];
+        }
+        out[saveoff + threadIdx.x] = sum;
+    }
+
+    return;
+}
+
+__global__ void InitDivFactors(float *factors) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    // NOTE: I don't want to be dividing by 0
+    if (idx != 0) {
+        factors[idx] = 1.0f / idx;
+    } else {
+        factors[idx] = idx;
+    }
+
+}
+
+
+__global__ void GetScaleFactorsKernel(float *indata, float *base, float *stdev, float *factors, int nchans, int processed) {
+
+    // NOTE: Filterbank file format coming in
+    //float mean = indata[threadIdx.x];
+    float mean = 0.0f;
+    // NOTE: Depending whether I save STD or VAR at the end of every run
+    // float estd = stdev[threadIdx.x];
+    float estd = (stdev[threadIdx.x] * (processed - 1.0f)) * (stdev[threadIdx.x] * (processed - 1.0f));
+    float oldmean = base[threadIdx.x];
+
+    //float estd = 0.0f;
+    //float oldmean = 0.0;
+
+    float val = 0.0f;
+    float diff = 0.0;
+    for (int isamp = 0; isamp < 2 * NACCUMULATE; ++isamp) {
+        val = indata[isamp * nchans + threadIdx.x];
+        diff = val - oldmean;
+        mean = oldmean + diff * factors[processed + isamp + 1];
+        estd += diff * (val - mean);
+        oldmean = mean;
+    }
+    base[threadIdx.x] = mean;
+    stdev[threadIdx.x] = sqrtf(estd / (float)(processed + 2 * NACCUMULATE - 1.0f));
+    // stdev[threadIdx.x] = estd;
 }
 
 // NOTE: Initialise the scaling factors
@@ -283,36 +398,36 @@ __global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsig
     }
 }
 
-__global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
-    // calculates mean and standard deviation in every channel
-    // assumes the data has been transposed
-
-    // for now have one thread per frequency channel
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float mean;
-    float variance;
-
-    float ntrec = 1.0f / (float)ntimes;
-    float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
-
-    unsigned int start = idx * ntimes;
-    mean = 0.0f;
-    variance = 0.0;
-    // two-pass solution for now
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        mean += in[start + tsamp] * ntrec;
-    }
-    means[param][idx] = mean;
-
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
-    }
-    variance *= ntrec1;
-    // reciprocal of standard deviation
-    // multiplied by the desired standard deviation of the scaled data
-    // reduces the number of operations that have to be done on the GPU
-    rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
-    // to avoid inf when there is no data in the channel
-    if (means[param][idx] == 0)
-        rstdevs[param][idx] = 0;
-}
+// __global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
+//     // calculates mean and standard deviation in every channel
+//     // assumes the data has been transposed
+//
+//     // for now have one thread per frequency channel
+//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+//     float mean;
+//     float variance;
+//
+//     float ntrec = 1.0f / (float)ntimes;
+//     float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
+//
+//     unsigned int start = idx * ntimes;
+//     mean = 0.0f;
+//     variance = 0.0;
+//     // two-pass solution for now
+//     for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+//         mean += in[start + tsamp] * ntrec;
+//     }
+//     means[param][idx] = mean;
+//
+//     for (int tsamp = 0; tsamp < ntimes; tsamp++) {
+//         variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
+//     }
+//     variance *= ntrec1;
+//     // reciprocal of standard deviation
+//     // multiplied by the desired standard deviation of the scaled data
+//     // reduces the number of operations that have to be done on the GPU
+//     rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
+//     // to avoid inf when there is no data in the channel
+//     if (means[param][idx] == 0)
+//         rstdevs[param][idx] = 0;
+// }
