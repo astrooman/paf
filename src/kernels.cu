@@ -150,6 +150,7 @@ __global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __re
 
         scaled = (sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f;
         out[saveoff + threadIdx.x] = scaled;
+        //out[saveoff + threadIdx.x] = sum;
 
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
@@ -256,7 +257,7 @@ __global__ void GetScaleFactorsKernel(float *indata, float *base, float *stdev, 
     float mean = 0.0f;
     // NOTE: Depending whether I save STD or VAR at the end of every run
     // float estd = stdev[threadIdx.x];
-    float estd = (stdev[threadIdx.x] * (processed - 1.0f)) * (stdev[threadIdx.x] * (processed - 1.0f));
+    float estd = stdev[threadIdx.x] * stdev[threadIdx.x] * (processed - 1.0f);
     float oldmean = base[threadIdx.x];
 
     //float estd = 0.0f;

@@ -47,7 +47,6 @@ class GpuPool
         const unsigned int nostokes_;                //!< Number of stoke parameters to generate and store
         const unsigned int nostreams_;               //!< Number of CUDA streams to use
         const unsigned int poolid_;
-        const unsigned int scalesamples_;
         const unsigned int unpackedbuffersize_;         //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
 
         cudaStream_t dedispstream_;
@@ -100,6 +99,7 @@ class GpuPool
         unsigned int filchans_;                //!< Number of output filterbank channels
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
+	unsigned int scalesamples_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 

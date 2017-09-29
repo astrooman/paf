@@ -106,9 +106,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         nostreams_(config.nostreams),
                                         poolid_(poolid),
                                         ports_(config.ports),
-                                        // NOTE: Quick hack to switch the scaling off
-                                        scaled_(true),
-                                        scalesamples_((unsigned int)config.scaleseconds / config.tsamp),
+                                        scaled_(false),
                                         secondstorecord_(config.record),
                                         unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
                                         verbose_(config.verbose) {
@@ -160,9 +158,10 @@ void GpuPool::Initialise(void) {
 
     // Start of the page-locked memory allocation
 
+    scalesamples_ = (int)(config_.scaleseconds / config_.tsamp) / (2 * NACCUMULATE) * 2 * NACCUMULATE;
     alreadyscaled_.store(0);
 
-    userecbuffers_ = min(2, nostreams_);
+    userecbuffers_ = max(2, nostreams_);
     framenumbers_ = new int[accumulate_ * userecbuffers_];
     if (mlock(framenumbers_, accumulate_ * userecbuffers_ * sizeof(int))) {
         PrintSafe("Error on framenumbers_ mlock:", errno);
@@ -208,7 +207,7 @@ void GpuPool::Initialise(void) {
     cudaCheckError(cudaMalloc((void**)&dunpackedbuffer_, unpackedbuffersize_ * nostreams_ * sizeof(cufftComplex)));
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
 
-    dfactors_.resize(scalesamples_);
+    dfactors_.resize(scalesamples_ + 1);
     dmeans_.resize(filchans_);
     dstdevs_.resize(filchans_);
 
@@ -294,7 +293,6 @@ void GpuPool::Initialise(void) {
 
     someonechecking_.store(false);
 
-    // all the magic happens here
     for (int iport = 0; iport < noports_; iport++) {
         // TODO: Read port numbers from the config file
         oss.str("");
@@ -461,7 +459,6 @@ void GpuPool::SendForDedispersion(void) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
 
-    //Note [Ewan]: multiply by 10 to match pacifix numa layout (should not be hardcoded)
     CPU_SET((int)(poolid_) * cores_ , &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
