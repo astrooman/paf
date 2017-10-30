@@ -12,20 +12,20 @@ using std::thread;
 using std::unique_ptr;
 using std::vector;
 
-MainPool::MainPool(InConfig config) : nogpus(config.nogpus)
+MainPool::MainPool(InConfig config) : nogpus_(config.nogpus)
 {
-    for (int igpu = 0; igpu < nogpus; igpu++) {
-        gpuvector.push_back(unique_ptr<GpuPool>(new GpuPool(igpu, config)));
+    for (int igpu = 0; igpu < nogpus_; igpu++) {
+        gpuvector_.push_back(unique_ptr<GpuPool>(new GpuPool(igpu, config)));
     }
 
-    for (int igpu = 0; igpu < nogpus; igpu++) {
-        threadvector.push_back(thread(&GpuPool::Initialise, move(gpuvector[igpu])));
+    for (int igpu = 0; igpu < nogpus_; igpu++) {
+        threadvector_.push_back(thread(&GpuPool::Initialise, move(gpuvector_[igpu])));
     }
 }
 
 MainPool::~MainPool(void)
 {
-    for (int igpu = 0; igpu < nogpus; igpu++) {
-        threadvector[igpu].join();
+    for (int igpu = 0; igpu < nogpus_; igpu++) {
+        threadvector_.at(igpu).join();
     }
 }

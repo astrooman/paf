@@ -45,6 +45,14 @@
 #include "pdif.hpp"
 #include "print_safe.hpp"
 
+// NOTE: DADA includes
+#include "ascii_header.h"
+#include "dada_client.h"
+#include "dada_def.h"
+#include "dada_hdu.h"
+#include "futils.h"
+#include "ipcio.h"
+#include "multilog.h"
 
 using std::atomic;
 using std::cerr;
@@ -60,6 +68,18 @@ bool GpuPool::working_ = true;
 
 #define NFPGAS 48
 #define NACCUMULATE 128
+
+struct DadaContext {
+    bool verbose;
+    dada_hdu_t *hdu;
+    multilog_t *log;
+    char *headerfile;
+    char *obsheader;
+    char headerwritten;
+    unsigned int device;
+    cudaStream_t stream;
+    void *devicememory;
+};
 
 struct FactorFunctor {
     __host__ __device__ float operator()(float val) {
@@ -80,6 +100,47 @@ struct StdevFunctor {
         return val == 0.0f ? 1.0f : val;
     }
 };
+
+int DadaPafOpen(dada_client_t *client) {
+    assert(client != 0);
+    DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
+
+    if (tmpct->verbose) {
+        multilog(client->log, LOG_INFO, "Running DadaPafOpen\n");
+    }
+
+    client->transfer_bytes=0;
+    client->optimal_bytes=0;
+
+    return 0;
+}
+
+int DadaPafClose(dada_client_t *client, uint64_t bytes_written) {
+    assert(client != 0);
+    DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
+
+    if (tmpcts->verbose) {
+        multilog(client->log, LOG_INFO, "Running DadaPafClose\n");
+
+        // TODO: Include all the interesting info here like the bandwidth, the amount of bytes transferred
+    }
+}
+
+// NOTE: used for transferring the header
+int DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
+    assert(client != 0);
+    DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
+
+}
+
+int DadaPafWriteBlockCuda(dada_client_t *client, void *buffer, uint64_t bytes, uint64_t blockid) {
+    assert(client != 0);
+    DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
+    
+    // NOTE: This transfer from the dada block to the GPU
+    // TODO: Write version that saves from the GPU to the dada block
+    float mselapsed = dada_cuda_device_transfer(buffer, tmpctx->devicememory);
+}
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         avgfreq_(config.freqavg),
@@ -155,6 +216,42 @@ void GpuPool::Initialise(void) {
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
     if (verbose_)
         PrintSafe("Preparing the memory on pool", poolid_, "...");
+
+    DadaContext dcontext;
+    dada_client_t *client = 0;
+    // TODO: Move to the initialiser list
+    // TODO: DADA key will be a command line option
+    dadakey_ = DADA_DEFAULT_BLOCK_KEY;
+    // TODO: Need to get the header here
+    dcontext.headerfile = inputheader;
+    dcontext.log = multilog_open("PAF DADA logger\n", 0);
+    // TODO: Could this destination be a file?
+    multilog_add(dcontext.log, stderr);
+    dcontext.hdu = dada_hdu_create(dcontext.log);
+    dada_hdu_set_key(dcontext.hdu, dadakey_);
+
+    if (dada_hdu_connect(dcontext.hdu) < 0) {
+        multilog(dcontext.log, LOG_ERR, "Could not connect to the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dada_hdu_lock_write(dcontext.hdu) < 0) {
+        multilog(dcontext.log, LOG_ERR< "Could not lock write on the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    client = dada_client_create();
+    client->context = &dcontext;
+    client->log =  dcontext.log;
+    client->data_block = dcontext.hdu->data_block;
+    client->header_block = dcontext.hdu->header_block;
+
+    // TODO: Need to write these beautiful functions
+    client->open_function = DadaPafOpen;
+    client->io_function = DadaPafWrite;
+    client->io_block_function_cuda = DadaPafWriteBlock;
+    client->close_function = DadaPafClose;
+    client->direction = dada_client_writer;
 
     // Start of the page-locked memory allocation
 
@@ -372,6 +469,16 @@ GpuPool::~GpuPool(void) {
     }
 
     delete [] fftplans_;
+
+    if (dada_hdu_unlock_write(dcontext.hdu) < 0) {
+        multilog(dcontext.log, LOG_ERR, "Cound not unlock read on the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dada_hdu_disconnect(dcontext.hdu) < 0) {
+        multilog(dcontext.log, LOG_ERR, "Could not disconnect from the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void GpuPool::HandleSignal(int signum) {

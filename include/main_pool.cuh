@@ -21,10 +21,10 @@ class MainPool
 {
     private:
 
-        int nogpus;
+        int nogpus_;
 
-        std::vector<std::unique_ptr<GpuPool>> gpuvector;
-        std::vector<std::thread> threadvector;
+        std::vector<std::unique_ptr<GpuPool>> gpuvector_;
+        std::vector<std::thread> threadvector_;
     protected:
 
     public:
