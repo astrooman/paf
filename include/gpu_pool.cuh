@@ -21,11 +21,30 @@
 #include "filterbank_buffer.cuh"
 #include "obs_time.hpp"
 
+#include "dada_hdu.h"
+#include "multilog.h"
+
+struct DadaContext {
+    bool headerwritten;
+    bool verbose;
+    dada_hdu_t *hdu;
+    multilog_t *log;
+    char *headerfile;
+    char *obsheader;
+    unsigned int device;
+    cudaStream_t stream;
+    void *devicememory;
+    uint64_t bytestransferred;
+};
+
 class GpuPool
 {
     private:
 
-        // NOTE: New, shiny names
+        DadaContext dcontext;
+        dada_client_t *client_;
+        key_t dadakey_;
+
         bool scaled_;
         bool verbose_;
         static bool working_;
@@ -99,7 +118,7 @@ class GpuPool
         unsigned int filchans_;                //!< Number of output filterbank channels
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
-	unsigned int scalesamples_;
+	    unsigned int scalesamples_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 

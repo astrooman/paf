@@ -68,6 +68,7 @@ class FilterbankBuffer
         void GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);
         void SendToRam(int idx, cudaStream_t &stream, int hostjump);
         void UpdateFilledTimes(ObsTime frame_time);
+        int UpdateFilledTimes(ObsTime, frame_time);
 };
 /*
 // NOTE: Scaling will be removed in this form. Will be moved to the detection kernel
