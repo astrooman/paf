@@ -14,16 +14,17 @@
 #include <cufft.h>
 #include <cuda.h>
 #include <numa.h>
-#include <pthread.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
+#include <arpa/inet.h>
+#include <assert.h>
 #include <inttypes.h>
 #include <errno.h>
 #include <netdb.h>
-#include <arpa/inet.h>
+#include <pthread.h>
 #include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -77,9 +78,7 @@ struct FactorFunctor {
 
 struct MeanFunctor {
     __host__ __device__ float operator()(float val) {
-        if (val == 0.0f) {
-            return 4.0f;
-        }
+        return val != 0 ? val : 4.0f;
     }
 };
 
@@ -89,7 +88,7 @@ struct StdevFunctor {
     }
 };
 
-void DadaCudaHostTransfer(dada_client_t *client, void *destination, unsigned int buffno, size_t size, cudaStream_t stream) {
+void DadaPafCudaHostTransfer(dada_client_t *client, void *destination, unsigned int buffno, size_t size, cudaStream_t stream) {
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client -> context);
     assert(tmpctx != 0);
@@ -159,7 +158,7 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
 
         tmpctx -> headerwritten = true;
     } else {
-        memset(buffer, 0 bytes);
+        memset(buffer, 0, bytes);
     }
     return bytes;
 }
@@ -177,16 +176,16 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
 
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
-    asser(tmpctx != 0);
+    assert(tmpctx != 0);
 
     while (!tmpctx -> buffno) {
         if (client -> quit) {
             multilog(client -> log, LOG_INFO, "End of the data transfer\n");
             return 0;
         } else {
-            DadaPafCudaTransfer(client, buffer, tmpctx -> buffno, bytes, tmpctx -> stream);
+            DadaPafCudaHostTransfer(client, buffer, tmpctx -> buffno, bytes, tmpctx -> stream);
             tmpctx -> bytestransferred += bytes;
-            tmpcts -> buffno = 0;
+            tmpctx -> buffno = 0;
             return bytes;
         }
     }
@@ -263,44 +262,6 @@ void GpuPool::Initialise(void) {
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
 
-    // STAGE: Prepare the DADA buffers
-
-    client_ = 0;
-    // TODO: Move to the initialiser list
-    // TODO: DADA key will be a command line option
-    dadakey_ = DADA_DEFAULT_BLOCK_KEY;
-    // TODO: Need to get the header here
-    dcontext_.headerfile = inputheader;
-    dcontext_.log = multilog_open("PAF DADA logger\n", 0);
-    // TODO: Could this destination be a file?
-    multilog_add(dcontext_.log, stderr);
-    dcontext_.hdu = dada_hdu_create(dcontext_.log);
-    dada_hdu_set_key(dcontext_.hdu, dadakey_);
-    dcontext_.buffnot = 0;
-
-    if (dada_hdu_connect(dcontext_.hdu) < 0) {
-        multilog(dcontext_.log, LOG_ERR, "Could not connect to the HDU!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    if (dada_hdu_lock_write(dcontext_.hdu) < 0) {
-        multilog(dcontext_.log, LOG_ERR< "Could not lock write on the HDU!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    client_ = dada_client_create();
-    client_ -> context = &dcontext_;
-    client_ -> log =  dcontext_.log;
-    client_ -> data_block = dcontext_.hdu->data_block;
-    client_ -> header_block = dcontext_.hdu->header_block;
-
-    // TODO: Need to write these beautiful functions
-    client_ -> open_function = DadaPafOpen;
-    client_ -> io_function = DadaPafWrite;
-    client_ -> io_block_function = DadaPafWriteBlock;
-    client_ -> close_function = DadaPafClose;
-    client_ -> direction = dada_client_writer;
-    client_ -> quit = false;
     // Start of the page-locked memory allocation
 
     // STAGE: PREPARE THE READ AND FILTERBANK BUFFERS
@@ -394,12 +355,11 @@ void GpuPool::Initialise(void) {
     dedispnobuffers_  = 2;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
     filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_, filbits_);
-    dcontext_ -> devicememory = filbuffer_ -> GetFilPointer();
-    dedispplan_->set_killmask(&config_.killmask[0]);
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
-    if (verbose_)
-        PrintSafe("Setting up dedispersion and single pulse search on pool", poolid_, "...");
+    if (verbose_) {
+        PrintSafe("Setting up the DADA buffer on the pool", poolid_, "...");
+    }
 
     SetSearchParams(singleparams_, config_);
     // NOTE: Commented out for the filterbank dump mode
@@ -420,11 +380,54 @@ void GpuPool::Initialise(void) {
     }
 
     cudaCheckError(cudaStreamCreate(&dedispstream_));
-    gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
+
+    // STAGE: Prepare the DADA buffers
+    client_ = 0;
+    // TODO: Move to the initialiser list
+    // TODO: DADA key will be a command line option
+    dadakey_ = DADA_DEFAULT_BLOCK_KEY;
+    // TODO: Need to get the header here
+    dcontext_.headerfile = config_.inputheader;
+    dcontext_.log = multilog_open("PAF DADA logger\n", 0);
+    // TODO: Could this destination be a file?
+    multilog_add(dcontext_.log, stderr);
+    dcontext_.hdu = dada_hdu_create(dcontext_.log);
+    dada_hdu_set_key(dcontext_.hdu, dadakey_);
+    dcontext_.buffno = 0;
+    dcontext_.stream = dedispstream_;
+    dcontext_.devicememory = filbuffer_ -> GetFilPointer();
+
+    if (dada_hdu_connect(dcontext_.hdu) < 0) {
+        multilog(dcontext_.log, LOG_ERR, "Could not connect to the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dada_hdu_lock_write(dcontext_.hdu) < 0) {
+        multilog(dcontext_.log, LOG_ERR, "Could not lock write on the HDU!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    client_ = dada_client_create();
+    client_ -> context = &dcontext_;
+    client_ -> log =  dcontext_.log;
+    client_ -> data_block = dcontext_.hdu->data_block;
+    client_ -> header_block = dcontext_.hdu->header_block;
+
+    // TODO: Need to write these beautiful functions
+    client_ -> open_function = DadaPafOpen;
+    client_ -> io_function = DadaPafWrite;
+    client_ -> io_block_function = DadaPafWriteBlock;
+    client_ -> close_function = DadaPafClose;
+    client_ -> direction = dada_client_writer;
+    client_ -> quit = false;
+    gputhreads_.push_back(thread(&GpuPool::SendToDada, this));
+
+    //gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
 
     // STAGE: Networking
-    if (verbose_)
+    if (verbose_) {
         PrintSafe("Setting up networking on pool", poolid_, "...");
+    }
 
     int netrv;
     addrinfo hints, *servinfo, *tryme;
@@ -537,7 +540,6 @@ GpuPool::~GpuPool(void) {
 void GpuPool::HandleSignal(int signum) {
     PrintSafe("Captured the signal!\nWill now terminate!\n");
     working_ = false;
-    client_ -> quit = true;
 }
 
 void GpuPool::FilterbankData(int stream) {
@@ -595,7 +597,7 @@ void GpuPool::FilterbankData(int stream) {
                 DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
-                filbuffer_ -> UpdateFilledTimes(incomingtime);
+                //filbuffer_ -> UpdateFilledTimes(incomingtime);
                 dcontext_.buffno = filbuffer_ -> UpdateFilledTimes(incomingtime);
             } else {
                 // NOTE: Path for when we still have to obtain scaling factors
@@ -613,7 +615,26 @@ void GpuPool::FilterbankData(int stream) {
             }
         }
     }
+    client_ -> quit = true;
     cudaFree(dscalepower);
+}
+
+void GpuPool::SendToDada(void) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+
+    CPU_SET((int)(poolid_) * cores_ , &cpuset);
+    int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (retaff != 0) {
+        PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
+        exit(EXIT_FAILURE);
+    }
+
+    if (dada_client_write(client_) < 0) {
+        multilog(dcontext_.log, LOG_ERR, "Error during transfer to the DADA buffer\n");
+        exit(EXIT_FAILURE);
+    }
+
 }
 
 void GpuPool::SendForDedispersion(void) {

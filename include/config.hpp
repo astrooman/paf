@@ -35,6 +35,7 @@ struct InConfig {
     std::chrono::system_clock::time_point recordstart;
 
     std::string outdir;             //!< Product output directory
+    char *inputheader;
 
     std::vector<int> gpuids;        //!< GPU IDs to use
     std::vector<std::string> ips;   //!< IPs to receive the data on

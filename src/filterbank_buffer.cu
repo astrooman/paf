@@ -76,28 +76,28 @@ void FilterbankBuffer::Deallocate(void) {
     delete [] gulptimes_;
 }
 
-void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
-    lock_guard<mutex> addguard(statemutex_);
-    int framet = frame_time.refframe;
-    int filtime = framet * 2;
-    int index = 0;
-    //int index = (frame_time.refframe) % (nogulps_ * gulpsamples_);
-    //std::cout << framet << " " << index << std::endl;
-    //std::cout.flush();
-
-    for (int iacc = 0; iacc < accumulate_ * 2; iacc++) {
-        index = filtime % (nogulps_ * gulpsamples_);
-        if((index % gulpsamples_) == 0)
-            gulptimes_[index / gulpsamples_] = frame_time;
-        samplestate_[index] = 1;
-        //std::cout << framet << " " << index << " " << framet % totalsamples_ << std::endl;
-        //std::cout.flush();
-        if ((index < extrasamples_) && (filtime > extrasamples_)) {
-            samplestate_[index + nogulps_ * gulpsamples_] = 1;
-        }
-        filtime++;
-    }
-}
+// void FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
+//     lock_guard<mutex> addguard(statemutex_);
+//     int framet = frame_time.refframe;
+//     int filtime = framet * 2;
+//     int index = 0;
+//     //int index = (frame_time.refframe) % (nogulps_ * gulpsamples_);
+//     //std::cout << framet << " " << index << std::endl;
+//     //std::cout.flush();
+//
+//     for (int iacc = 0; iacc < accumulate_ * 2; iacc++) {
+//         index = filtime % (nogulps_ * gulpsamples_);
+//         if((index % gulpsamples_) == 0)
+//             gulptimes_[index / gulpsamples_] = frame_time;
+//         samplestate_[index] = 1;
+//         //std::cout << framet << " " << index << " " << framet % totalsamples_ << std::endl;
+//         //std::cout.flush();
+//         if ((index < extrasamples_) && (filtime > extrasamples_)) {
+//             samplestate_[index + nogulps_ * gulpsamples_] = 1;
+//         }
+//         filtime++;
+//     }
+// }
 
 int FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
     lock_guard<mutex> addguard(statemutex_);
@@ -135,7 +135,7 @@ int FilterbankBuffer::CheckIfReady() {
     for (int igulp = 0; igulp < nogulps_; igulp++) {
         if (samplestate_[(igulp + 1) * gulpsamples_ + extrasamples_ - 1] == 1) {
             // NOTE: Reset it straight away
-            samplestate_[idx * gulpsamples_ + extrasamples_ - 1] = 0;
+            samplestate_[igulp * gulpsamples_ + extrasamples_ - 1] = 0;
             return (igulp + 1);
         }
     }

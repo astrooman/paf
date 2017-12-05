@@ -21,6 +21,7 @@
 #include "filterbank_buffer.cuh"
 #include "obs_time.hpp"
 
+#include "dada_client.h"
 #include "dada_hdu.h"
 #include "multilog.h"
 
@@ -33,15 +34,16 @@ struct DadaContext {
     char *obsheader;
     unsigned int device;
     cudaStream_t stream;
-    void *devicememory;
+    unsigned char **devicememory;
     uint64_t bytestransferred;
+    unsigned int buffno;
 };
 
 class GpuPool
 {
     private:
 
-        DadaContext dcontext;
+        DadaContext dcontext_;
         dada_client_t *client_;
         key_t dadakey_;
 
@@ -179,6 +181,7 @@ class GpuPool
         */
         GpuPool& operator=(GpuPool &&inpool) = delete;
 
+        void SendToDada(void);
         void SendForDedispersion(void);
 
         void Initialise(void);
