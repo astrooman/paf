@@ -223,6 +223,9 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
 
     start_ = std::chrono::system_clock::now();
     cores_ = thread::hardware_concurrency();
+    // NOTE: Divide by 2 to get cores per Pool
+    cores_ /= 2;
+    cout << "Number of cores: " << cores_ << endl;
     if (cores_ == 0) {
         cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
         cerr << "Will set to 10!" << endl;
@@ -649,6 +652,11 @@ void GpuPool::SendForDedispersion(void) {
         exit(EXIT_FAILURE);
     }
 
+    {
+        std::unique_lock<std::mutex> framelock(framemutex_);
+        startrecord_.wait(framelock, [this]{return starttime_.refframe != -1;});
+    }
+
     ObsTime sendtime;
 
     header_f headerfil;
@@ -667,6 +675,8 @@ void GpuPool::SendForDedispersion(void) {
     headerfil.nchans = filchans_;
     headerfil.nifs = 1;
     headerfil.telescope_id = 8;
+
+    cout << "Filled the header info " << beamno_ << endl;
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
