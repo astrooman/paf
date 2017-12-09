@@ -434,7 +434,7 @@ void GpuPool::FilterbankData(int stream) {
             // NOTE: Protecting this whole section with mutex is over the top - defeats the whole purpose of concurrent processing
             if (scaled_) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<unsigned char*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 filbuffer_ -> UpdateFilledTimes(incomingtime);

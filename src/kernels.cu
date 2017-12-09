@@ -73,7 +73,7 @@ __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ o
     }
 }
 
-__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
+__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, unsigned char* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
 {
   /**
    * This block is going to do 2 timesamples for all coarse channels.
@@ -142,14 +142,19 @@ __global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __re
 
     if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
         float sum = 0.0;
-        float scaled = 0.0;
+        int scaled = 0;
 
         for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
             sum += freq_sum_buffer[chan_idx];
         }
 
-        scaled = (sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f;
-        out[saveoff + threadIdx.x] = scaled;
+        scaled = __float2int_ru((sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f);
+        if (scaled > 255) {
+            scaled = 255;
+        } else if (scaled < 0) {
+            scaled = 0;
+        }
+        out[saveoff + threadIdx.x] = (unsigned char)scaled;
         //out[saveoff + threadIdx.x] = sum;
 
       /**
