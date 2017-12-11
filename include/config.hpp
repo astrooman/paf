@@ -111,26 +111,26 @@ inline void SetDefaultConfig(InConfig &config) {
 inline void PrintConfig(const InConfig &config) {
 
     std::cout << "This is the configurations used: " << std::endl;
-    std::cout << "\t - the number of beams per node: " << config.nobeams << std::endl;;
-    std::cout << "\t - the number of GPUs to use: " << config.nogpus << std::endl;;
-    std::cout << "\t - IP addresses to listen on:" << std::endl;;
+    std::cout << "\t - the number of beams per node: " << config.nobeams << std::endl;
+    std::cout << "\t - the number of GPUs to use: " << config.nogpus << std::endl;
+    std::cout << "\t - IP addresses to listen on:" << std::endl;
     for (int iip = 0; iip < config.ips.size(); iip++) {
-        std::cout << "\t\t * " << config.ips.at(iip) << std::endl;;
+        std::cout << "\t\t * " << config.ips.at(iip) << std::endl;
     }
     std::cout <<"\t - ports to listen on: " << std::endl;;
     for (int iport = 0; iport < config.ports.size(); iport++) {
-        std::cout << "\t\t * " << config.ports.at(iport) << std::endl;;
+        std::cout << "\t\t * " << config.ports.at(iport) << std::endl;
     }
-    std::cout << "\t - output directory: " << config.outdir << std::endl;;
+    std::cout << "\t - output directory: " << config.outdir << std::endl;
     time_t tmptime = std::chrono::system_clock::to_time_t(config.recordstart);
     std::cout << "\t - recording start time: " << std::asctime(std::gmtime(&tmptime));
-    std::cout << "\t - the number of seconds to record: " << config.record << std::endl;;
-    std::cout << "\t - frequency averaging: " << config.freqavg << std::endl;;
-    std::cout << "\t - time averaging: " << config.timeavg << std::endl;;
-    std::cout << "\t - dedispersion gulp size: " << config.gulp << std::endl;;
-    std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;;
-    std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;;
-
+    std::cout << "\t - the number of seconds to record: " << config.record << std::endl;
+    std::cout << "\t - frequency averaging: " << config.freqavg << std::endl;
+    std::cout << "\t - time averaging: " << config.timeavg << std::endl;
+    std::cout << "\t - dedispersion gulp size: " << config.gulp << std::endl;
+    std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;
+    std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;
+    std::cout << "\t - number of accumulates: " << config.accumulate << std::endl;
 }
 
 inline void ReadConfig(std::string filename, InConfig &config) {

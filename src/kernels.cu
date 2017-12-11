@@ -11,7 +11,7 @@
 #define NCHAN_COARSE 336
 #define NCHAN_FINE_IN 32
 #define NCHAN_FINE_OUT 27
-#define NACCUMULATE 128
+#define NACCUMULATE 256 
 #define NPOL 2
 #define NSAMPS 4
 #define NSAMPS_SUMMED 2

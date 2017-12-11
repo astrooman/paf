@@ -160,6 +160,8 @@ class GpuPool
         */
         GpuPool& operator=(GpuPool &&inpool) = delete;
 
+        void AddForFilterbank(void);
+
         void SendForDedispersion(void);
 
         void Initialise(void);

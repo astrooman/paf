@@ -59,7 +59,7 @@ using std::vector;
 bool GpuPool::working_ = true;
 
 #define NFPGAS 48
-#define NACCUMULATE 128
+#define NACCUMULATE 256
 
 struct FactorFunctor {
     __host__ __device__ float operator()(float val) {
@@ -81,15 +81,15 @@ struct StdevFunctor {
     }
 };
 
-GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
+GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         avgfreq_(config.freqavg),
                                         avgtime_(config.timeavg),
                                         beamno_(0),
                                         codiflen_(config.codiflen),
                                         config_(config),
                                         dedispgulpsamples_(config.gulp),
-                                        fftbatchsize_(config.nopols * config.nochans * config.accumulate * 128 / config.fftsize),
-                                        fftedsize_(config.nopols * config.nochans * config.accumulate * 128 / config.fftsize * config.fftsize),
+                                        fftbatchsize_(config.nopols * config.nochans * NACCUMULATE * 128 / config.fftsize),
+                                        fftedsize_(config.nopols * config.nochans * NACCUMULATE * 128 / config.fftsize * config.fftsize),
                                         fftpoints_(config.fftsize),
                                         filbits_(config.outbits),
                                         filchans_(config.filchans),
@@ -97,8 +97,8 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
                                         ipstring_(config.ips[poolid]),
-                                        // NOTE: There are config.nochans * config.accumulate * 128 8-byte words
-                                        inbuffsize_(8  * config.nochans * config.accumulate * 128),
+                                        // NOTE: There are config.nochans * NACCUMULATE * 128 8-byte words
+                                        inbuffsize_(8  * config.nochans * NACCUMULATE * 128),
                                         inchans_(config.nochans),
                                         nopols_(config.nopols),
                                         noports_(config.noports),
@@ -108,7 +108,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         ports_(config.ports),
                                         scaled_(false),
                                         secondstorecord_(config.record),
-                                        unpackedbuffersize_(config.nopols * config.nochans * config.accumulate * 128),
+                                        unpackedbuffersize_(config.nopols * config.nochans * NACCUMULATE * 128),
                                         verbose_(config.verbose) {
 
     start_ = std::chrono::system_clock::now();
@@ -118,6 +118,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
     cout << "Number of cores: " << cores_ << endl;
     if (cores_ == 0) {
         cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
+
         cerr << "Will set to 10!" << endl;
         // NOTE: That should be 10 for the Effelsberg PAF machines - need to be careful when used on different machines.
         cores_ = 10;
@@ -164,7 +165,7 @@ void GpuPool::Initialise(void) {
     scalesamples_ = (int)(config_.scaleseconds / config_.tsamp) / (2 * NACCUMULATE) * 2 * NACCUMULATE;
     alreadyscaled_.store(0);
 
-    userecbuffers_ = max(2, nostreams_);
+    userecbuffers_ = max(4, nostreams_);
     framenumbers_ = new int[accumulate_ * userecbuffers_];
     if (mlock(framenumbers_, accumulate_ * userecbuffers_ * sizeof(int))) {
         PrintSafe("Error on framenumbers_ mlock:", errno);
@@ -272,9 +273,14 @@ void GpuPool::Initialise(void) {
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
     }
 
+
+    gputhreads_.push_back(thread(&GpuPool::AddForFilterbank, this));   
+
     cudaCheckError(cudaStreamCreate(&dedispstream_));
     gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
-
+    
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    
     // STAGE: Networking
     if (verbose_)
         PrintSafe("Setting up networking on pool", poolid_, "...");
@@ -410,17 +416,35 @@ void GpuPool::FilterbankData(int stream) {
 
     while (working_) {
         // NOTE: Time this portion of the code has to be profiled carefully as unique_lock can be a bit expensive
-        std::unique_lock<mutex> worklock(workmutex_);
-        workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
+        //std::unique_lock<mutex> worklock(workmutex_);
+        //workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
+
+        // NOTE: This portion of the code doesn't work at all. Randomly missing data in the queue and shit like that.       
+        while(working_) {
+            //workmutex_.lock();
+            if (!workqueue_.empty()) {
+                bufferinfo = workqueue_.front();
+                workqueue_.pop();
+                //workmutex_.unlock();
+                break;
+            }
+
+            //workmutex_.unlock();
+            //std::this_thread::yield();
+        }
+ 
         if (working_) {
             // TODO: Copy the data using the information in the queue
-            bufferinfo = workqueue_.front();
-            workqueue_.pop();
-            worklock.unlock();
+            //workmutex_.lock();
+            //bufferinfo = workqueue_.front();
+            //workqueue_.pop();
+            //workmutex_.unlock();
+            //worklock.unlock();
 
             // NOTE: This already has the correct offset for a given buffer chunk included
             incoming = bufferinfo.first;
             incomingtime.refframe = bufferinfo.second;
+            //cout << incomingtime.refframe << " " << workqueue_.size() << endl;
             // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
             std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
 
@@ -435,14 +459,14 @@ void GpuPool::FilterbankData(int stream) {
             if (scaled_) {
                 // NOTE: Path for when the scaling factors have already been obtained
                 DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<unsigned char*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
-                cudaStreamSynchronize(gpustreams_[stream]);
+                //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 filbuffer_ -> UpdateFilledTimes(incomingtime);
             } else {
                 // NOTE: Path for when we still have to obtain scaling factors
                 DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, filchans_);
                 GetScaleFactorsKernel<<<1, 567, 0, gpustreams_[stream]>>>(dscalepower, pdmeans_, pdstdevs_, pdfactors_, filchans_, alreadyscaled_);
-                cudaStreamSynchronize(gpustreams_[stream]);
+                //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 alreadyscaled_ += 2 * NACCUMULATE;
                 if (alreadyscaled_ >= scalesamples_) {
@@ -452,6 +476,7 @@ void GpuPool::FilterbankData(int stream) {
                     PrintSafe("Scaling factors on pool", poolid_, "have been obtained");
                 }
             }
+
         }
     }
     cudaFree(dscalepower);
@@ -462,7 +487,7 @@ void GpuPool::SendForDedispersion(void) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
 
-    CPU_SET((int)(poolid_) * cores_ , &cpuset);
+    CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ , &cpuset);
     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
@@ -492,8 +517,6 @@ void GpuPool::SendForDedispersion(void) {
     headerfil.nchans = filchans_;
     headerfil.nifs = 1;
     headerfil.telescope_id = 8;
-
-    cout << "Filled the header info " << beamno_ << endl;
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
@@ -541,7 +564,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     // NOTE: 2 ports per CPU core
-    CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ + (int)(portid / 2), &cpuset);
+    CPU_SET((int)(poolid_) * cores_ + 2 + nostreams_ + (int)(portid / 2), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
@@ -559,7 +582,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
 
     int numbytes{0};
     short fpga{0};
-    short bufidx{0};
+    unsigned int bufidx{0};
 
     int frame{0};
     int modframe{0};
@@ -569,8 +592,8 @@ void GpuPool::ReceiveData(int portid, int recport) {
     bool checkexpected;
 
     while (std::chrono::high_resolution_clock::now() < config_.recordstart) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
-            PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
+        //if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
+          //  PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
     }
 
     if (portid == 0) {
@@ -615,12 +638,15 @@ void GpuPool::ReceiveData(int portid, int recport) {
         modframe = frame % (accumulate_ * userecbuffers_);
 
         framenumbers_[modframe] = frame;
+        //if ((portid == 0) && (fpga == 0) && ((modframe % 256) == 0))
+        //    cout << "Receiver: " << modframe << " " << fpga << endl;
+            
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         fpgaready_[modframe] |= (1LL << fpga);
 
         checkexpected = false;
 
-        if (someonechecking_.compare_exchange_strong(checkexpected,true)) {
+/*        if (someonechecking_.compare_exchange_strong(checkexpected,true)) {
             // NOTE: Check the last sample of the current stream and something inside of the next
             for (int istream = 0; istream < userecbuffers_; ++istream) {
                 // NOTE: Checking for at least 24 FPGAS - doesn't make much sense to be processing with less than half of the band
@@ -647,8 +673,87 @@ void GpuPool::ReceiveData(int portid, int recport) {
                 }
             }
             someonechecking_.store(false);
-        }
+        }*/
+
+        /*if (portid == 0) {
+            for (int istream = 0; istream < userecbuffers_; ++istream) {
+                // NOTE: Checking for at least 24 FPGAS - doesn't make much sense to be processing with less than half of the band
+                // TODO: Make this a more strict constraint when FPGA problems are sorted out - a quarter or a third
+                // NOTE: Check in the quarter of next stream - should give enough time for latecomers
+                // NOTE: This part is not overly atomic - the value can be changed when it is being checked
+                // TODO: Is it going to be much of a problem?
+                if ((__builtin_popcountll(fpgaready_[(istream + 1) * accumulate_ - 1]) >= 36) && (__builtin_popcountll(fpgaready_[((istream + 1) % userecbuffers_) * accumulate_ + accumulate_ / 4]) >= 36)) {
+                    for (int isamp = 0; isamp < accumulate_; ++isamp) {
+                        fpgaready_[istream * accumulate_ + isamp].store(0LL);
+                    }
+                    for (int frameidx = 0; frameidx < accumulate_; ++frameidx) {
+                        if (framenumbers_[istream * accumulate_ + frameidx] != -1) {
+                            refframe = framenumbers_[istream * accumulate_ + frameidx] - frameidx;
+                            break;
+                        }
+                    }
+                    // TODO: Fill the frame numbers with -1
+                    std::fill(framenumbers_ + istream * NACCUMULATE, framenumbers_ + istream * NACCUMULATE + NACCUMULATE , -1);                    
+                    std::lock_guard<mutex> worklock(workmutex_);
+                    // NOTE: Push data onto the worker queue
+                    // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
+                    workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
+                    workready_.notify_one();
+                    break;
+                }
+            }
+        }*/
+
     }
     // NOTE: Wakes the consumer threads up to let them know their struggle is over
     workready_.notify_all();
 }
+
+void GpuPool::AddForFilterbank(void) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    // NOTE: 2 ports per CPU core
+    CPU_SET((int)(poolid_) * cores_ + cores_ - 1, &cpuset);
+    int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (retaff != 0) {
+        PrintSafe("Error setting thread affinity for the producer thread on pool", poolid_);
+        exit(EXIT_FAILURE);
+    }
+
+    if (verbose_)
+        PrintSafe("Producer thread on pool", poolid_, "running on CPU", sched_getcpu());
+
+    int refframe{0};
+    while(working_) {
+        for (int istream = 0; istream < userecbuffers_; ++istream) {
+            // NOTE: Checking for at least 24 FPGAS - doesn't make much sense to be processing with less than half of the band
+            // TODO: Make this a more strict constraint when FPGA problems are sorted out - a quarter or a third
+            // NOTE: Check in the quarter of next stream - should give enough time for latecomers
+            // NOTE: This part is not overly atomic - the value can be changed when it is being checked
+            // TODO: Is it going to be much of a problem?
+            if ((__builtin_popcountll(fpgaready_[(istream + 1) * NACCUMULATE - 1]) >= 30) && (__builtin_popcountll(fpgaready_[((istream + 1) % userecbuffers_) * NACCUMULATE + NACCUMULATE / 4]) >= 30)) {
+                for (int isamp = 0; isamp < NACCUMULATE; ++isamp) {
+                    fpgaready_[istream * NACCUMULATE + isamp] &= (0LL);
+                }
+                for (int frameidx = 0; frameidx < NACCUMULATE; ++frameidx) {
+                    if (framenumbers_[istream * NACCUMULATE + frameidx] != -1) {
+                        refframe = framenumbers_[istream * NACCUMULATE + frameidx] - frameidx;
+                        //cout << refframe << endl;
+                        //cout.flush();
+                        break;
+                    }
+                }
+                // TODO: Fill the frame numbers with -1
+                //std::lock_guard<mutex> worklock(workmutex_);
+                // NOTE: Push data onto the worker queue
+                // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
+                workmutex_.lock();      
+                workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
+                workmutex_.unlock();
+                //workready_.notify_one();
+                break;
+            }
+        }
+    }
+}
+
