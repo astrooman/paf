@@ -130,8 +130,8 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
 
 void GpuPool::Initialise(void) {
 
-    struct bitmask *mask = numa_parse_nodestring((std::to_string(poolid_)).c_str());
-    numa_bind(mask);
+    //struct bitmask *mask = numa_parse_nodestring((std::to_string(poolid_)).c_str());
+    //numa_bind(mask);
 
     signal(SIGINT, GpuPool::HandleSignal);
     cudaCheckError(cudaSetDevice(poolid_));
