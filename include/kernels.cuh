@@ -28,7 +28,7 @@ __global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsig
 // NOTE: New kernels
 __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ out);
 
-__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, unsigned char* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet);
+__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet);
 
 __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restrict__ out, short nchans);
 

@@ -56,6 +56,7 @@ struct InConfig {
     unsigned int noports;           //!< Number of ports to receive the data on; should be the same as ports.size()
     unsigned int nostokes;          //!< Number of Stokes parameters to output
     unsigned int nostreams;         //!< Number of GPU streams used for filterbank
+    unsigned int numa;
     unsigned int outbits;           //!< Number of filterbank bits per sample after scaling
     unsigned int record;            //!< Number of seconds to record
     unsigned int timeavg;           //!< Number of time samples to average
@@ -79,6 +80,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.dec = 0.0;
     config.ra = 0.0;
 
+    config.numa = 0;
     config.nobeams = 1;
     config.fftsize = 32;
     config.freqavg = 16;
@@ -131,6 +133,10 @@ inline void PrintConfig(const InConfig &config) {
     std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;
     std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;
     std::cout << "\t - number of accumulates: " << config.accumulate << std::endl;
+    std::cout << "\t - number of output bits: " << config.outbits << std::endl;
+    if (config.nogpus == 1) {
+        std::cout << "\t - numa node to use: " << config.numa << std::endl;
+    }
 }
 
 inline void ReadConfig(std::string filename, InConfig &config) {

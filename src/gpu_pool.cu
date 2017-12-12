@@ -273,6 +273,8 @@ void GpuPool::Initialise(void) {
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
     }
 
+    memset(&starttime_, sizeof(starttime_), 0);
+    starttime_.refframe = -1;
 
     gputhreads_.push_back(thread(&GpuPool::AddForFilterbank, this));   
 
@@ -296,9 +298,6 @@ void GpuPool::Initialise(void) {
 
     std::ostringstream oss;
     std::string strport;
-
-    memset(&starttime_, sizeof(starttime_), 0);
-    starttime_.refframe = -1;
 
     someonechecking_.store(false);
 
@@ -456,9 +455,9 @@ void GpuPool::FilterbankData(int stream) {
 
             // TODO: Secure it for multithreading or move to a single stream execution
             // NOTE: Protecting this whole section with mutex is over the top - defeats the whole purpose of concurrent processing
-            if (scaled_) {
+            if (true) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<unsigned char*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 filbuffer_ -> UpdateFilledTimes(incomingtime);
@@ -511,12 +510,16 @@ void GpuPool::SendForDedispersion(void) {
     headerfil.tsamp = config_.tsamp;
     headerfil.data_type = 1;
     headerfil.ibeam = beamno_;
+    cout << "Beam " << beamno_ << " on pool " << poolid_ << endl;
     headerfil.machine_id = 2;
     headerfil.nbeams = 1;
     headerfil.nbits = filbits_;
     headerfil.nchans = filchans_;
     headerfil.nifs = 1;
     headerfil.telescope_id = 8;
+
+    std::chrono::duration<double> diff;
+    std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
@@ -526,6 +529,11 @@ void GpuPool::SendForDedispersion(void) {
     while(working_) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
+            diff = std::chrono::system_clock::now() - readytime;
+            if (gulpssent_ > 0) {
+                cout << "Previous buffer sent " << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f << "s ago" << endl;
+            }
+            readytime = std::chrono::system_clock::now();
             // TODO: Will we be able to update this information during the observation?
             headerfil.az = 0.0;
             headerfil.za = 0.0;
@@ -538,17 +546,18 @@ void GpuPool::SendForDedispersion(void) {
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
             // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
 
-            if (verbose_)
-                PrintSafe(ready - 1, "buffer ready on pool", poolid_);
-
+            //if (verbose_)
+            //    PrintSafe(ready - 1, "buffer ready on pool", poolid_);
+            cout << ready - 1 << " buffer ready on pool " << poolid_ << endl;
             filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
+            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to RAM" << endl;
             filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
             // TODO: Possible race condition
             gulpssent_++;
 
-            if (verbose_)
-                PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
-
+            //if (verbose_)
+            //    PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
+            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " saved" << endl;
             // NOTE: This fails from time to time and pipeline finishes much earlier than expected
             // TODO: Fix it!
             if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_) {
@@ -604,6 +613,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         starttime_.refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
         starttime_.refframe = (int)(tmpbuffer[7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
+        cout << beamno_ << " on pool " << poolid_ << endl;
         startrecord_.notify_all();
     } else {
         std::unique_lock<std::mutex> framelock(framemutex_);
