@@ -301,6 +301,8 @@ void GpuPool::Initialise(void) {
 
     someonechecking_.store(false);
 
+    receivertest_.resize(noports_);
+
     for (int iport = 0; iport < noports_; iport++) {
         // TODO: Read port numbers from the config file
         oss.str("");
@@ -347,6 +349,34 @@ GpuPool::~GpuPool(void) {
 
     cout << "Pipeline execution time: " << std::chrono::duration_cast<std::chrono::seconds>(diff).count() << "s" << endl;
 
+    // NOTE: Saving the test data
+    string recfilestr = config_.outdir + "/receiver_beam_" + std::to_string(beamno_) + ".dat";
+    std::ofstream recfile(recfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
+
+    for (int iport = 0; iport < noports_; iport++) {
+        for (isamp = 0; isamp < receivertest_.at(iport).size(); ++isamp) {
+            recfile << receivertest_.at(iport)[isamp].first << " " << receivertest_.at(iport)[isamp].first << endl;
+        }
+        recfile << endl;
+    }
+    recfile.close();
+
+    string prodfilestr = config_.outdir + "/producer_beam_" + std::to_string(beamno_) + ".dat";
+    std::ofstream prodfile(prodfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
+
+    for (int isamp = 0; isamp < producertest_.size(); ++isamp) {
+        prodfile << producertest_.at(isamp) << endl;
+    }
+    prodfile.close();
+
+    string gpufilestr = config_.outdir + "/gpu_beam_" + std::to_string(beamno_) + ".dat";
+    std::ofstream gpufile(gpufilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
+
+    for (int isamp = 0; isamp < gputest_.size(); ++isamp) {
+        gpufile << gputest_.at(isamp) << endl;
+    }
+    gpufile.close();
+    
     // NOTE: Save the scaling factors before quitting
     if (scaled_) {
         string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
@@ -443,6 +473,8 @@ void GpuPool::FilterbankData(int stream) {
             // NOTE: This already has the correct offset for a given buffer chunk included
             incoming = bufferinfo.first;
             incomingtime.refframe = bufferinfo.second;
+            // NOTE: Make sure that only one GPU thread is being used to remove race conditions
+            gputest_.push_back(bufferinfo.second);
             //cout << incomingtime.refframe << " " << workqueue_.size() << endl;
             // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
             std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
@@ -654,7 +686,9 @@ void GpuPool::ReceiveData(int portid, int recport) {
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         fpgaready_[modframe] |= (1LL << fpga);
 
-        checkexpected = false;
+        receivertest_.at(portid).push_back(std::make_pair(frame, fpga));
+
+        //checkexpected = false;
 
 /*        if (someonechecking_.compare_exchange_strong(checkexpected,true)) {
             // NOTE: Check the last sample of the current stream and something inside of the next
@@ -760,6 +794,7 @@ void GpuPool::AddForFilterbank(void) {
                 workmutex_.lock();      
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
                 workmutex_.unlock();
+                producertest_.push_back(refframe);
                 //workready_.notify_one();
                 break;
             }

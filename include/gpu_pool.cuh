@@ -85,6 +85,11 @@ class GpuPool
         std::vector<std::thread> gputhreads_;
         std::vector<std::thread> receivethreads_;
 
+        // NOTE: Test buffers
+        std::vector<int> gputest_;
+        std::vector<int> producertest_;
+        std::vector<std::pair<int, int>> receivertest_;
+
         thrust::device_vector<float> dfactors_;
         thrust::device_vector<float> dmeans_;
         thrust::device_vector<float> dstdevs_;
@@ -99,7 +104,7 @@ class GpuPool
         unsigned int filchans_;                //!< Number of output filterbank channels
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
-	unsigned int scalesamples_;
+	    unsigned int scalesamples_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 
