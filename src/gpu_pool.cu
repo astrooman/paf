@@ -350,22 +350,22 @@ GpuPool::~GpuPool(void) {
     cout << "Pipeline execution time: " << std::chrono::duration_cast<std::chrono::seconds>(diff).count() << "s" << endl;
 
     // NOTE: Saving the test data
-    string recfilestr = config_.outdir + "/receiver_beam_" + std::to_string(beamno_) + ".dat";
-    std::ofstream recfile(recfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
 
     for (int iport = 0; iport < noports_; iport++) {
-        for (isamp = 0; isamp < receivertest_.at(iport).size(); ++isamp) {
-            recfile << receivertest_.at(iport)[isamp].first << " " << receivertest_.at(iport)[isamp].first << endl;
+        string recfilestr = config_.outdir + "/receiver_beam_" + std::to_string(beamno_) + "_port_" + std::to_string(ports_.at(iport)) + ".dat";
+        std::ofstream recfile(recfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
+        
+        for (int isamp = 0; isamp < receivertest_.at(iport).size(); ++isamp) {
+            recfile << receivertest_.at(iport)[isamp].first << " " << receivertest_.at(iport)[isamp].second << endl;
         }
-        recfile << endl;
+        recfile.close();
     }
-    recfile.close();
 
     string prodfilestr = config_.outdir + "/producer_beam_" + std::to_string(beamno_) + ".dat";
     std::ofstream prodfile(prodfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
 
     for (int isamp = 0; isamp < producertest_.size(); ++isamp) {
-        prodfile << producertest_.at(isamp) << endl;
+        prodfile << producertest_.at(isamp).first << " " << producertest_.at(isamp).second << endl;
     }
     prodfile.close();
 
@@ -793,8 +793,8 @@ void GpuPool::AddForFilterbank(void) {
                 // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
                 workmutex_.lock();      
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
+                producertest_.push_back(std::make_pair(refframe, workqueue_.size()));
                 workmutex_.unlock();
-                producertest_.push_back(refframe);
                 //workready_.notify_one();
                 break;
             }

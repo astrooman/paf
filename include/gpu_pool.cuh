@@ -87,8 +87,8 @@ class GpuPool
 
         // NOTE: Test buffers
         std::vector<int> gputest_;
-        std::vector<int> producertest_;
-        std::vector<std::pair<int, int>> receivertest_;
+        std::vector<std::pair<int, int>> producertest_;
+        std::vector<std::vector<std::pair<int, int>>> receivertest_;
 
         thrust::device_vector<float> dfactors_;
         thrust::device_vector<float> dmeans_;
