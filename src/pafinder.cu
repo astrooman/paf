@@ -7,6 +7,7 @@
 
 #include <cuda.h>
 #include <cufft.h>
+#include <pthread.h>
 
 #include "config.hpp"
 #include "errors.hpp"
@@ -22,6 +23,8 @@ using std::vector;
 
 int main(int argc, char *argv[])
 {
+    unsigned int cores = thread::hardware_concurrency() / 2;
+
     string configfile;
     InConfig config;
     SetDefaultConfig(config);
@@ -110,6 +113,17 @@ int main(int argc, char *argv[])
         }
 
     }
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET((int)(config.numa) * cores, &cpuset);
+    int retaff = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+    if (retaff != 0) {
+        cout << "Error setting thread affinity for the GPU pool" << endl;
+        exit(EXIT_FAILURE);     // affinity is critical for us
+    }
+
 
     if (config.verbose) {
         cout << "Starting up. This may take few seconds..." << endl;

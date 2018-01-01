@@ -450,16 +450,16 @@ void GpuPool::FilterbankData(int stream) {
 
         // NOTE: This portion of the code doesn't work at all. Randomly missing data in the queue and shit like that.       
         while(working_) {
-            //workmutex_.lock();
+            workmutex_.lock();
             if (!workqueue_.empty()) {
                 bufferinfo = workqueue_.front();
                 workqueue_.pop();
-                //workmutex_.unlock();
+                workmutex_.unlock();
                 break;
             }
 
-            //workmutex_.unlock();
-            //std::this_thread::yield();
+            workmutex_.unlock();
+            std::this_thread::yield();
         }
  
         if (working_) {
@@ -686,7 +686,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         fpgaready_[modframe] |= (1LL << fpga);
 
-        receivertest_.at(portid).push_back(std::make_pair(frame, fpga));
+//        receivertest_.at(portid).push_back(std::make_pair(frame, fpga));
 
         //checkexpected = false;
 
