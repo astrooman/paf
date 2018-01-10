@@ -72,9 +72,9 @@ inline void SetDefaultConfig(InConfig &config) {
     config.codiflen = 7168;
     config.dmstart = 0.0;
     config.dmend = 4000.0;
-    // NOTE: This is not correct
+    // NOTE: This is the top of the band minus half of one channel.
     // TODO: Need to read this information in from the CODIF header
-    config.ftop = 1400.0;
+    config.ftop = 1508.5 - (336.0 / 567.0 / 2.0);
     config.headlen = 64;
 
     config.dec = 0.0;

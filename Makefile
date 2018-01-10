@@ -7,7 +7,7 @@ CC=g++
 NVCC=/usr/local/cuda-8.0/bin/nvcc
 DEBUG=#-g -G
 INCLUDE = -I${INC_DIR} -I/usr/local/cuda-8.0/include
-LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda-8.0/lib64 -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
+LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda-8.0/lib64 -lstdc++ -lpthread -lcudart -lcuda
 
 CFLAGS = -Wall -Wextra -std=c++11
 NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread

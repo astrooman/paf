@@ -13,7 +13,7 @@
 
 #include <cufft.h>
 #include <cuda.h>
-#include <numa.h>
+//#include <numa.h>
 #include <pthread.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
@@ -330,6 +330,14 @@ void GpuPool::Initialise(void) {
             PrintSafe("Failed to bind to the socket", ports_.at(iport), "on pool", poolid_);
     }
 
+    int bufres{4*1024*1024};    // 4MB
+
+    for (int iport = 0; iport < noports_; ++iport) {
+        if(setsockopt(filedesc_[iport], SOL_SOCKET, SO_RCVBUF, &bufres, sizeof(bufres)) != 0) {
+            PrintSafe("Setsockopt error on pool", poolid_);
+        }
+    }
+
     for (int iport = 0; iport < noports_; iport++)
         receivethreads_.push_back(thread(&GpuPool::ReceiveData, this, iport, ports_.at(iport)));
 
@@ -351,7 +359,7 @@ GpuPool::~GpuPool(void) {
 
     // NOTE: Saving the test data
 
-    for (int iport = 0; iport < noports_; iport++) {
+/*    for (int iport = 0; iport < noports_; iport++) {
         string recfilestr = config_.outdir + "/receiver_beam_" + std::to_string(beamno_) + "_port_" + std::to_string(ports_.at(iport)) + ".dat";
         std::ofstream recfile(recfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
         
@@ -360,7 +368,7 @@ GpuPool::~GpuPool(void) {
         }
         recfile.close();
     }
-
+*/
     string prodfilestr = config_.outdir + "/producer_beam_" + std::to_string(beamno_) + ".dat";
     std::ofstream prodfile(prodfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
 
@@ -534,7 +542,7 @@ void GpuPool::SendForDedispersion(void) {
 
     header_f headerfil;
     headerfil.raw_file = "tastytastytest";
-    headerfil.source_name = "J1641-45";
+    headerfil.source_name = "Unknown ";
     headerfil.fch1 = config_.ftop;
     // NOTE: For channels in decreasing order
     headerfil.foff = -1.0 * abs(config_.foff);
@@ -573,7 +581,7 @@ void GpuPool::SendForDedispersion(void) {
             headerfil.dec = config_.dec;
             // TODO: This totally doesn't work when something is skipped
             // Need to move to the version that uses the frame number of the chunk being sent
-            headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+            headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(gulpssent_ + 1) * dedispgulpsamples_ * config_.tsamp);
             sendtime = filbuffer_->GetTime(ready-1);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
             // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
@@ -605,7 +613,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     // NOTE: 2 ports per CPU core
-    CPU_SET((int)(poolid_) * cores_ + 2 + nostreams_ + (int)(portid / 2), &cpuset);
+    CPU_SET((int)(poolid_) * cores_ + 2 + nostreams_ + (int)(portid), &cpuset);
     int retaff = pthread_setaffinity_np(receivethreads_[portid].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for receive thread on port", recport, "on pool", poolid_);
@@ -631,6 +639,9 @@ void GpuPool::ReceiveData(int portid, int recport) {
     int refframe{0};
 
     bool checkexpected;
+
+    unsigned int testframes = static_cast<int>(secondstorecord_ / 27.0 * 250000.0);
+    int *receivertest = new int[testframes]; 
 
     while (std::chrono::high_resolution_clock::now() < config_.recordstart) {
         //if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
@@ -685,6 +696,9 @@ void GpuPool::ReceiveData(int portid, int recport) {
             
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         fpgaready_[modframe] |= (1LL << fpga);
+
+        if ((fpga == (portid * 8)) && (frame < testframes)) 
+            receivertest[frame] = frame;
 
 //        receivertest_.at(portid).push_back(std::make_pair(frame, fpga));
 
@@ -751,6 +765,15 @@ void GpuPool::ReceiveData(int portid, int recport) {
     }
     // NOTE: Wakes the consumer threads up to let them know their struggle is over
     workready_.notify_all();
+
+    string recfilestr = config_.outdir + "/receiver_beam_" + std::to_string(beamno_) + "_port_" + std::to_string(recport) + ".dat";
+    std::ofstream recfile(recfilestr.c_str(), std::ios_base::out | std::ios_base::trunc);
+
+    for (int isamp = 0; isamp < testframes; ++isamp) {
+            recfile << receivertest[isamp] << endl;
+        }
+    recfile.close();
+    
 }
 
 void GpuPool::AddForFilterbank(void) {

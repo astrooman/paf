@@ -156,7 +156,7 @@ __global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __re
         }
 */
         //out[saveoff + threadIdx.x] = (unsigned char)scaled;
-        out[saveoff + threadIdx.x] = sum;
+        out[saveoff + 567 - 1 - threadIdx.x] = sum;
 
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
