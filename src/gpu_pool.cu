@@ -541,7 +541,7 @@ void GpuPool::SendForDedispersion(void) {
             headerfil.dec = config_.dec;
             // TODO: This totally doesn't work when something is skipped
             // Need to move to the version that uses the frame number of the chunk being sent
-            headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+            headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(gulpssent_ + 1) * dedispgulpsamples_ * config_.tsamp);
             sendtime = filbuffer_->GetTime(ready-1);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
             // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
