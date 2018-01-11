@@ -533,7 +533,7 @@ void GpuPool::SendForDedispersion(void) {
         if (ready) {
             diff = std::chrono::system_clock::now() - readytime;
             if (gulpssent_ > 0) {
-                castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f
+                castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f;
                 cout << "Previous buffer sent " << castdiff << "s ago" << endl;
 
                 if (castdiff > 7.10f) {
