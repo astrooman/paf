@@ -525,13 +525,22 @@ void GpuPool::SendForDedispersion(void) {
     if (verbose_)
         PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
 
+    float castdiff;
+
     int ready{0};
     while(working_) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
             diff = std::chrono::system_clock::now() - readytime;
             if (gulpssent_ > 0) {
-                cout << "Previous buffer sent " << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f << "s ago" << endl;
+                castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f
+                cout << "Previous buffer sent " << castdiff << "s ago" << endl;
+
+                if (castdiff > 7.10f) {
+                    cout << "ERROR: This buffer is late" << endl;
+                } else if (castdiff < 7.0f) {
+                    cout << "ERROR: This buffer is too early" << endl;
+                }
             }
             readytime = std::chrono::system_clock::now();
             // TODO: Will we be able to update this information during the observation?
