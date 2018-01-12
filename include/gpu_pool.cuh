@@ -181,7 +181,10 @@ class GpuPool
         */
         GpuPool& operator=(GpuPool &&inpool) = delete;
 
+        void AddForFilterbank(void);
+
         void SendToDada(void);
+        
         void SendForDedispersion(void);
 
         void Initialise(void);

@@ -11,7 +11,7 @@
 #define NCHAN_COARSE 336
 #define NCHAN_FINE_IN 32
 #define NCHAN_FINE_OUT 27
-#define NACCUMULATE 128
+#define NACCUMULATE 256
 #define NPOL 2
 #define NSAMPS 4
 #define NSAMPS_SUMMED 2
@@ -142,15 +142,22 @@ __global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __re
 
     if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
         float sum = 0.0;
-        float scaled = 0.0;
+        int scaled = 0;
 
         for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
             sum += freq_sum_buffer[chan_idx];
         }
-
-        scaled = (sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f;
-        out[saveoff + threadIdx.x] = scaled;
-        //out[saveoff + threadIdx.x] = sum;
+/*
+        scaled = __float2int_ru((sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f);
+        if (scaled > 255) {
+            scaled = 255;
+        } else if (scaled < 0) {
+            scaled = 0;
+        }
+*/
+        //out[saveoff + threadIdx.x] = (unsigned char)scaled;
+        // NOTE: That puts the highest frequency first (567 - 1 - threadIdx.x)
+        out[saveoff + 566 - threadIdx.x] = sum;
 
       /**
        * Note [Ewan]: The code below is commented out as we turned off the

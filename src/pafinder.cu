@@ -86,6 +86,9 @@ int main(int argc, char *argv[])
                     iarg++;
                     config.ips.push_back(string(argv[iarg]));
                 }
+            } else if (string(argv[iarg]) == "--numa") {
+                iarg++;
+                config.numa = atoi(argv[iarg]);
             } else if (string(argv[iarg]) == "-v") {
                 config.verbose = true;
             } else if ((string(argv[iarg]) == "-h") || (string(argv[iarg]) == "--help")) {

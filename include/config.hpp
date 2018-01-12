@@ -57,6 +57,7 @@ struct InConfig {
     unsigned int noports;           //!< Number of ports to receive the data on; should be the same as ports.size()
     unsigned int nostokes;          //!< Number of Stokes parameters to output
     unsigned int nostreams;         //!< Number of GPU streams used for filterbank
+    unsigned int numa;
     unsigned int outbits;           //!< Number of filterbank bits per sample after scaling
     unsigned int record;            //!< Number of seconds to record
     unsigned int timeavg;           //!< Number of time samples to average
@@ -72,14 +73,15 @@ inline void SetDefaultConfig(InConfig &config) {
     config.codiflen = 7168;
     config.dmstart = 0.0;
     config.dmend = 4000.0;
-    // NOTE: This is not correct
+    // NOTE: This is the top of the band minus half of the channel.
     // TODO: Need to read this information in from the CODIF header
-    config.ftop = 1400.0;
+    config.ftop = 1508.5 - (336.0 / 567.0 / 2.0);
     config.headlen = 64;
 
     config.dec = 0.0;
     config.ra = 0.0;
 
+    config.numa = 0;
     config.nobeams = 1;
     config.fftsize = 32;
     config.freqavg = 16;
@@ -112,26 +114,30 @@ inline void SetDefaultConfig(InConfig &config) {
 inline void PrintConfig(const InConfig &config) {
 
     std::cout << "This is the configurations used: " << std::endl;
-    std::cout << "\t - the number of beams per node: " << config.nobeams << std::endl;;
-    std::cout << "\t - the number of GPUs to use: " << config.nogpus << std::endl;;
-    std::cout << "\t - IP addresses to listen on:" << std::endl;;
+    std::cout << "\t - the number of beams per node: " << config.nobeams << std::endl;
+    std::cout << "\t - the number of GPUs to use: " << config.nogpus << std::endl;
+    std::cout << "\t - IP addresses to listen on:" << std::endl;
     for (int iip = 0; iip < config.ips.size(); iip++) {
-        std::cout << "\t\t * " << config.ips.at(iip) << std::endl;;
+        std::cout << "\t\t * " << config.ips.at(iip) << std::endl;
     }
     std::cout <<"\t - ports to listen on: " << std::endl;;
     for (int iport = 0; iport < config.ports.size(); iport++) {
-        std::cout << "\t\t * " << config.ports.at(iport) << std::endl;;
+        std::cout << "\t\t * " << config.ports.at(iport) << std::endl;
     }
-    std::cout << "\t - output directory: " << config.outdir << std::endl;;
+    std::cout << "\t - output directory: " << config.outdir << std::endl;
     time_t tmptime = std::chrono::system_clock::to_time_t(config.recordstart);
     std::cout << "\t - recording start time: " << std::asctime(std::gmtime(&tmptime));
-    std::cout << "\t - the number of seconds to record: " << config.record << std::endl;;
-    std::cout << "\t - frequency averaging: " << config.freqavg << std::endl;;
-    std::cout << "\t - time averaging: " << config.timeavg << std::endl;;
-    std::cout << "\t - dedispersion gulp size: " << config.gulp << std::endl;;
-    std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;;
-    std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;;
-
+    std::cout << "\t - the number of seconds to record: " << config.record << std::endl;
+    std::cout << "\t - frequency averaging: " << config.freqavg << std::endl;
+    std::cout << "\t - time averaging: " << config.timeavg << std::endl;
+    std::cout << "\t - dedispersion gulp size: " << config.gulp << std::endl;
+    std::cout << "\t - first DM to dedisperse to: " << config.dmstart << std::endl;
+    std::cout << "\t - last DM to dedisperse to: " << config.dmend << std::endl;
+    std::cout << "\t - number of accumulates: " << config.accumulate << std::endl;
+    std::cout << "\t - number of output bits: " << config.outbits << std::endl;
+    if (config.nogpus == 1) {
+        std::cout << "\t - numa node to use: " << config.numa << std::endl;
+    }
 }
 
 inline void ReadConfig(std::string filename, InConfig &config) {
