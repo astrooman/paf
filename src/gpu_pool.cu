@@ -276,13 +276,13 @@ void GpuPool::Initialise(void) {
     memset(&starttime_, sizeof(starttime_), 0);
     starttime_.refframe = -1;
 
-    gputhreads_.push_back(thread(&GpuPool::AddForFilterbank, this));   
+    gputhreads_.push_back(thread(&GpuPool::AddForFilterbank, this));
 
     cudaCheckError(cudaStreamCreate(&dedispstream_));
     gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
-    
+
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    
+
     // STAGE: Networking
     if (verbose_)
         PrintSafe("Setting up networking on pool", poolid_, "...");
@@ -418,7 +418,7 @@ void GpuPool::FilterbankData(int stream) {
         //std::unique_lock<mutex> worklock(workmutex_);
         //workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
 
-        // NOTE: This portion of the code doesn't work at all. Randomly missing data in the queue and shit like that.       
+        // NOTE: This portion of the code doesn't work at all. Randomly missing data in the queue and shit like that.
         while(working_) {
             //workmutex_.lock();
             if (!workqueue_.empty()) {
@@ -431,7 +431,7 @@ void GpuPool::FilterbankData(int stream) {
             //workmutex_.unlock();
             //std::this_thread::yield();
         }
- 
+
         if (working_) {
             // TODO: Copy the data using the information in the queue
             //workmutex_.lock();
@@ -502,7 +502,7 @@ void GpuPool::SendForDedispersion(void) {
 
     header_f headerfil;
     headerfil.raw_file = "tastytastytest";
-    headerfil.source_name = "J1641-45";
+    headerfil.source_name = "Unknown ";
     headerfil.fch1 = config_.ftop;
     // NOTE: For channels in decreasing order
     headerfil.foff = -1.0 * abs(config_.foff);
@@ -525,13 +525,22 @@ void GpuPool::SendForDedispersion(void) {
     if (verbose_)
         PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
 
+    float castdiff;
+
     int ready{0};
     while(working_) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
             diff = std::chrono::system_clock::now() - readytime;
             if (gulpssent_ > 0) {
-                cout << "Previous buffer sent " << std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f << "s ago" << endl;
+                castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f;
+                cout << "Previous buffer sent " << castdiff << "s ago" << endl;
+
+                if (castdiff > 7.10f) {
+                    cout << "ERROR: This buffer is late" << endl;
+                } else if (castdiff < 7.0f) {
+                    cout << "ERROR: This buffer is too early" << endl;
+                }
             }
             readytime = std::chrono::system_clock::now();
             // TODO: Will we be able to update this information during the observation?
@@ -541,7 +550,7 @@ void GpuPool::SendForDedispersion(void) {
             headerfil.dec = config_.dec;
             // TODO: This totally doesn't work when something is skipped
             // Need to move to the version that uses the frame number of the chunk being sent
-            headerfil.tstart = GetMjd(starttime_.refepoch, starttime_.refsecond + 27 + (gulpssent_ + 1)* dedispgulpsamples_ * config_.tsamp);
+            headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(gulpssent_ + 1) * dedispgulpsamples_ * config_.tsamp);
             sendtime = filbuffer_->GetTime(ready-1);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
             // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
@@ -650,7 +659,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
         framenumbers_[modframe] = frame;
         //if ((portid == 0) && (fpga == 0) && ((modframe % 256) == 0))
         //    cout << "Receiver: " << modframe << " " << fpga << endl;
-            
+
         std::copy(receivebuffers_[portid] + headlen_, receivebuffers_[portid] + codiflen_ + headlen_, hinbuffer_ + codiflen_ * bufidx);
         fpgaready_[modframe] |= (1LL << fpga);
 
@@ -703,7 +712,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
                         }
                     }
                     // TODO: Fill the frame numbers with -1
-                    std::fill(framenumbers_ + istream * NACCUMULATE, framenumbers_ + istream * NACCUMULATE + NACCUMULATE , -1);                    
+                    std::fill(framenumbers_ + istream * NACCUMULATE, framenumbers_ + istream * NACCUMULATE + NACCUMULATE , -1);
                     std::lock_guard<mutex> worklock(workmutex_);
                     // NOTE: Push data onto the worker queue
                     // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
@@ -757,7 +766,7 @@ void GpuPool::AddForFilterbank(void) {
                 //std::lock_guard<mutex> worklock(workmutex_);
                 // NOTE: Push data onto the worker queue
                 // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
-                workmutex_.lock();      
+                workmutex_.lock();
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
                 workmutex_.unlock();
                 //workready_.notify_one();
@@ -766,4 +775,3 @@ void GpuPool::AddForFilterbank(void) {
         }
     }
 }
-
