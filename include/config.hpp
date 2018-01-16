@@ -102,7 +102,7 @@ inline void SetDefaultConfig(InConfig &config) {
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
-    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
+    config.tsamp = (double)1.0 / (32.0 / 27.0 * 1e+06) * 32.0 * (double)config.timeavg;
     for (int ichan = 0; ichan < config.filchans; ichan++)
          (config.killmask).push_back((int)1);
 
