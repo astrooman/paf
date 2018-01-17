@@ -460,7 +460,8 @@ void GpuPool::FilterbankData(int stream) {
                 DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
-                filbuffer_ -> UpdateFilledTimes(incomingtime);
+                //filbuffer_ -> UpdateFilledTimes(incomingtime);
+                filbuffer_ -> UpdateFilledTimes(incomingtime.refframe);
             } else {
                 // NOTE: Path for when we still have to obtain scaling factors
                 DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, filchans_);
