@@ -142,9 +142,6 @@ int FilterbankBuffer::CheckIfReady() {
 
 int FilterbankBuffer::GetTime(int index) {
 
-    int starttime = frametimes_[index * gulpsamples_];
-    int endtime = frametimes_[(index + 1) * gulpsamples_ - 1];
-
     int nbuffers = gulpsamples_ / (2 * accumulate_);
     int diff = 0;
 

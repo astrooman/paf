@@ -556,20 +556,18 @@ void GpuPool::SendForDedispersion(void) {
             sendframe = filbuffer_->GetTime(ready-1);
             headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(sendframe) * config_.tsamp);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
-            // TODO: This line doesn't work - fix this! Possible bug related to multiple time samples per frame
 
-            //if (verbose_)
-            //    PrintSafe(ready - 1, "buffer ready on pool", poolid_);
             cout << ready - 1 << " buffer ready on pool " << poolid_ << endl;
-            filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
+            //filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
+            filbuffer_ -> SendToRam(ready, dedispstream_, ready - 1);
             cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to RAM" << endl;
-            filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
-            // TODO: Possible race condition
+            //filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
+            filbuffer_ -> SendToDisk(ready - 1, headerfil, config_.outdir);
+            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " saved" << endl;
             gulpssent_++;
 
             //if (verbose_)
             //    PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
-            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " saved" << endl;
             // NOTE: This fails from time to time and pipeline finishes much earlier than expected
             // TODO: Fix it!
             if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_) {
@@ -753,13 +751,16 @@ void GpuPool::AddForFilterbank(void) {
             // NOTE: Check in the quarter of next stream - should give enough time for latecomers
             // NOTE: This part is not overly atomic - the value can be changed when it is being checked
             // TODO: Is it going to be much of a problem?
-            if ((__builtin_popcountll(fpgaready_[(istream + 1) * NACCUMULATE - 1]) >= 30) && (__builtin_popcountll(fpgaready_[((istream + 1) % userecbuffers_) * NACCUMULATE + NACCUMULATE / 4]) >= 30)) {
+            if ((__builtin_popcountll(fpgaready_[(istream + 1) * NACCUMULATE - 1]) > 24) && (__builtin_popcountll(fpgaready_[((istream + 1) % userecbuffers_) * NACCUMULATE + NACCUMULATE / 4]) > 24)) {
                 for (int isamp = 0; isamp < NACCUMULATE; ++isamp) {
                     fpgaready_[istream * NACCUMULATE + isamp] &= (0LL);
                 }
                 for (int frameidx = 0; frameidx < NACCUMULATE; ++frameidx) {
                     if (framenumbers_[istream * NACCUMULATE + frameidx] != -1) {
                         refframe = framenumbers_[istream * NACCUMULATE + frameidx] - frameidx;
+                        for (int isamp = 0; isamp < NACCUMULATE; ++isamp) {
+                            framenumbers_[istream * NACCUMULATE + isamp] = -1;
+                        }
                         //cout << refframe << endl;
                         //cout.flush();
                         break;
@@ -773,6 +774,9 @@ void GpuPool::AddForFilterbank(void) {
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
                 workmutex_.unlock();
                 //workready_.notify_one();
+                if (workqueue_.size() > 1) {
+                    cerr << "WARNING: GPU is not keeping up with the work!" << endl;
+                }
                 break;
             }
         }
