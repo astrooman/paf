@@ -415,30 +415,13 @@ void GpuPool::FilterbankData(int stream) {
 
     while (working_) {
         // NOTE: Time this portion of the code has to be profiled carefully as unique_lock can be a bit expensive
-        //std::unique_lock<mutex> worklock(workmutex_);
-        //workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
-
-        // NOTE: This portion of the code doesn't work at all. Randomly missing data in the queue and shit like that.
-        while(working_) {
-            //workmutex_.lock();
-            if (!workqueue_.empty()) {
-                bufferinfo = workqueue_.front();
-                workqueue_.pop();
-                //workmutex_.unlock();
-                break;
-            }
-
-            //workmutex_.unlock();
-            //std::this_thread::yield();
-        }
+        std::unique_lock<mutex> worklock(workmutex_);
+        workready_.wait(worklock, [this]{return (!workqueue_.empty() || !working_);});
 
         if (working_) {
-            // TODO: Copy the data using the information in the queue
-            //workmutex_.lock();
-            //bufferinfo = workqueue_.front();
-            //workqueue_.pop();
-            //workmutex_.unlock();
-            //worklock.unlock();
+            bufferinfo = workqueue_.front();
+            workqueue_.pop();
+            worklock.unlock();
 
             // NOTE: This already has the correct offset for a given buffer chunk included
             incoming = bufferinfo.first;
@@ -777,7 +760,7 @@ void GpuPool::AddForFilterbank(void) {
                 workmutex_.lock();
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
                 workmutex_.unlock();
-                //workready_.notify_one();
+                workready_.notify_one();
                 if (workqueue_.size() > 1) {
                     cerr << "WARNING: GPU is not keeping up with the work!" << endl;
                 }
