@@ -529,11 +529,14 @@ void GpuPool::SendForDedispersion(void) {
 
     float castdiff;
 
+    cout.setf(std::ios::fixed, std::ios::floatfield);
+
     int ready{0};
     while(working_) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
             diff = std::chrono::system_clock::now() - readytime;
+            cout.precision(4);
             if (gulpssent_ > 0) {
                 castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f;
                 cout << "Previous buffer sent " << castdiff << "s ago" << endl;
@@ -560,6 +563,7 @@ void GpuPool::SendForDedispersion(void) {
             cout << ready - 1 << " buffer ready on pool " << poolid_ << endl;
             //filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
             filbuffer_ -> SendToRam(ready, dedispstream_, ready - 1);
+            cout.precision(8);
             cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to RAM" << endl;
             //filbuffer_ -> SendToDisk((gulpssent_ % 2), headerfil, config_.outdir);
             filbuffer_ -> SendToDisk(ready - 1, headerfil, config_.outdir);
