@@ -146,10 +146,10 @@ int FilterbankBuffer::GetTime(int index) {
     int diff = 0;
 
     for (int ibuff = 1; ibuff < nbuffers; ++ibuff) {
-        diff = frametimes_[ibuff * (2 * accumulate_)] - frametimes_[(ibuff - 1) * (2 * accumulate_)];
+        diff = frametimes_[index *  gulpsamples_ + ibuff * (2 * accumulate_)] - frametimes_[index * gulpsamples_ + (ibuff - 1) * (2 * accumulate_)];
         if (diff != (2 * accumulate_)) {
             cerr << "WARNING: the buffer is not contiguous!\n";
-            cerr << "Jump from " << frametimes_[(ibuff - 1) * (2 * accumulate_)] << " to " << frametimes_[ibuff * (2 * accumulate_)] << std::endl;
+            cerr << "Jump from " << frametimes_[index *  gulpsamples_ + (ibuff - 1) * (2 * accumulate_)] << " to " << frametimes_[index *  gulpsamples_ + ibuff * (2 * accumulate_)] << std::endl;
         }
     }
 

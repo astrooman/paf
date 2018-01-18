@@ -519,6 +519,7 @@ void GpuPool::SendForDedispersion(void) {
         ready = filbuffer_->CheckIfReady();
         if (ready) {
             diff = std::chrono::system_clock::now() - readytime;
+            cout << "Buffer #" << ready - 1 << " ready on pool " << poolid_ << endl;
             cout.precision(4);
             if (gulpssent_ > 0) {
                 castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f;
@@ -543,7 +544,6 @@ void GpuPool::SendForDedispersion(void) {
             headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(sendframe) * config_.tsamp);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
 
-            cout << ready - 1 << " buffer ready on pool " << poolid_ << endl;
             //filbuffer_ -> SendToRam(ready, dedispstream_, (gulpssent_ % 2));
             filbuffer_ -> SendToRam(ready, dedispstream_, ready - 1);
             cout.precision(8);
