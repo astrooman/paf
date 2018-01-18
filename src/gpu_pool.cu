@@ -759,11 +759,11 @@ void GpuPool::AddForFilterbank(void) {
                 // TODO: Decide which data actually goes there - preferably a pair, but that can be a performance hit
                 workmutex_.lock();
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
+                if (workqueue_.size() > 1) {
+                    cerr << "WARNING: GPU is not keeping up with the work! (" << workqueue_.size() << ")" << endl;
+                }
                 workmutex_.unlock();
                 workready_.notify_one();
-                if (workqueue_.size() > 1) {
-                    cerr << "WARNING: GPU is not keeping up with the work!" << endl;
-                }
                 break;
             }
         }
