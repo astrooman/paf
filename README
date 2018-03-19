@@ -1,21 +1,14 @@
-README file for the Phased Array Feed Fast Radio Burst pipeline.
+PAFFINDER - Phased Array Feed FRB Finder
 
 1. INSTALLATION
     
     Makefile should work without problems.
 
-
 2. USAGE
-
-    Before running the pipeline, make sure the FPGAs are sending the data and that correct FPGAs are received.
-    Most crucially FPGAs with IDs 0 and 47 have to stream in order for the data to be processed properly.
-    To check this, run the ./tools/fpga_test on each node.
-    This can be done automatically, byt running the ./test_all script from the pktos01.
 
     The code can be started using either a long list of command line options or configuration file.
     The example configuration file is attached in config.conf.
     To start the GPU processing on the node use /home/user/paf/bin/pafrb --config /config/file/directory.
     Numa node configuration varies slightly between nodes, and each node has to have its own configuration file.
     These have to be saved in directories accessible ONLY from the given node - /home/user/ directories will not work.
-    To run the code on multiple nodes, start the ./tools/mul_gpu script on pktos01
 

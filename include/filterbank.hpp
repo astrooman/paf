@@ -41,163 +41,7 @@ struct header_f
     \param head structure with all the information require for the filterbank header
     \param saved number of the filterbank files saved so far
 */
-inline void save_filterbank(float **ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved)
-{
-
-    std::ostringstream oss;
-    std::string filename;
-
-    int length{0};
-    char field[60];
-
-    for (int ii = 0; ii < stokes; ii++) {
-        oss.str("");
-        oss << ii << "_" << saved << "_beam_" << head.ibeam;
-        filename = "/data/local/scratch/mat_test/stokes_" + oss.str() + ".fil";
-        std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-
-        // save only when the stream has been opened correctly
-        if(outfile) {
-
-            length = 12;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "HEADER_START");
-            outfile.write(field, length * sizeof(char));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "telescope_id");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.telescope_id, sizeof(int));
-
-            length = 11;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "rawdatafile");
-            outfile.write(field, length * sizeof(char));
-            length = head.raw_file.size();
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, head.raw_file.c_str());
-            outfile.write(field, length * sizeof(char));
-
-            length = 11;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "source_name");
-            outfile.write(field, length * sizeof(char));
-            length = head.source_name.size();
-            strcpy(field, head.source_name.c_str());
-            outfile.write((char*)&length, sizeof(int));
-            outfile.write(field, length * sizeof(char));
-
-            length = 10;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "machine_id");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.machine_id, sizeof(int));
-
-            length = 9;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "data_type");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.data_type, sizeof(int));
-
-            length = 8;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "az_start");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.az, sizeof(double));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "za_start");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.za, sizeof(double));
-
-            length = 7;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "src_raj");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.ra, sizeof(double));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "src_dej");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.dec, sizeof(double));
-
-            length = 6;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "tstart");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.tstart, sizeof(double));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "nchans");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.nchans, sizeof(int));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "nbeams");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.nbeams, sizeof(int));
-
-            length = 5;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "tsamp");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.tsamp, sizeof(double));
-
-            // bits per time sample
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "nbits");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.nbits, sizeof(int));
-
-            // reference dm - not really sure what it does
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "refdm");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.rdm, sizeof(double));
-
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "ibeam");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.ibeam, sizeof(int));
-
-            length = 4;
-            // the frequency of the top channel
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "fch1");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.fch1, sizeof(double));
-
-            // channel bandwidth
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "foff");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.foff, sizeof(double));
-
-            // number of if channels
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "nifs");
-            outfile.write(field, length * sizeof(char));
-            outfile.write((char*)&head.nifs, sizeof(int));
-
-            length = 10;
-            outfile.write((char*)&length, sizeof(int));
-            strcpy(field, "HEADER_END");
-            outfile.write(field, length * sizeof(char));
-
-            size_t to_save = nsamps * head.nchans * head.nbits / 8;
-            float *ph_filsave = ph_filterbank[ii];
-            outfile.write(reinterpret_cast<char*>(&ph_filsave[start]), to_save);
-
-        }
-
-        std::cout << "Saved filterbank " << saved << " on beam " << head.ibeam << std::endl;
-
-        outfile.close();
-
-    }
-}
-
-inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved, std::string outdir)
+inline void SaveFilterbank(unsigned char **phfilterbank, size_t nsamps, size_t start, header_f head, int stokes, int saved, std::string outdir)
 {
 
     std::ostringstream oss;
@@ -207,11 +51,12 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
     int length{0};
     char field[60];
     char stokesid[4] = {'I', 'Q', 'U', 'V'};
-    // save just I for testing purposes
-    for (int ii = 0; ii < stokes; ii++) {
+    size_t tosave = nsamps * head.nchans * head.nbits / 8;
+    size_t true_start = start * head.nbits / 8;
+      for (int istoke = 0; istoke < stokes; istoke++) {
         oss.str("");
-        //oss << time << "_" << stokesid[ii] << "_beam_" << head.ibeam;
-        oss << stokesid[ii] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
+        // TODO: Change the naming scheme to utc_beam_I/Q/U/V.fil
+        oss << stokesid[istoke] << "_" << std::setprecision(8) << std::fixed << head.tstart << "_beam_" << head.ibeam;
         filename = outdir + "/" + oss.str() + ".fil";
         //filename = "stokes_" + oss.str() + ".fil";
         std::fstream outfile(filename.c_str(), std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -344,13 +189,8 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
             strcpy(field, "HEADER_END");
             outfile.write(field, length * sizeof(char));
 
-            size_t to_save = nsamps * head.nchans * head.nbits / 8;
-            //float *ph_filsave = ph_filterbank[ii];
-	    for (int sample = 0; sample < nsamps * head.nchans; sample++) {
-                tmpstore[sample] = static_cast<unsigned char>(ph_filterbank[start + ii * nsamps * head.nchans + sample]);
-            }
-            //outfile.write(reinterpret_cast<char*>(&ph_filterbank[start + ii * nsamps * head.nchans]), to_save);
-            outfile.write(reinterpret_cast<char*>(&tmpstore[0]), nsamps * head.nchans);
+            unsigned char *filsave = phfilterbank[istoke];
+            outfile.write(reinterpret_cast<char*>(&filsave[true_start]), tosave);
 
         } else {
             std::cerr << "Problems with saving the filterbank file" << std::endl;
@@ -360,7 +200,6 @@ inline void save_filterbank2(float *ph_filterbank, size_t nsamps, size_t start, 
         outfile.close();
     }
     delete [] tmpstore;
-    std::cout << "Saved filterbank " << saved << " for beam " << head.ibeam << std::endl;
 
 }
 
