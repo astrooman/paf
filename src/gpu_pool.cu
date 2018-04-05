@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
@@ -594,6 +595,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
     int modframe{0};
     int refsecond{0};
     int refframe{0};
+    int refepoch{0};
 
     bool checkexpected;
 
@@ -606,21 +608,52 @@ void GpuPool::ReceiveData(int portid, int recport) {
         std::lock_guard<std::mutex> frameguard(framemutex_);
         unsigned char *tmpbuffer = receivebuffers_[0];
         numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen);
-        starttime_.refepoch = (int)(tmpbuffer[12] >> 2);
-        starttime_.refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
-        starttime_.refframe = (int)(tmpbuffer[7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
+        refepoch = (int)(tmpbuffer[12] >> 2);
+        refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
+        refframe = (int)(tmpbuffer[7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
         beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
-        cout << beamno_ << " on pool " << poolid_ << endl;
+
+        string outstr = config_.outdir + "/" + ipstring_ + "_start.dat";
+        std::ofstream outfile(outstr.c_str(), std::ios::trunc);
+        if (!outfile) {
+            cerr << "Could not create the start time file" << endl;
+        } else {
+            outfile << refepoch << "\t" << refsecond << "\t" << refframe << endl;
+        }
+        outfile.close();
+
+        struct stat checkfile;
+        string instr = config_.outdir + "/start_now.dat";
+
+        while(true) {
+            if (stat(instr.c_str(), &checkfile) != 0) {
+                continue;
+            }
+            if (checkfile.st_size > 0) {
+                std::ifstream infile(instr.c_str());
+                if (infile) {
+                    infile >> starttime_.refepoch >> starttime_.refsecond >> starttime_.refframe;
+                } else {
+                    cout << "Could not read the start time file" << endl;
+                    starttime_.refepoch = refepoch;
+                    starttime_.refsecond = refsecond;
+                    starttime_.refframe = refframe;
+                }
+                break;
+            }
+        }
         startrecord_.notify_all();
     } else {
         std::unique_lock<std::mutex> framelock(framemutex_);
-        startrecord_.wait(framelock, [this]{return starttime_.refframe != -1;});
+        startrecord_.wait(framelock, [this]{return (starttime_.refepoch != -1) && (starttime_.refsecond != -1) && (starttime_.refframe != -1);});
     }
 
     while(working_) {
         if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
             PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
 
+        // NOTE: This code assumes that the observations are not done over the epoch changed
+        // TODO: Have frame calculations include the epoch
         if (numbytes == 0)
             continue;
         refsecond = (int)(receivebuffers_[portid][3] | (receivebuffers_[portid][2] << 8) | (receivebuffers_[portid][1] << 16) | ((receivebuffers_[portid][0] & 0x3f) << 24));
