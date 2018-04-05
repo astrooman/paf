@@ -60,24 +60,26 @@ bool GpuPool::working_ = true;
 
 #define NFPGAS 48
 #define NACCUMULATE 256
+#define SKIPCHAN 27
 
 struct FactorFunctor {
     __host__ __device__ float operator()(float val) {
-        return val != 0 ? 1.0f/val : val;
+        return val != 0.0f ? 1.0f/val : val;
     }
 };
 
+// NOTE: As we are dealing with the detected signal when calculating the scaling factors
+// mean and standard deviation should only be both 0 for dead links
+// NOTE: Set the output values to 0 for dead links - scale of 1 and mean of 64.5
 struct MeanFunctor {
     __host__ __device__ float operator()(float val) {
-        if (val == 0.0f) {
-            return 4.0f;
-        }
+        return val != 0.0f ? val : 64.5f;
     }
 };
 
 struct StdevFunctor {
     __host__ __device__ float operator()(float val) {
-        return val == 0.0f ? 1.0f : val;
+        return val != 0.0f ? 24.0f / val : 1.0f;
     }
 };
 
@@ -92,7 +94,6 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         fftedsize_(config.nopols * config.nochans * NACCUMULATE * 128 / config.fftsize * config.fftsize),
                                         fftpoints_(config.fftsize),
                                         filbits_(config.outbits),
-                                        filchans_(config.filchans),
                                         gpuid_(config.gpuids[poolid]),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
@@ -104,8 +105,10 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         noports_(config.noports),
                                         nostokes_(config.nostokes),
                                         nostreams_(config.nostreams),
+                                        outfilchans_(config.outfilchans),
                                         poolid_(poolid),
                                         ports_(config.ports),
+                                        procfilchans_(config.filchans),
                                         scaled_(false),
                                         secondstorecord_(config.record),
                                         unpackedbuffersize_(config.nopols * config.nochans * NACCUMULATE * 128),
@@ -146,13 +149,6 @@ void GpuPool::Initialise(void) {
         exit(EXIT_FAILURE);     // affinity is critical for us
     }
 
-    // NOTE: The output number of channels has to be divisible by 4
-    // This is a requirement for the dedisp/Heimdall GPU memory access
-    // In this case, any power of 2, greater than 4 works
-    // TODO: Test whether there can be a better way of doing this
-    // Using the closest lower power of 2 can lose us a lot of channels
-    // filchans_ = 1 << (int)log2f(filchans_);
-
     if (verbose_)
         PrintSafe("GPU pool for device", gpuid_, "running on CPU", sched_getcpu());
 
@@ -165,7 +161,9 @@ void GpuPool::Initialise(void) {
     scalesamples_ = (int)(config_.scaleseconds / config_.tsamp) / (2 * NACCUMULATE) * 2 * NACCUMULATE;
     alreadyscaled_.store(0);
 
-    userecbuffers_ = max(16, nostreams_);
+    // NOTE: 32 receive buffers provide a 884ms safety net for when things go wrong and processing stalls
+    // Will use around 59MB of RAM
+    userecbuffers_ = max(32, nostreams_);
     framenumbers_ = new int[accumulate_ * userecbuffers_];
     if (mlock(framenumbers_, accumulate_ * userecbuffers_ * sizeof(int))) {
         PrintSafe("Error on framenumbers_ mlock:", errno);
@@ -200,8 +198,7 @@ void GpuPool::Initialise(void) {
 
     // End of the page-locked memory allocation
 
-
-    dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
+    dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(outfilchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
     gpustreams_ = new cudaStream_t[nostreams_];
     fftplans_ = new cufftHandle[nostreams_];
@@ -212,18 +209,23 @@ void GpuPool::Initialise(void) {
     cudaCheckError(cudaMalloc((void**)&dfftedbuffer_, fftedsize_ * nostreams_ * sizeof(cufftComplex)));
 
     dfactors_.resize(scalesamples_ + 1);
-    dmeans_.resize(filchans_);
-    dstdevs_.resize(filchans_);
+    dmeans_.resize(outfilchans_);
+    dscales_.resize(outfilchans_);
+    dstdevs_.resize(outfilchans_);
 
     thrust::sequence(dfactors_.begin(), dfactors_.end());
     thrust::transform(dfactors_.begin(), dfactors_.end(), dfactors_.begin(), FactorFunctor());
     thrust::fill(dmeans_.begin(), dmeans_.end(), 0.0f);
+    thrust::fill(dscales_.begin(), dscales_.end(), 0.0f);
     thrust::fill(dstdevs_.begin(), dstdevs_.end(), 0.0f);
 
     pdfactors_ = thrust::raw_pointer_cast(dfactors_.data());
     pdmeans_ = thrust::raw_pointer_cast(dmeans_.data());
+    pdscales_ = thrust::raw_pointer_cast(dscales_.data());
     pdstdevs_ = thrust::raw_pointer_cast(dstdevs_.data());
 
+    // TODO: Do we still need it?
+    // Could theoretically use a simple array as a filtrbank buffer
     // STAGE: PREPARE THE DEDISPERSION
     // NOTE: generate_dm_list(dm_start, dm_end, width, tol)
     // width is the expected pulse width in microseconds
@@ -248,7 +250,7 @@ void GpuPool::Initialise(void) {
      */
     dedispnobuffers_  = 2;
     dedispbuffersize_ = dedispnobuffers_ * dedispgulpsamples_ + dedispextrasamples_;
-    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, filchans_, nostokes_, filbits_);
+    filbuffer_->Allocate(accumulate_, dedispnobuffers_, dedispextrasamples_, dedispgulpsamples_, dedispbuffersize_, outfilchans_, nostokes_, filbits_);
     dedispplan_->set_killmask(&config_.killmask[0]);
 
     // STAGE: PREPARE THE SINGLE PULSE SEARCH
@@ -353,7 +355,7 @@ GpuPool::~GpuPool(void) {
         std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
 
         if (scalefile) {
-            for (int ichan = 0; ichan < filchans_; ++ichan) {
+            for (int ichan = 0; ichan < outfilchans_; ++ichan) {
                 scalefile << dmeans_[ichan] << " " << dstdevs_[ichan] << endl;
             }
         }
@@ -411,7 +413,7 @@ void GpuPool::FilterbankData(int stream) {
     ObsTime incomingtime = {0, 0, 0};
 
     float *dscalepower;
-    cudaCheckError(cudaMalloc((void**)&dscalepower, 2 * NACCUMULATE * filchans_ * sizeof(float)));
+    cudaCheckError(cudaMalloc((void**)&dscalepower, 2 * NACCUMULATE * outfilchans_ * sizeof(float)));
 
     while (working_) {
         // NOTE: Time this portion of the code has to be profiled carefully as unique_lock can be a bit expensive
@@ -436,26 +438,27 @@ void GpuPool::FilterbankData(int stream) {
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 
-            // TODO: Secure it for multithreading or move to a single stream execution
-            // NOTE: Protecting this whole section with mutex is over the top - defeats the whole purpose of concurrent processing
             if (true) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdstdevs_, filchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 //filbuffer_ -> UpdateFilledTimes(incomingtime);
                 filbuffer_ -> UpdateFilledTimes(incomingtime.refframe);
             } else {
                 // NOTE: Path for when we still have to obtain scaling factors
-                DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, filchans_);
-                GetScaleFactorsKernel<<<1, 567, 0, gpustreams_[stream]>>>(dscalepower, pdmeans_, pdstdevs_, pdfactors_, filchans_, alreadyscaled_);
+                DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, outfilchans_);
+                GetScaleFactorsKernel<<<1, outfilchans_, 0, gpustreams_[stream]>>>(dscalepower, pdmeans_, pdstdevs_, pdfactors_, outfilchans_, alreadyscaled_);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 alreadyscaled_ += 2 * NACCUMULATE;
                 if (alreadyscaled_ >= scalesamples_) {
                     thrust::transform(dstdevs_.begin(), dstdevs_.end(), dmeans_.begin(), MeanFunctor());
-                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dstdevs_.begin(), StdevFunctor());
+                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dscales_.begin(), StdevFunctor());
                     scaled_ = true;
+                    hmeans_ = dmeans_;
+                    hstdevs_ = dstdevs_;
+                    hscales_ = dscales_;
                     PrintSafe("Scaling factors on pool", poolid_, "have been obtained");
                 }
             }
@@ -477,6 +480,7 @@ void GpuPool::SendForDedispersion(void) {
         exit(EXIT_FAILURE);
     }
 
+    // NOTE: This is required so that we already read the right beam number from the data frame header
     {
         std::unique_lock<std::mutex> framelock(framemutex_);
         startrecord_.wait(framelock, [this]{return starttime_.refframe != -1;});
@@ -487,32 +491,30 @@ void GpuPool::SendForDedispersion(void) {
 
     header_f headerfil;
     headerfil.raw_file = "tastytastytest";
-    headerfil.source_name = "Unknown ";
-    headerfil.fch1 = config_.ftop;
+    headerfil.source_name = "Unknown";
     // NOTE: For channels in decreasing order
     headerfil.foff = -1.0 * abs(config_.foff);
+    headerfil.fch1 = config_.ftop + SKIPCHAN * headerfil.foff;
     headerfil.rdm = 0.0;
     headerfil.tsamp = config_.tsamp;
     headerfil.data_type = 1;
     headerfil.ibeam = beamno_;
     cout << "Beam " << beamno_ << " on pool " << poolid_ << endl;
-    headerfil.machine_id = 2;
+    headerfil.machine_id = 88;
     headerfil.nbeams = 1;
     headerfil.nbits = filbits_;
-    headerfil.nchans = filchans_;
+    headerfil.nchans = outfilchans_;
     headerfil.nifs = 1;
     headerfil.telescope_id = 8;
-
-    std::chrono::duration<double> diff;
-    std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
 
     cudaCheckError(cudaSetDevice(gpuid_));
     if (verbose_)
         PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
 
-    float castdiff;
-
+    std::chrono::duration<double> diff;
+    std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
     cout.setf(std::ios::fixed, std::ios::floatfield);
+    float castdiff;
 
     int ready{0};
     while(working_) {
@@ -552,7 +554,19 @@ void GpuPool::SendForDedispersion(void) {
             filbuffer_ -> SendToDisk(ready - 1, headerfil, config_.outdir);
             cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " saved" << endl;
             gulpssent_++;
-
+            // NOTE: Save the scaling factors with the first filterbank file dump
+            if (gulpssent_ == 1) {
+                string scalestr = config_.outdir + "/scale.dat";
+                std::ofstream outscale(scalestr.c_str());
+                if (!outscale) {
+                    cerr << "Could not create the scales file" << endl;
+                } else {
+                    for (unsigned int ichan = 0; ichan < outfilchans_; ++ichan) {
+                        outscale << ichan << "\t" << hmeans_[ichan] << "\t" << hscales_[ichan] << "\t" << hstdevs_[ichan] << endl;
+                    }
+                }
+                outscale.close();
+            }
             //if (verbose_)
             //    PrintSafe("Filterbank", gulpssent_, "with MJD", headerfil.tstart, "for beam", beamno_, "on pool", poolid_, "saved");
             // NOTE: This fails from time to time and pipeline finishes much earlier than expected
