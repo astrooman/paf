@@ -325,13 +325,18 @@ void GpuPool::Initialise(void) {
             break;
         }
 
-        if (tryme == NULL)
+        if (tryme == NULL) {
             PrintSafe("Failed to bind to the socket", ports_.at(iport), "on pool", poolid_);
+            // NOTE: That's a quick fix for now - will need to do it more gently
+            // TODO: Need to throw some exceptions
+            working_ = false;
+        }
     }
 
-    for (int iport = 0; iport < noports_; iport++)
-        receivethreads_.push_back(thread(&GpuPool::ReceiveData, this, iport, ports_.at(iport)));
-
+    if (working_) {
+        for (int iport = 0; iport < noports_; iport++)
+            receivethreads_.push_back(thread(&GpuPool::ReceiveData, this, iport, ports_.at(iport)));
+    }
 }
 
 GpuPool::~GpuPool(void) {
@@ -339,7 +344,7 @@ GpuPool::~GpuPool(void) {
     for(int ithread = 0; ithread < gputhreads_.size(); ithread++)
         gputhreads_[ithread].join();
 
-    for (int ithread = 0; ithread < noports_; ithread++)
+    for (int ithread = 0; ithread < receivethreads_.size(); ithread++)
         receivethreads_[ithread].join();
 
     stop_ = std::chrono::system_clock::now();
