@@ -490,36 +490,34 @@ void GpuPool::SendForDedispersion(void) {
         startrecord_.wait(framelock, [this]{return ((starttime_.refframe != -1) || (!working_));});
     }
 
-    if (working_) {
-        int sendframe;
-        header_f headerfil;
-        headerfil.raw_file = "tastytastytest";
-        headerfil.source_name = "Unknown ";
-        headerfil.fch1 = config_.ftop;
-        // NOTE: For channels in decreasing order
-        headerfil.foff = -1.0 * abs(config_.foff);
-        headerfil.rdm = 0.0;
-        headerfil.tsamp = config_.tsamp;
-        headerfil.data_type = 1;
-        headerfil.ibeam = beamno_;
-        cout << "Beam " << beamno_ << " on pool " << poolid_ << endl;
-        headerfil.machine_id = 2;
-        headerfil.nbeams = 1;
-        headerfil.nbits = filbits_;
-        headerfil.nchans = filchans_;
-        headerfil.nifs = 1;
-        headerfil.telescope_id = 8;
+    int sendframe;
+    header_f headerfil;
+    headerfil.raw_file = "tastytastytest";
+    headerfil.source_name = "Unknown ";
+    headerfil.fch1 = config_.ftop;
+    // NOTE: For channels in decreasing order
+    headerfil.foff = -1.0 * abs(config_.foff);
+    headerfil.rdm = 0.0;
+    headerfil.tsamp = config_.tsamp;
+    headerfil.data_type = 1;
+    headerfil.ibeam = beamno_;
+    cout << "Beam " << beamno_ << " on pool " << poolid_ << endl;
+    headerfil.machine_id = 2;
+    headerfil.nbeams = 1;
+    headerfil.nbits = filbits_;
+    headerfil.nchans = filchans_;
+    headerfil.nifs = 1;
+    headerfil.telescope_id = 8;
 
-        std::chrono::duration<double> diff;
-        std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
-        cudaCheckError(cudaSetDevice(gpuid_));
-        if (verbose_)
-            PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
-        float castdiff;
-        cout.setf(std::ios::fixed, std::ios::floatfield);
+    std::chrono::duration<double> diff;
+    std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
+    cudaCheckError(cudaSetDevice(gpuid_));
+    if (verbose_)
+        PrintSafe("Dedisp thread up and running on pool", poolid_, "...");
+    float castdiff;
+    cout.setf(std::ios::fixed, std::ios::floatfield);
 
-        int ready{0};
-    }
+    int ready{0};
 
     while(working_) {
         ready = filbuffer_->CheckIfReady();
