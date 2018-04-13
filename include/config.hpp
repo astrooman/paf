@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <exception>
 #include <fstream>
@@ -46,7 +47,7 @@ struct InConfig {
     unsigned int batch;             //!< FFT batch size
     unsigned int codiflen;          //!< Length (in bytes) of the single CODIF data packet (just data, no header)
     unsigned int fftsize;           //!< Single FFT size
-    unsigned int filchans;          //!< Number of filterbank channels
+    unsigned int filchans;          //!< Number of channels after averaging
     unsigned int freqavg;           //!< Number of frequency channels to average
     unsigned int gulp;              //!< Dedispersion gulp size
     unsigned int headlen;           //!< Length (in bytes) of the CODIF header
@@ -57,8 +58,9 @@ struct InConfig {
     unsigned int noports;           //!< Number of ports to receive the data on; should be the same as ports.size()
     unsigned int nostokes;          //!< Number of Stokes parameters to output
     unsigned int nostreams;         //!< Number of GPU streams used for filterbank
-    unsigned int numa;
+    unsigned int numa;              //!< NUMA node we are using
     unsigned int outbits;           //!< Number of filterbank bits per sample after scaling
+    unsigned int outfilchans;       //!< Number of channels in the saved filterbank files - generally different to filchans as we want to have power-of-2 number of channels
     unsigned int record;            //!< Number of seconds to record
     unsigned int timeavg;           //!< Number of time samples to average
 
@@ -103,7 +105,11 @@ inline void SetDefaultConfig(InConfig &config) {
 
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
-    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
+    // NOTE: This is not ideal, as at some point padding might be better
+    // The setup is not expected to change much though, so 567 -> 512 channels should stau for a while
+    config.outfilchans = 1 << (int)log2f(config.nochans * 27 / config.freqavg);
+
+    config.tsamp = (double)1.0 / (32.0 / 27.0 * 1.0e+06) * 32.0 * (double)config.timeavg;
     for (int ichan = 0; ichan < config.filchans; ichan++)
          (config.killmask).push_back((int)1);
 
@@ -226,7 +232,10 @@ inline void ReadConfig(std::string filename, InConfig &config) {
     config.foff = (double)1.0/(double)27.0 * (double)config.freqavg;
     config.batch = config.nopols * config.nochans * config.accumulate * 128 / config.fftsize;
     config.filchans = config.nochans * 27 / config.freqavg;
-    config.tsamp = (double)1.0 / (config.band * 1e+06) * 32 * (double)config.timeavg;
+    config.tsamp = (double)1.0 / (32.0 / 27.0 * 1.0e+06) * 32.0 * (double)config.timeavg;
+    // NOTE: This is not ideal, as at some point padding might be better
+    // The setup is not expected to change much though, so 567 -> 512 channels should stau for a while
+    config.outfilchans = 1 << (int)log2f(config.nochans * 27 / config.freqavg);
 
     inconfig.close();
 }

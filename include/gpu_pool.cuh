@@ -51,24 +51,26 @@ class GpuPool
         bool verbose_;
         static bool working_;
 
-        const unsigned int accumulate_;              //!< The number of 108us chunks to accumulate for the GPU processing
-        const unsigned int avgfreq_;                 //!< Number of post-FFT frequency channels to average
-        const unsigned int avgtime_;                 //!< Number of post-FFT time samples to average
+        const unsigned int accumulate_;             //!< The number of 108us chunks to accumulate for the GPU processing
+        const unsigned int avgfreq_;                //!< Number of post-FFT frequency channels to average
+        const unsigned int avgtime_;                //!< Number of post-FFT time samples to average
         const unsigned int codiflen_;               //!< Length (in bytes) of the single CODIF data packet (just data, no header)
-        const unsigned int fftbatchsize_;            //!< The number of 1MHz channels to process
+        const unsigned int fftbatchsize_;           //!< The number of 1MHz channels to process
         const unsigned int fftedsize_;              //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
-        const unsigned int fftpoints_;               //!< Size of the single FFT
-        const unsigned int filbits_;
-        const unsigned int gpuid_;                      //!< Self-explanatory
+        const unsigned int fftpoints_;              //!< Size of the single FFT
+        const unsigned int filbits_;                //!< Number of bits per sample in the saved filterbank files
+        const unsigned int outfilchans_;            //!< Number of channels in the saved filterbank files - generally different to filchans as we want to have power-of-2 number of channels
+        const unsigned int procfilchans_;           //!< Number of channels after averaging
+        const unsigned int gpuid_;                  //!< Self-explanatory
         const unsigned int headlen_;                //!< Length (in bytes) of the CODIF header
         const unsigned int inbuffsize_;
-        const unsigned int inchans_;                 //!< Number of 1MHz channels in the input data
-        const unsigned int nopols_;                  //!< Number of polarisations in the input data
-        const unsigned int noports_;
-        const unsigned int nostokes_;                //!< Number of stoke parameters to generate and store
-        const unsigned int nostreams_;               //!< Number of CUDA streams to use
-        const unsigned int poolid_;
-        const unsigned int unpackedbuffersize_;         //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
+        const unsigned int inchans_;                //!< Number of 1MHz channels in the input data
+        const unsigned int nopols_;                 //!< Number of polarisations in the input data
+        const unsigned int noports_;                //!< Number of network ports to receive the data on
+        const unsigned int nostokes_;               //!< Number of stoke parameters to generate and store
+        const unsigned int nostreams_;              //!< Number of CUDA streams to use
+        const unsigned int poolid_;                 //!< NUMA node number
+        const unsigned int unpackedbuffersize_;     //!< size of single fft * # 1MHz channels * # time samples to average * # polarisations
 
         cudaStream_t dedispstream_;
 
@@ -77,7 +79,7 @@ class GpuPool
 
         InConfig config_;
 
-        int fftsizes_[1];                   //<! Used to store GpuPool::fftpoint - cufftPlanMany() requirement
+        int fftsizes_[1];                           //<! Used to store GpuPool::fftpoint - cufftPlanMany() requirement
 
         ObsTime starttime_;
 
@@ -108,7 +110,12 @@ class GpuPool
 
         thrust::device_vector<float> dfactors_;
         thrust::device_vector<float> dmeans_;
+        thrust::device_vector<float> dscales_;
         thrust::device_vector<float> dstdevs_;
+
+        thrust::host_vector<float> hmeans_;
+        thrust::host_vector<float> hstdevs_;
+        thrust::host_vector<float> hscales_;
 
         unsigned int beamno_;
         unsigned int cores_;
@@ -117,10 +124,9 @@ class GpuPool
         unsigned int dedispextrasamples_;
         unsigned int dedispgulpsamples_;
         unsigned int dedispnobuffers_;
-        unsigned int filchans_;                //!< Number of output filterbank channels
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
-	    unsigned int scalesamples_;
+        unsigned int scalesamples_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 
@@ -132,6 +138,7 @@ class GpuPool
 
         float *pdfactors_;
         float *pdmeans_;
+        float *pdscales_;
         float *pdstdevs_;
 
         int *filedesc_;

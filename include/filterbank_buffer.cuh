@@ -39,6 +39,7 @@ class FilterbankBuffer
         size_t start_;
         size_t totalsamples_;               // total size of the data: nogulps_ * gulpsamples_ + extrasamples_
 
+        int *frametimes_;
 
         ObsTime *gulptimes_;
 
@@ -59,16 +60,17 @@ class FilterbankBuffer
         unsigned char **GetFilPointer(void) {return this -> hdfilterbank_;};
 
         int CheckIfReady(void);
+        int GetTime(int index);
 
-        ObsTime GetTime(int index);
+        //ObsTime GetTime(int index);
 
         void Allocate(int accumulate, int gulpno, size_t extrasize, size_t gulpsize, size_t totalsize, int filchans, int stokesno, int filbits);
         void Deallocate(void);
         void SendToDisk(int idx, header_f head, std::string outdir);
         void GetScaling(int idx, cudaStream_t &stream, float **d_means, float **d_rstdevs);
         void SendToRam(int idx, cudaStream_t &stream, int hostjump);
-        //void UpdateFilledTimes(ObsTime frame_time);
-        int UpdateFilledTimes(ObsTime frame_time);
+        void UpdateFilledTimes(ObsTime frame_time);
+        void UpdateFilledTimes(int framet);
 };
 /*
 // NOTE: Scaling will be removed in this form. Will be moved to the detection kernel

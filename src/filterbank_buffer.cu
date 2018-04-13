@@ -8,6 +8,8 @@
 #include "filterbank_buffer.cuh"
 #include "obs_time.hpp"
 
+using std::cerr;
+using std::endl;
 using std::lock_guard;
 using std::mutex;
 using std::string;
@@ -45,6 +47,7 @@ void FilterbankBuffer::Allocate(int accumulate, int gulpno, size_t extrasize, si
     typebytes_ = filbits / 8;
 
     gulptimes_ = new ObsTime[nogulps_];
+    frametimes_ = new int[(int)totalsamples_];
     hdfilterbank_ = new unsigned char*[nostokes_];
     samplestate_ = new unsigned int[(int)totalsamples_];
     std::fill(samplestate_, samplestate_ + totalsamples_, 0);
@@ -73,6 +76,7 @@ void FilterbankBuffer::Deallocate(void) {
 
     delete [] samplestate_;
     delete [] hdfilterbank_;
+    delete [] frametimes_;
     delete [] gulptimes_;
 }
 
@@ -129,6 +133,29 @@ int FilterbankBuffer::UpdateFilledTimes(ObsTime frame_time) {
     return 0;
 }
 
+void FilterbankBuffer::UpdateFilledTimes(int framet) {
+    lock_guard<mutex> addguard(statemutex_);
+    int filtime = framet * 2;
+    int index = 0;
+    //int index = (frame_time.refframe) % (nogulps_ * gulpsamples_);
+    //std::cout << framet << " " << index << std::endl;
+    //std::cout.flush();
+
+    for (int iacc = 0; iacc < accumulate_ * 2; iacc++) {
+        index = filtime % (nogulps_ * gulpsamples_);
+        // if((index % gulpsamples_) == 0)
+        //     gulptimes_[index / gulpsamples_] = frame_time;
+        samplestate_[index] = 1;
+        frametimes_[index] = filtime;
+        //std::cout << framet << " " << index << " " << framet % totalsamples_ << std::endl;
+        //std::cout.flush();
+        if ((index < extrasamples_) && (filtime > extrasamples_)) {
+            samplestate_[index + nogulps_ * gulpsamples_] = 1;
+        }
+        filtime++;
+    }
+}
+
 int FilterbankBuffer::CheckIfReady() {
     lock_guard<mutex> addguard(statemutex_);
     // for now check only the last position for the gulp
@@ -142,8 +169,24 @@ int FilterbankBuffer::CheckIfReady() {
     return 0;
 }
 
-ObsTime FilterbankBuffer::GetTime(int index) {
-    return gulptimes_[index];
+// ObsTime FilterbankBuffer::GetTime(int index) {
+//     return gulptimes_[index];
+// }
+
+int FilterbankBuffer::GetTime(int index) {
+
+    int nbuffers = gulpsamples_ / (2 * accumulate_);
+    int diff = 0;
+
+    for (int ibuff = 1; ibuff < nbuffers; ++ibuff) {
+        diff = frametimes_[index *  gulpsamples_ + ibuff * (2 * accumulate_)] - frametimes_[index * gulpsamples_ + (ibuff - 1) * (2 * accumulate_)];
+        if (diff != (2 * accumulate_)) {
+            cerr << "WARNING: the buffer is not contiguous!\n";
+            cerr << "Jump from " << frametimes_[index *  gulpsamples_ + (ibuff - 1) * (2 * accumulate_)] << " to " << frametimes_[index *  gulpsamples_ + ibuff * (2 * accumulate_)] << std::endl;
+        }
+    }
+
+    return frametimes_[(index + 1) * gulpsamples_ - 1] - gulpsamples_ - 1;
 }
 
 void FilterbankBuffer::SendToDisk(int idx, header_f header, string outdir) {

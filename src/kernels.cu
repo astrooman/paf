@@ -18,42 +18,38 @@
 #define NCHAN_SUM 16
 #define NSAMP_PER_PACKET 128
 #define NCHAN_PER_PACKET 7
+#define INCHANS 567
+#define OUTCHANS 512
+#define SKIPCHAN 27
 
 __device__ float fftfactor = 1.0/32.0 * 1.0/32.0;
 
-
 __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ out) {
 
-    int skip = 0;
-
-    __shared__ int2 accblock[896];
+    cufftComplex cpol;
 
     int chan = 0;
-    int time = 0;
     int line = 0;
-
-    cufftComplex cpol;
-    int polint;
-
     int outskip = 0;
+    int polint = 0;;
+    int skip = 0;
+    int time = 0;
+
+    __shared__ int2 accblock[896];
 
     for (int iacc = 0; iacc < NACCUMULATE; ++iacc) {
         // NOTE: This is skipping whole words as in will be cast to int2
         // skip = iacc * NCHAN_COARSE * NSAMP_PER_PACKET + blockIdx.x * NCHAN_PER_PACKET * NSAMP_PER_PACKET;
-
         skip = blockIdx.x * NCHAN_PER_PACKET * NSAMP_PER_PACKET * NACCUMULATE + iacc * NCHAN_PER_PACKET * NSAMP_PER_PACKET;
-
         for (int ichunk = 0; ichunk < 7; ++ichunk) {
             line = ichunk * blockDim.x + threadIdx.x;
             chan = line % 7;
             time = line / 7;
             accblock[chan * NSAMP_PER_PACKET + time] = in[skip + line];
         }
-
         __syncthreads();
 
         skip = NCHAN_COARSE * NSAMP_PER_PACKET * NACCUMULATE;
-
         outskip = blockIdx.x * 7 * NSAMP_PER_PACKET * NACCUMULATE + iacc * NSAMP_PER_PACKET;
 
         for (chan = 0; chan < NCHAN_PER_PACKET; ++chan) {
@@ -67,13 +63,12 @@ __global__ void UnpackKernel(int2 *__restrict__ in, cufftComplex *__restrict__ o
             cpol.y = static_cast<float>(static_cast<short>( ((polint & 0xff00) >> 8) | ((polint & 0xff) << 8) ));
 
             out[skip + outskip + threadIdx.x] = cpol;
-
             outskip += NSAMP_PER_PACKET * NACCUMULATE;
         }
     }
 }
 
-__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *stdevs, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
+__global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __restrict__ out, float *means, float *scales, short nchans, short gulpno, size_t gulp, size_t extra, unsigned int framet)
 {
   /**
    * This block is going to do 2 timesamples for all coarse channels.
@@ -130,34 +125,36 @@ __global__ void DetectScrunchScaleKernel(cuComplex* __restrict__ in, float* __re
         }
     }
 
-  __syncthreads();
+    __syncthreads();
 
-  int saveoff = ((framet * 2 + blockIdx.x) % (gulpno * gulp)) * nchans;
+    int saveoff = ((framet * 2 + blockIdx.x) % (gulpno * gulp)) * OUTCHANS;
 
   /**
    * Here each warp will reduce 32 channels into 2 channels
    * The last warp will have a problem that there will only be 16 values to process
    *
    */
-
-    if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
+    // NOTE: Use 512 thread only, which will skip the first 28 averaged frequency channels
+    // We are cutting out 55 channels - 28 from the bottom and 27 from the top of the band
+    int skipbottom = 28 * NCHAN_SUM;
+    if (threadIdx.x < OUTCHANS) {
+    //if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
         float sum = 0.0;
         int scaled = 0;
 
         for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
-            sum += freq_sum_buffer[chan_idx];
+            sum += freq_sum_buffer[skipbottom + chan_idx];
         }
-/*
-        scaled = __float2int_ru((sum - means[threadIdx.x]) / stdevs[threadIdx.x] * 32.0f + 128.0f);
+        // NOTE: Scaling factors are put in the 'right' filterbank order - with the highest frequency first
+        scaled = __float2int_ru((sum - means[511 - threadIdx.x]) * scales[511 - threadIdx.x] + 64.5f);
         if (scaled > 255) {
             scaled = 255;
         } else if (scaled < 0) {
             scaled = 0;
         }
-*/
         //out[saveoff + threadIdx.x] = (unsigned char)scaled;
-        // NOTE: That puts the highest frequency first (567 - 1 - threadIdx.x)
-        out[saveoff + 566 - threadIdx.x] = sum;
+        // NOTE: That puts the highest frequency first (OUTCHANS - 1 - threadIdx.x)
+        out[saveoff + 511 - threadIdx.x] = (unsigned char)scaled;
 
       /**
        * Note [Ewan]: The code below is commented out as we turned off the
@@ -231,34 +228,25 @@ __global__ void DetectScrunchKernel(cuComplex* __restrict__ in, float* __restric
 
     __syncthreads();
 
-    int saveoff = blockIdx.x * nchans;
-
-    if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
+    int saveoff = blockIdx.x * OUTCHANS;
+    int skipbottom = 28 * NCHAN_SUM;
+    if (threadIdx.x < OUTCHANS) {
+    //if ((threadIdx.x > SKIPCHAN) && (threadIdx.x < (INCHANS - SKIPCHAN))) {
+    //if (threadIdx.x <  (NCHAN_FINE_OUT * NCHAN_COARSE / NCHAN_SUM)) {
         float sum = 0.0;
         for (int chan_idx = threadIdx.x * NCHAN_SUM; chan_idx < (threadIdx.x+1) * NCHAN_SUM; ++chan_idx) {
-            sum += freq_sum_buffer[chan_idx];
+            sum += freq_sum_buffer[skipbottom + chan_idx];
         }
-        out[saveoff + threadIdx.x] = sum;
+        //out[saveoff + threadIdx.x] = (unsigned char)scaled;
+        // NOTE: That puts the highest frequency first (OUTCHANS - 1 - threadIdx.x)
+        out[saveoff + 511 - threadIdx.x] = sum;
     }
 
     return;
 }
 
-__global__ void InitDivFactors(float *factors) {
-
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    // NOTE: I don't want to be dividing by 0
-    if (idx != 0) {
-        factors[idx] = 1.0f / idx;
-    } else {
-        factors[idx] = idx;
-    }
-
-}
-
-
 __global__ void GetScaleFactorsKernel(float *indata, float *base, float *stdev, float *factors, int nchans, int processed) {
-
+/*
     // NOTE: Filterbank file format coming in
     //float mean = indata[threadIdx.x];
     float mean = 0.0f;
@@ -282,160 +270,26 @@ __global__ void GetScaleFactorsKernel(float *indata, float *base, float *stdev, 
     base[threadIdx.x] = mean;
     stdev[threadIdx.x] = sqrtf(estd / (float)(processed + 2 * NACCUMULATE - 1.0f));
     // stdev[threadIdx.x] = estd;
-}
+*/
+    float chmean = 0.0f;
+    float chestd = 0.0f;
+    float val = 0.0;
+    float diff = 0.0;
 
-// NOTE: Initialise the scaling factors
-// Use custom kernel as CUDA memset is slower and not safe for anything else than int
-__global__ void InitScaleFactors(float **means, float **rstdevs, int stokes) {
-    // NOTE: The scaling is (in - mean) * rstdev + 64.0f
-    // I want to get the original in back in the first running
-    // Will therefore set the mean to 64.0f and rstdev to 1.0f
-
-    // NOTE: Each thread responsible for one channel
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    for (int istoke = 0; istoke < stokes; istoke++) {
-        means[istoke][idx] = 64.0f;
-        rstdevs[istoke][idx] = 1.0f;
+    for (int isamp = 0; isamp < 2 * NACCUMULATE; ++isamp) {
+        val = indata[isamp * nchans + threadIdx.x];
+        diff = val - chmean;
+        chmean += diff * factors[isamp + 1];
+        chestd += diff * (val - chmean);
     }
+
+    float oldmean = base[threadIdx.x];
+    float oldestd = stdev[threadIdx.x] * stdev[threadIdx.x] * (processed - 1.0f);
+    float newestd = 0.0f;
+
+    diff = chmean - oldmean;
+    base[threadIdx.x] = oldmean + diff * (float)(2.0f * NACCUMULATE) / (float)(processed + 2.0 * NACCUMULATE);
+    newestd = oldestd + chestd + diff * diff * (float)(2.0f * NACCUMULATE) * (float)processed / (float)(processed + 2.0 * NACCUMULATE);
+    stdev[threadIdx.x] = sqrt(newestd / (float)(processed + 2 * NACCUMULATE - 1.0f));
+
 }
-
-__global__ void RearrangeKernel(cudaTextureObject_t texObj, cufftComplex * __restrict__ out, unsigned int acc)
-{
-
-    int xidx = blockIdx.x * blockDim.x + threadIdx.x;
-    int yidx = blockIdx.y * 128;
-    int chanidx = threadIdx.x + blockIdx.y * 7;
-    int skip;
-    int2 word;
-
-    for (int iac = 0; iac < acc; iac++) {
-        skip = 336 * 128 * 2 * iac;
-        for (int sample = 0; sample < YSIZE; sample++) {
-            word = tex2D<int2>(texObj, xidx, yidx + iac * 48 * 128 + sample);
-            out[skip + chanidx * YSIZE * 2 + sample].x = static_cast<float>(static_cast<short>(((word.y & 0xff000000) >> 24) | ((word.y & 0xff0000) >> 8)));
-            out[skip + chanidx * YSIZE * 2 + sample].y = static_cast<float>(static_cast<short>(((word.y & 0xff00) >> 8) | ((word.y & 0xff) << 8)));
-            out[skip + chanidx * YSIZE * 2 + YSIZE + sample].x = static_cast<float>(static_cast<short>(((word.x & 0xff000000) >> 24) | ((word.x & 0xff0000) >> 8)));
-            out[skip + chanidx * YSIZE * 2 + YSIZE + sample].y = static_cast<float>(static_cast<short>(((word.x & 0xff00) >> 8) | ((word.x & 0xff) << 8)));
-        }
-    }
-}
-
-__global__ void GetPowerAddTimeKernel(cufftComplex* __restrict__ in, float* __restrict__ out, unsigned int jump, unsigned int factort, unsigned int acc) {
-
-    int idx1, idx2;
-    int outidx;
-    int skip1, skip2;
-    float power1, power2;
-    float avgfactor= 1.0f / factort;
-
-    for (int iac = 0; iac < acc; iac++) {
-        skip1 = iac * 336 * 128 * 2;
-        skip2 = iac * 336 * 27;
-            for (int ichan = 0; ichan < 7; ichan++) {
-            outidx = skip2 + 7 * 27 * blockIdx.x + ichan * 27 + threadIdx.x;
-            out[outidx] = (float)0.0;
-            out[outidx + jump] = (float)0.0;
-            out[outidx + 2 * jump] = (float)0.0;
-            out[outidx + 3 * jump] = (float)0.0;
-
-            idx1 = skip1 + 256 * (blockIdx.x * 7 + ichan);
-
-            for (int itime = 0; itime < factort; itime++) {
-                idx2 = threadIdx.x + itime * 32;
-                power1 = (in[idx1 + idx2].x * in[idx1 + idx2].x + in[idx1 + idx2].y * in[idx1 + idx2].y) * fftfactor;
-                power2 = (in[idx1 + 128 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + 128 + idx2].y * in[idx1 + 128 + idx2].y) * fftfactor;
-                out[outidx] += (power1 + power2) * avgfactor;
-                out[outidx + jump] += (power1 - power2) * avgfactor;
-                out[outidx + 2 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].x + in[idx1 + idx2].y * in[idx1 + 128 + idx2].y)) * avgfactor;
-                out[outidx + 3 * jump] += (2 * fftfactor * (in[idx1 + idx2].x * in[idx1 + 128 + idx2].y - in[idx1 + idx2].y * in[idx1 + 128 + idx2].x)) * avgfactor;
-            }
-        }
-    }
-}
-
-__global__ void AddChannelsKernel(float* __restrict__ in, float** __restrict__ out, short nchans, size_t gulp, size_t totsize,  short gulpno, unsigned int jumpin, unsigned int factorc, unsigned int framet, unsigned int acc) {
-
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int extra = totsize - gulpno * gulp;
-    // thats the starting save position for the chunk of length acc time samples
-    int saveidx;
-
-    int inskip;
-
-    for (int iac = 0; iac < acc; iac++) {
-        saveidx = (framet % (gulpno * gulp)) * nchans + idx;
-        inskip = iac * 27 * 336;
-
-        out[0][saveidx] = (float)0.0;
-        out[1][saveidx] = (float)0.0;
-        out[2][saveidx] = (float)0.0;
-        out[3][saveidx] = (float)0.0;
-
-        if ((framet % (gulpno * gulp)) >= extra) {
-            for (int ichan = 0; ichan < factorc; ichan++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ichan];
-                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
-            }
-        } else {
-            for (int ichan = 0; ichan < factorc; ichan++) {
-                out[0][saveidx] += in[inskip + idx * factorc + ichan];
-                out[1][saveidx] += in[inskip + idx * factorc + ichan + jumpin];
-                out[2][saveidx] += in[inskip + idx * factorc + ichan + 2 * jumpin];
-                out[3][saveidx] += in[inskip + idx * factorc + ichan + 3 * jumpin];
-            }
-            // save in two places -save in the extra bit
-            out[0][saveidx + (gulpno * gulp * nchans)] = out[0][saveidx];
-            out[1][saveidx + (gulpno * gulp * nchans)] = out[1][saveidx];
-            out[2][saveidx + (gulpno * gulp * nchans)] = out[2][saveidx];
-            out[3][saveidx + (gulpno * gulp * nchans)] = out[3][saveidx];
-            }
-        framet++;
-    }
-}
-
-__global__ void Transpose(float* __restrict__ in, float* __restrict__ out, unsigned int nchans, unsigned int ntimes) {
-
-    // very horrible implementation or matrix transpose
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int start = idx * ntimes;
-    for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-        out[start + tsamp] = in[idx + tsamp * nchans];
-    }
-}
-
-// __global__ void GetScaleFactors(float *in, float **means, float **rstdevs, unsigned int nchans, unsigned int ntimes, int param) {
-//     // calculates mean and standard deviation in every channel
-//     // assumes the data has been transposed
-//
-//     // for now have one thread per frequency channel
-//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-//     float mean;
-//     float variance;
-//
-//     float ntrec = 1.0f / (float)ntimes;
-//     float ntrec1 = 1.0f / (float)(ntimes - 1.0f);
-//
-//     unsigned int start = idx * ntimes;
-//     mean = 0.0f;
-//     variance = 0.0;
-//     // two-pass solution for now
-//     for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-//         mean += in[start + tsamp] * ntrec;
-//     }
-//     means[param][idx] = mean;
-//
-//     for (int tsamp = 0; tsamp < ntimes; tsamp++) {
-//         variance += (in[start + tsamp] - mean) * (in[start + tsamp] - mean);
-//     }
-//     variance *= ntrec1;
-//     // reciprocal of standard deviation
-//     // multiplied by the desired standard deviation of the scaled data
-//     // reduces the number of operations that have to be done on the GPU
-//     rstdevs[param][idx] = rsqrtf(variance) * 32.0f;
-//     // to avoid inf when there is no data in the channel
-//     if (means[param][idx] == 0)
-//         rstdevs[param][idx] = 0;
-// }
