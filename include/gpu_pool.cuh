@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include <sys/types.h>
+
 #include <cuda.h>
 #include <cufft.h>
 #include <thrust/device_vector.h>
@@ -37,6 +39,7 @@ struct DadaContext {
     unsigned char **devicememory;
     uint64_t bytestransferred;
     unsigned int buffno;
+    std::string startutc;
 };
 
 class GpuPool
@@ -191,7 +194,7 @@ class GpuPool
         void AddForFilterbank(void);
 
         void SendToDada(void);
-        
+
         void SendForDedispersion(void);
 
         void Initialise(void);

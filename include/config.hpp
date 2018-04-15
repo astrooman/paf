@@ -13,7 +13,10 @@
 #include <string>
 #include <vector>
 
-#include <heimdall/params.hpp>
+#include <sys/types.h>
+
+#include "dada_def.h"
+#include "heimdall/params.hpp"
 
 struct InConfig {
 
@@ -32,6 +35,8 @@ struct InConfig {
     double ra;
 
     float scaleseconds;
+
+    key_t dadakey;
 
     std::chrono::system_clock::time_point recordstart;
 
@@ -73,6 +78,7 @@ inline void SetDefaultConfig(InConfig &config) {
     config.accumulate = 128;
     config.band = 1.185;
     config.codiflen = 7168;
+    config.dadakey = DADA_DEFAULT_BLOCK_KEY;
     config.dmstart = 0.0;
     config.dmend = 4000.0;
     // NOTE: This is the top of the band minus half of the channel.
@@ -131,6 +137,7 @@ inline void PrintConfig(const InConfig &config) {
         std::cout << "\t\t * " << config.ports.at(iport) << std::endl;
     }
     std::cout << "\t - output directory: " << config.outdir << std::endl;
+    std::cout << "\t - DADA key:" << std::hex << config.dadakey << std::endl;
     time_t tmptime = std::chrono::system_clock::to_time_t(config.recordstart);
     std::cout << "\t - recording start time: " << std::asctime(std::gmtime(&tmptime));
     std::cout << "\t - the number of seconds to record: " << config.record << std::endl;
@@ -172,6 +179,8 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.fftsize = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "FREQAVG") {
                 config.freqavg = (unsigned int)(std::stoi(paravalue));
+            } e;se if (paraname == "DADAKEY") {
+                paravalue >> std::hex >> config.dadakey;
             } else if (paraname == "DEDISPGULP") {
                 config.gulp = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "GPUIDS") {

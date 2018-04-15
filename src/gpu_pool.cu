@@ -28,6 +28,7 @@
 #include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -169,19 +170,19 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
 }
 
 int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, uint64_t blockid) {
-    //cpu_set_t cpuset;
-    //CPU_ZERO(&cpuset);
-
-    //CPU_SET((int)(poolid_) * cores_ , &cpuset);
-    //int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
-    //if (retaff != 0) {
-    //    PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
-    //    exit(EXIT_FAILURE);
-    //}
-
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
+
+    while(!tmpctx -> buffno) {
+
+    }
+
+    // TODO: Should I sent client -> quit to true or have other mechanism?
+
+    if (tmpctx -> buffno == -1) {
+        return 0;
+    } else
 
     while (!tmpctx -> buffno) {
         if (client -> quit) {
@@ -202,6 +203,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
                                         beamno_(0),
                                         codiflen_(config.codiflen),
                                         config_(config),
+                                        dadakey_(config.dadakey),
                                         dedispgulpsamples_(config.gulp),
                                         fftbatchsize_(config.nopols * config.nochans * NACCUMULATE * 128 / config.fftsize),
                                         fftedsize_(config.nopols * config.nochans * NACCUMULATE * 128 / config.fftsize * config.fftsize),
@@ -398,9 +400,6 @@ void GpuPool::Initialise(void) {
 
     // STAGE: Prepare the DADA buffers
     client_ = 0;
-    // TODO: Move to the initialiser list
-    // TODO: DADA key will be a command line option
-    dadakey_ = DADA_DEFAULT_BLOCK_KEY;
     // TODO: Need to get the header here
     dcontext_.headerfile = config_.inputheader;
     dcontext_.log = multilog_open("PAF DADA logger\n", 0);
@@ -677,6 +676,12 @@ void GpuPool::SendForDedispersion(void) {
         startrecord_.wait(framelock, [this]{return ((starttime_.refframe != -1) || (!working_));});
     }
 
+    // NOTE: This is really where we should send the header to the DADA buffer
+    // We will not have the start time before this point - this is decided by the receiver threads
+
+
+
+    //ObsTime sendtime;
     int sendframe;
     header_f headerfil;
     headerfil.raw_file = "tastytastytest";

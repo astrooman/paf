@@ -2,6 +2,7 @@
 #include <exception>
 #include <iostream>
 #include <sys/stat.h>
+#include <sstring>
 #include <thread>
 #include <vector>
 
@@ -76,6 +77,11 @@ int main(int argc, char *argv[])
                     else
                         cout << "Output directory does not exist! Will use the default directory!";
                 }
+            } else if (string(argv[iarg]) == "-k") {
+                iarg++;
+                std::stringstream sskey;
+                sskey << std::hex << argv[iarg];
+                sskey >> config.dadakey;
             } else if (string(argv[iarg]) == "--gpuid") {
                 for (int igpu = 0; igpu < config.nogpus; igpu++) {
                     iarg++;
@@ -99,6 +105,7 @@ int main(int argc, char *argv[])
                         << "\t -f - the number of frequency channels to average\n"
                         << "\t -n - the number of GPUs to use\n"
                         << "\t -o <directory> - output directory\n"
+                        << "\t -k DADA key to use\n"
                         << "\t -r - the number of seconds to record\n"
                         << "\t -s - the number of seconds to record for scaling factors\n"
                         << "\t -t - the number of time samples to average\n"
