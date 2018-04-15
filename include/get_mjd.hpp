@@ -2,6 +2,8 @@
 #define _H_PAFRB_GET_MJD
 
 #include <iomanip>
+#include <sstream>
+#include <string>
 
 inline double GetMjd(int refepoch, double refsecond) {
 
@@ -35,14 +37,51 @@ inline double GetMjd(int refepoch, double refsecond) {
     mjd = jd - 2400000.5;
     double extra = ((double)hour + (((double)minute + (double)second/60.0)/60.0))/ 24.0;
     mjd += extra;
-
+/*
     std::ofstream mydate("mjd.txt", std::ios_base::out | std::ios_base::trunc);
     mydate.precision(6);
     mydate.setf(std::ios::fixed);
     mydate << mjd <<  " " << extra << std::endl;
     mydate.close();
-
+*/
     return mjd;
+}
+
+// NOTE: QUick hack to also get the start UTC time
+inline std::string GetUtc(int refepoch, double refsecond) {
+// NOTE: Leap year has few rules, but I don't think anyone will be using
+// this code in the year 2100 (sorry if you are), when the divisibility by 100 is taken into account.
+// For now can simply assume, that every year that can be divided by 4 is a leap year.
+short year = 2000 + (int)(refepoch / 2);
+short dinm[12] = {31, 28 , 31, 30 ,31, 30, 31, 31, 30, 31, 30, 31};
+if ((year % 4) == 0)
+    dinm[1] = 29;
+short month = 6 * (refepoch % 2);
+short day = (int)(refsecond / 86400);
+double rem = refsecond - 86400 * day;
+day++;
+for (int imonth = 0; imonth < 6; imonth++) {
+    if((day - dinm[month + imonth]) > 0) {
+        day -= dinm[month];
+        month++;
+        continue;
+    }
+    break;
+}
+short hour = (int)(rem / 3600.0);
+short minute = (int)((rem - hour * 3600.0) / 60.0);
+double second = rem - (hour * 3600.0 + minute * 60.0);
+
+std::stringstream ssutc;
+
+ssutc << year << "-" << std::setfill('0') << std::setw(2) << month <<
+    "-" << std::setfill('0') << std::setw(2) << day <<
+    "-" << std::setfill('0') << std::setw(2) << hour <<
+    ":" << std::setfill('0') << std::setw(2) << minute <<
+    ":" << std::setfill('0') << std::setw(2) << (int)second;
+
+return ssutc.str();
+
 }
 
 #endif

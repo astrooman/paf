@@ -152,16 +152,32 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
 
+    // NOTE: We need to wait for beam and UTC_START information
+    while(!tmpctx -> haveinfo) {
+
+    }
+
     if (!tmpctx -> headerwritten) {
         uint64_t headersize = ipcbuf_get_bufsz(tmpctx -> hdu -> header_block);
         char *header = ipcbuf_get_next_write(tmpctx -> hdu -> header_block);
         memcpy(header, tmpctx -> obsheader, headersize);
 
+        if (ascii_header_set(header, "UTC_START", "%s", tmpctx -> startutc.c_str()) < 0) {
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the UTC_START in the Header Block!\n")
+        }
+
+        if (ascii_header_set(header, "MJD_START", "%f", tmpctx -> startmjd) < 0) {
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the MJD_START in the Header Block!\n")
+        }
+
+        if (ascii_header_set(header, "BEAM", "%d", tmpctx -> beam) < 0) {
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the BEAM in the Header Block!\n")
+        }
+
         if (ipcbuf_mark_filled(tmpctx -> hdu -> header_block, headersize) < 0) {
             multilog(tmpctx -> log, LOG_ERR, "Could not mark the Header Block as filled\n");
             return -1;
         }
-
         tmpctx -> headerwritten = true;
     } else {
         memset(buffer, 0, bytes);
@@ -174,6 +190,8 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
 
+    // NOTE: There is a rece condition with the buffno variables
+    // TODO: Sort it out between this function and SendForDedispersion method
     while(!tmpctx -> buffno) {
 
     }
@@ -191,7 +209,11 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
         } else {
             DadaPafCudaHostTransfer(client, buffer, tmpctx -> buffno, bytes, tmpctx -> stream);
             tmpctx -> bytestransferred += bytes;
-            tmpctx -> buffno = 0;
+            // NOTE: Set to zero only if not done processing
+            // TODO: Possible race condition between this thread and sending thread
+            if (tmpctx -> buffno != -1) {
+                tmpctx -> buffno = 0;
+            }
             return bytes;
         }
     }
@@ -347,7 +369,6 @@ void GpuPool::Initialise(void) {
     // tol is the smearing tolerance factor between two DM trials
     dedispplan_->generate_dm_list(config_.dmstart, config_.dmend, 64.0f, 1.10f);
 
-
     /**
      * NOTE [Ewan]: We have hardcoded the extra portion of the buffer
      * to zero during debugging for Effelsberg. There is no reason to
@@ -410,6 +431,7 @@ void GpuPool::Initialise(void) {
     dcontext_.buffno = 0;
     dcontext_.stream = dedispstream_;
     dcontext_.devicememory = filbuffer_ -> GetFilPointer();
+    dcontext_.haveinfo = false;
 
     if (dada_hdu_connect(dcontext_.hdu) < 0) {
         multilog(dcontext_.log, LOG_ERR, "Could not connect to the HDU!\n");
@@ -493,6 +515,11 @@ void GpuPool::Initialise(void) {
     if (working_) {
         for (int iport = 0; iport < noports_; iport++)
             receivethreads_.push_back(thread(&GpuPool::ReceiveData, this, iport, ports_.at(iport)));
+    }
+
+    if (dada_client_write(client_) < 0) {
+        multilog(dcontext_.log, LOG_ERR, "Error during transfer to the DADA buffer\n");
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -640,24 +667,25 @@ void GpuPool::FilterbankData(int stream) {
     cudaFree(dscalepower);
 }
 
-void GpuPool::SendToDada(void) {
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
+// void GpuPool::SendToDada(void) {
+//     cpu_set_t cpuset;
+//     CPU_ZERO(&cpuset);
+//
+//     CPU_SET((int)(poolid_) * cores_ , &cpuset);
+//     int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
+//     if (retaff != 0) {
+//         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
+//         exit(EXIT_FAILURE);
+//     }
+//
+//     if (dada_client_write(client_) < 0) {
+//         multilog(dcontext_.log, LOG_ERR, "Error during transfer to the DADA buffer\n");
+//         exit(EXIT_FAILURE);
+//     }
+//
+// }
 
-    CPU_SET((int)(poolid_) * cores_ , &cpuset);
-    int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (retaff != 0) {
-        PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
-        exit(EXIT_FAILURE);
-    }
-
-    if (dada_client_write(client_) < 0) {
-        multilog(dcontext_.log, LOG_ERR, "Error during transfer to the DADA buffer\n");
-        exit(EXIT_FAILURE);
-    }
-
-}
-
+// NOTE: This will most probably become the SendToDada method
 void GpuPool::SendForDedispersion(void) {
 
     cpu_set_t cpuset;
@@ -701,6 +729,11 @@ void GpuPool::SendForDedispersion(void) {
     headerfil.nifs = 1;
     headerfil.telescope_id = 8;
 
+    dcontext_.beam = beamno_;
+    dcontext_.startmjd = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 * config_.tsamp);
+    dcontext_.startutc = GetUtc(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 * config_.tsamp);
+    dcontext_.haveinfo = true;
+
     std::chrono::duration<double> diff;
     std::chrono::system_clock::time_point readytime = std::chrono::system_clock::now();
     cudaCheckError(cudaSetDevice(gpuid_));
@@ -733,9 +766,43 @@ void GpuPool::SendForDedispersion(void) {
             headerfil.za = 0.0;
             headerfil.ra = config_.ra;
             headerfil.dec = config_.dec;
-            // TODO: This totally doesn't work when something is skipped
-            // Need to move to the version that uses the frame number of the chunk being sent
+
+            // NOTE: New DADA approach
+            sendframe = filbuffer_->GetTime(ready-1);
+            headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(sendframe) * config_.tsamp);
+
+            dcontext_.buffno = ready;
+            cout.precision(8);
+            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to the DADA buffer" << endl;
+
+            gulpssent_++;
+            if (gulpssent_ == 1) {
+                string scalestr = config_.outdir + "/scale.dat";
+                std::ofstream outscale(scalestr.c_str());
+                if (!outscale) {
+                    cerr << "Could not create the scales file" << endl;
+                } else {
+                    for (unsigned int ichan = 0; ichan < outfilchans_; ++ichan) {
+                        outscale << ichan << "\t" << hmeans_[ichan] << "\t" << hscales_[ichan] << "\t" << hstdevs_[ichan] << endl;
+                    }
+                }
+                outscale.close();
+            }
+
+            // NOTE: This doesn't work when something is skipped
+            //if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_) {
+            //    working_ = false;
+            //}
+            // NOTE: This should work when something is skipped
+            if (((double)sendframe * config_.tsamp) >= secondstorecord_) {
+                working_ = false;
+                dcontext_.buffno = -1;
+            }
+/*
+            // NOTE: Old file saving approach
+            // NOTE: This totally doesn't work when something is skipped
             //headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(gulpssent_ + 1) * dedispgulpsamples_ * config_.tsamp);
+            // NOTE: This should work when something is skipped
             sendframe = filbuffer_->GetTime(ready-1);
             headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(sendframe) * config_.tsamp);
             //headerfil.tstart = GetMjd(sendtime.startepoch, sendtime.startsecond + 27 + sendtime.framefromstart * config_.tsamp);
@@ -768,6 +835,7 @@ void GpuPool::SendForDedispersion(void) {
             if ((int)(gulpssent_ * dedispdispersedsamples_ * config_.tsamp) >= secondstorecord_) {
                 working_ = false;
             }
+*/
         } else {
             std::this_thread::yield();
         }

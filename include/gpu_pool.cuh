@@ -28,6 +28,7 @@
 #include "multilog.h"
 
 struct DadaContext {
+    bool haveinfo;
     bool headerwritten;
     bool verbose;
     dada_hdu_t *hdu;
@@ -40,6 +41,8 @@ struct DadaContext {
     uint64_t bytestransferred;
     unsigned int buffno;
     std::string startutc;
+    float startmjd;
+    int beam;
 };
 
 class GpuPool
