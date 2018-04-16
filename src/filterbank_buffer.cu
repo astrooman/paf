@@ -48,6 +48,7 @@ void FilterbankBuffer::Allocate(int accumulate, int gulpno, size_t extrasize, si
 
     gulptimes_ = new ObsTime[nogulps_];
     frametimes_ = new int[(int)totalsamples_];
+    std::fill(frametimes_, frametimes_ + totalsamples_, 0); 
     hdfilterbank_ = new unsigned char*[nostokes_];
     samplestate_ = new unsigned int[(int)totalsamples_];
     std::fill(samplestate_, samplestate_ + totalsamples_, 0);

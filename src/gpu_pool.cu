@@ -72,8 +72,8 @@ struct FactorFunctor {
 // mean and standard deviation should only be both 0 for dead links
 // NOTE: Set the output values to 0 for dead links - scale of 1 and mean of 64.5
 struct MeanFunctor {
-    __host__ __device__ float operator()(float val) {
-        return val != 0.0f ? val : 64.5f;
+    __host__ __device__ float operator()(float stdval, float meanval) {
+        return stdval != 0.0f ? meanval : 64.5f;
     }
 };
 
@@ -350,7 +350,7 @@ GpuPool::~GpuPool(void) {
     cout << "Pipeline execution time: " << std::chrono::duration_cast<std::chrono::seconds>(diff).count() << "s" << endl;
 
     // NOTE: Save the scaling factors before quitting
-    if (scaled_) {
+    /* if (scaled_) {
         string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
         std::fstream scalefile(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
 
@@ -361,7 +361,7 @@ GpuPool::~GpuPool(void) {
         }
         scalefile.close();
     }
-
+    */
     // NOTE: The filterbank buffer has to be deallocated separately
     filbuffer_->Deallocate();
     delete [] framenumbers_;
@@ -438,9 +438,9 @@ void GpuPool::FilterbankData(int stream) {
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 
-            if (true) {
+            if (scaled_) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, pfil[0], pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 //filbuffer_ -> UpdateFilledTimes(incomingtime);
@@ -453,7 +453,7 @@ void GpuPool::FilterbankData(int stream) {
                 cudaCheckError(cudaGetLastError());
                 alreadyscaled_ += 2 * NACCUMULATE;
                 if (alreadyscaled_ >= scalesamples_) {
-                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dmeans_.begin(), MeanFunctor());
+                    thrust::transform(dstdevs_.begin(), dstdevs_.end(), dmeans_.begin(), dmeans_.begin(), MeanFunctor());
                     thrust::transform(dstdevs_.begin(), dstdevs_.end(), dscales_.begin(), StdevFunctor());
                     scaled_ = true;
                     hmeans_ = dmeans_;
@@ -556,8 +556,8 @@ void GpuPool::SendForDedispersion(void) {
             gulpssent_++;
             // NOTE: Save the scaling factors with the first filterbank file dump
             if (gulpssent_ == 1) {
-                string scalestr = config_.outdir + "/scale.dat";
-                std::ofstream outscale(scalestr.c_str());
+                string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
+                std::ofstream outscale(scalename.c_str(), std::ios_base::out | std::ios_base::trunc); 
                 if (!outscale) {
                     cerr << "Could not create the scales file" << endl;
                 } else {
