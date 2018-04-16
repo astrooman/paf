@@ -420,7 +420,7 @@ void GpuPool::Initialise(void) {
     // STAGE: Prepare the DADA buffers
     client_ = 0;
     // TODO: Need to get the header here
-    dcontext_.headerfile = config_.inputheader.c_str();
+    dcontext_.headerfile = config_.inputheader;
     dcontext_.log = multilog_open("PAF DADA logger\n", 0);
     // TODO: Could this destination be a file?
     multilog_add(dcontext_.log, stderr);

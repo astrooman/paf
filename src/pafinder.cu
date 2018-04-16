@@ -8,6 +8,7 @@
 
 #include <cuda.h>
 #include <cufft.h>
+#include <string.h>
 
 #include "config.hpp"
 #include "errors.hpp"
@@ -97,7 +98,7 @@ int main(int argc, char *argv[])
                 config.numa = atoi(argv[iarg]);
             } else if (string(argv[iarg]) == "--dadaheader") {
                 iarg++;
-                config.inputheader = string(argv[iarg]);
+                config.inputheader = strdup(argv[iarg]);
             } else if (string(argv[iarg]) == "-v") {
                 config.verbose = true;
             } else if ((string(argv[iarg]) == "-h") || (string(argv[iarg]) == "--help")) {
