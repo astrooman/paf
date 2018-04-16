@@ -200,7 +200,7 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
 
     if (tmpctx -> buffno == -1) {
         return 0;
-    } 
+    }
 
         if (client -> quit) {
             multilog(client -> log, LOG_INFO, "End of the data transfer\n");
@@ -420,7 +420,7 @@ void GpuPool::Initialise(void) {
     // STAGE: Prepare the DADA buffers
     client_ = 0;
     // TODO: Need to get the header here
-    dcontext_.headerfile = config_.inputheader;
+    dcontext_.headerfile = config_.inputheader.c_str();
     dcontext_.log = multilog_open("PAF DADA logger\n", 0);
     // TODO: Could this destination be a file?
     multilog_add(dcontext_.log, stderr);

@@ -95,6 +95,9 @@ int main(int argc, char *argv[])
             } else if (string(argv[iarg]) == "--numa") {
                 iarg++;
                 config.numa = atoi(argv[iarg]);
+            } else if (string(argv[iarg]) == "--dadaheader") {
+                iarg++;
+                config.inputheader = string(argv[iarg]);
             } else if (string(argv[iarg]) == "-v") {
                 config.verbose = true;
             } else if ((string(argv[iarg]) == "-h") || (string(argv[iarg]) == "--help")) {
