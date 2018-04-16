@@ -2,7 +2,7 @@
 #include <exception>
 #include <iostream>
 #include <sys/stat.h>
-#include <sstring>
+#include <sstream>
 #include <thread>
 #include <vector>
 

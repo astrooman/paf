@@ -165,7 +165,7 @@ inline void ReadConfig(std::string filename, InConfig &config) {
 
     if(inconfig) {
         while(std::getline(inconfig, line)) {
-            std::istringstream ossline(line);
+            std::stringstream ossline(line);
             ossline >> paraname >> paravalue;
             std::stringstream svalue;
 
@@ -179,8 +179,11 @@ inline void ReadConfig(std::string filename, InConfig &config) {
                 config.fftsize = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "FREQAVG") {
                 config.freqavg = (unsigned int)(std::stoi(paravalue));
-            } e;se if (paraname == "DADAKEY") {
-                paravalue >> std::hex >> config.dadakey;
+            } else if (paraname == "DADAKEY") {
+                ossline.str("");
+                ossline.clear();
+                ossline << std::hex << paravalue;
+                ossline >> config.dadakey;
             } else if (paraname == "DEDISPGULP") {
                 config.gulp = (unsigned int)(std::stoi(paravalue));
             } else if (paraname == "GPUIDS") {

@@ -13,7 +13,7 @@
 
 #include <cufft.h>
 #include <cuda.h>
-#include <numa.h>
+//#include <numa.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
 #include <thrust/sequence.h>
@@ -163,15 +163,15 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
         memcpy(header, tmpctx -> obsheader, headersize);
 
         if (ascii_header_set(header, "UTC_START", "%s", tmpctx -> startutc.c_str()) < 0) {
-            multilog(tmpctx -> log, LOG_ERR, "Could not set the UTC_START in the Header Block!\n")
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the UTC_START in the Header Block!\n");
         }
 
         if (ascii_header_set(header, "MJD_START", "%f", tmpctx -> startmjd) < 0) {
-            multilog(tmpctx -> log, LOG_ERR, "Could not set the MJD_START in the Header Block!\n")
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the MJD_START in the Header Block!\n");
         }
 
         if (ascii_header_set(header, "BEAM", "%d", tmpctx -> beam) < 0) {
-            multilog(tmpctx -> log, LOG_ERR, "Could not set the BEAM in the Header Block!\n")
+            multilog(tmpctx -> log, LOG_ERR, "Could not set the BEAM in the Header Block!\n");
         }
 
         if (ipcbuf_mark_filled(tmpctx -> hdu -> header_block, headersize) < 0) {
@@ -200,9 +200,8 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
 
     if (tmpctx -> buffno == -1) {
         return 0;
-    } else
+    } 
 
-    while (!tmpctx -> buffno) {
         if (client -> quit) {
             multilog(client -> log, LOG_INFO, "End of the data transfer\n");
             return 0;
@@ -216,7 +215,6 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
             }
             return bytes;
         }
-    }
 }
 
 GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
@@ -456,9 +454,9 @@ void GpuPool::Initialise(void) {
     client_ -> close_function = DadaPafClose;
     client_ -> direction = dada_client_writer;
     client_ -> quit = false;
-    gputhreads_.push_back(thread(&GpuPool::SendToDada, this));
+    //gputhreads_.push_back(thread(&GpuPool::SendToDada, this));
 
-    //gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
+    gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
 
     // STAGE: Networking
     if (verbose_) {
