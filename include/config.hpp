@@ -137,7 +137,7 @@ inline void PrintConfig(const InConfig &config) {
         std::cout << "\t\t * " << config.ports.at(iport) << std::endl;
     }
     std::cout << "\t - output directory: " << config.outdir << std::endl;
-    std::cout << "\t - DADA key:" << std::hex << config.dadakey << std::endl;
+    std::cout << "\t - DADA key:" << std::hex << config.dadakey << std::hex << std::endl;
     time_t tmptime = std::chrono::system_clock::to_time_t(config.recordstart);
     std::cout << "\t - recording start time: " << std::asctime(std::gmtime(&tmptime));
     std::cout << "\t - the number of seconds to record: " << config.record << std::endl;

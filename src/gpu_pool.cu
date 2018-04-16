@@ -906,6 +906,7 @@ void GpuPool::ReceiveData(int portid, int recport) {
                 std::ifstream infile(instr.c_str());
                 if (infile) {
                     infile >> starttime_.refepoch >> starttime_.refsecond >> starttime_.refframe;
+                    cout << starttime_.refepoch << ", " << starttime_.refsecond << ", " << starttime_.refframe << endl;
                 } else {
                     cout << "Could not read the start time file" << endl;
                     starttime_.refepoch = refepoch;
