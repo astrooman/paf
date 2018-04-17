@@ -133,6 +133,7 @@ class GpuPool
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
         unsigned int scalesamples_;
+        unsigned int skipframes_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 

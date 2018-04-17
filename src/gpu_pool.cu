@@ -317,6 +317,7 @@ void GpuPool::Initialise(void) {
     PrintSafe("Preparing the memory on pool", poolid_, "...");
 
     scalesamples_ = (int)(config_.scaleseconds / config_.tsamp) / (2 * NACCUMULATE) * 2 * NACCUMULATE;
+    skipframes_ = scalesamples_ / 2;
     alreadyscaled_.store(0);
 
     // NOTE: 32 receive buffers provide a 884ms safety net for when things go wrong and processing stalls
@@ -667,7 +668,7 @@ void GpuPool::FilterbankData(int stream) {
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 //filbuffer_ -> UpdateFilledTimes(incomingtime);
-                filbuffer_ -> UpdateFilledTimes(incomingtime.refframe);
+                filbuffer_ -> UpdateFilledTimes(incomingtime.refframe - skipframes_);
             } else {
                 // NOTE: Path for when we still have to obtain scaling factors
                 DetectScrunchKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, dscalepower, outfilchans_);
@@ -755,8 +756,11 @@ void GpuPool::SendForDedispersion(void) {
     headerfil.telescope_id = 8;
 
     dcontext_.beam = beamno_;
-    dcontext_.startmjd = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 * config_.tsamp);
-    dcontext_.startutc = GetUtc(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 * config_.tsamp);
+    // NOTE: The actual start of the filterbank file will be the start time of the recording + what we use for scaling
+    // For 5s scaling, we use 92,160 filterbank samples, provided by 46,080 frames (each frame provides 2 output time samples)
+    //int skipframes = scalesamples_ / 2;
+    dcontext_.startmjd = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + ((double)starttime_.refframe + (double)skipframes_) * 27.0 / 250000.0);
+    dcontext_.startutc = GetUtc(starttime_.refepoch, (double)starttime_.refsecond + ((double)starttime_.refframe + (double)skipframes_) * 27.0 / 250000.0);
     dcontext_.haveinfo = true;
 
     std::chrono::duration<double> diff;
