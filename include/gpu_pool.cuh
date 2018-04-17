@@ -37,7 +37,7 @@ struct DadaContext {
     char *obsheader;
     unsigned int device;
     cudaStream_t stream;
-    unsigned char **devicememory;
+    unsigned char *devicememory;
     uint64_t bytestransferred;
     int buffno;
     std::string startutc;

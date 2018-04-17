@@ -73,6 +73,8 @@ bool GpuPool::working_ = true;
 #define NACCUMULATE 256
 #define SKIPCHAN 27
 
+mutex dadamutex;
+
 struct FactorFunctor {
     __host__ __device__ float operator()(float val) {
         return val != 0.0f ? 1.0f/val : val;
@@ -94,7 +96,7 @@ struct StdevFunctor {
     }
 };
 
-void DadaPafCudaHostTransfer(dada_client_t *client, void *destination, unsigned int buffno, size_t size, cudaStream_t stream) {
+void DadaPafCudaHostTransfer(dada_client_t *client, void *destination,  int buffno, size_t size, cudaStream_t stream) {
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client -> context);
     assert(tmpctx != 0);
@@ -107,6 +109,8 @@ int DadaPafOpen(dada_client_t *client) {
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
+
+    cout << "In the opening function" << endl;
 
     if (tmpctx -> verbose) {
         multilog(client->log, LOG_INFO, "Running DadaPafOpen\n");
@@ -124,6 +128,7 @@ int DadaPafOpen(dada_client_t *client) {
     }
 
     tmpctx -> headerwritten = false;
+
 
     // NOTE: transfer_bytes = 0 will make it run indefinitely
     client -> transfer_bytes=0;
@@ -152,10 +157,14 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
 
+    cout << "Writing the header function" << endl;
+
     // NOTE: We need to wait for beam and UTC_START information
     while(!tmpctx -> haveinfo) {
 
     }
+
+    cout << "I have all the info" << endl;
 
     if (!tmpctx -> headerwritten) {
         uint64_t headersize = ipcbuf_get_bufsz(tmpctx -> hdu -> header_block);
@@ -164,14 +173,17 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
 
         if (ascii_header_set(header, "UTC_START", "%s", tmpctx -> startutc.c_str()) < 0) {
             multilog(tmpctx -> log, LOG_ERR, "Could not set the UTC_START in the Header Block!\n");
+            return -1;
         }
 
         if (ascii_header_set(header, "MJD_START", "%f", tmpctx -> startmjd) < 0) {
             multilog(tmpctx -> log, LOG_ERR, "Could not set the MJD_START in the Header Block!\n");
+            return -1;
         }
 
         if (ascii_header_set(header, "BEAM", "%d", tmpctx -> beam) < 0) {
             multilog(tmpctx -> log, LOG_ERR, "Could not set the BEAM in the Header Block!\n");
+            return -1;
         }
 
         if (ipcbuf_mark_filled(tmpctx -> hdu -> header_block, headersize) < 0) {
@@ -179,9 +191,14 @@ int64_t DadaPafWrite(dada_client_t *client, void *buffer, uint64_t bytes) {
             return -1;
         }
         tmpctx -> headerwritten = true;
+        multilog(tmpctx -> log, LOG_INFO, "Filled the header block properly\n");
+
     } else {
         memset(buffer, 0, bytes);
     }
+
+    cout << "Wrote the header" << endl;
+
     return bytes;
 }
 
@@ -189,6 +206,9 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
     assert(client != 0);
     DadaContext *tmpctx = reinterpret_cast<DadaContext*>(client->context);
     assert(tmpctx != 0);
+
+    cout << "Block ID: " << blockid << endl;
+    cout << "Bytes to transfer: " << bytes << endl;
 
     // NOTE: There is a rece condition with the buffno variables
     // TODO: Sort it out between this function and SendForDedispersion method
@@ -198,26 +218,29 @@ int64_t DadaPafWriteBlock(dada_client_t *client, void *buffer, uint64_t bytes, u
 
     // TODO: Should I sent client -> quit to true or have other mechanism?
 
+    dadamutex.lock();
     if (tmpctx -> buffno == -1) {
+        dadamutex.unlock();
         return 0;
     }
 
         if (client -> quit) {
+            dadamutex.unlock();
             multilog(client -> log, LOG_INFO, "End of the data transfer\n");
             return 0;
         } else {
+            cout << "Transferring buffer " << tmpctx -> buffno - 1  << " into block " << blockid << " of size " << bytes << " bytes " << endl;
             DadaPafCudaHostTransfer(client, buffer, tmpctx -> buffno, bytes, tmpctx -> stream);
             tmpctx -> bytestransferred += bytes;
             // NOTE: Set to zero only if not done processing
             // TODO: Possible race condition between this thread and sending thread
-            if (tmpctx -> buffno != -1) {
-                tmpctx -> buffno = 0;
-            }
+            tmpctx -> buffno = 0;
+            dadamutex.unlock();
             return bytes;
         }
 }
 
-GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(config.accumulate),
+GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         avgfreq_(config.freqavg),
                                         avgtime_(config.timeavg),
                                         beamno_(0),
@@ -408,10 +431,13 @@ void GpuPool::Initialise(void) {
             cufftCheckError(cufftPlanMany(&fftplans_[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_));
             cufftCheckError(cufftSetStream(fftplans_[igstream], gpustreams_[igstream]));
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
-    }
+    }    
 
     memset(&starttime_, sizeof(starttime_), 0);
+    starttime_.refepoch = -1;
+    starttime_.refsecond = -1;
     starttime_.refframe = -1;
+
 
     gputhreads_.push_back(thread(&GpuPool::AddForFilterbank, this));
 
@@ -428,9 +454,13 @@ void GpuPool::Initialise(void) {
     dada_hdu_set_key(dcontext_.hdu, dadakey_);
     dcontext_.buffno = 0;
     dcontext_.stream = dedispstream_;
-    dcontext_.devicememory = filbuffer_ -> GetFilPointer();
-    dcontext_.haveinfo = false;
+    // NOTE: GetFilPointer() method returns pointer to pointer
+    // TODO: Need to remove it at some point - we are not using multiple Stokes parameters anymore
+    unsigned char **pfil = filbuffer_ -> GetFilPointer();
 
+    dcontext_.devicememory = pfil[0];
+    dcontext_.haveinfo = false;
+    
     if (dada_hdu_connect(dcontext_.hdu) < 0) {
         multilog(dcontext_.log, LOG_ERR, "Could not connect to the HDU!\n");
         exit(EXIT_FAILURE);
@@ -454,6 +484,7 @@ void GpuPool::Initialise(void) {
     client_ -> close_function = DadaPafClose;
     client_ -> direction = dada_client_writer;
     client_ -> quit = false;
+    
     //gputhreads_.push_back(thread(&GpuPool::SendToDada, this));
 
     gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
@@ -569,15 +600,11 @@ GpuPool::~GpuPool(void) {
 
     delete [] fftplans_;
 
-    if (dada_hdu_unlock_write(dcontext_.hdu) < 0) {
-        multilog(dcontext_.log, LOG_ERR, "Cound not unlock read on the HDU!\n");
-        exit(EXIT_FAILURE);
-    }
-
     if (dada_hdu_disconnect(dcontext_.hdu) < 0) {
         multilog(dcontext_.log, LOG_ERR, "Could not disconnect from the HDU!\n");
         exit(EXIT_FAILURE);
     }
+
 }
 
 void GpuPool::HandleSignal(int signum) {
@@ -591,7 +618,7 @@ void GpuPool::FilterbankData(int stream) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET((int)(poolid_) * cores_ + 1 + (int)(stream / 1), &cpuset);
-    int retaff = pthread_setaffinity_np(gputhreads_[stream].native_handle(), sizeof(cpu_set_t), &cpuset);
+    int retaff = pthread_setaffinity_np(gputhreads_[0].native_handle(), sizeof(cpu_set_t), &cpuset);
 
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for stream", stream, "on pool", poolid_);
@@ -624,7 +651,7 @@ void GpuPool::FilterbankData(int stream) {
             // NOTE: This already has the correct offset for a given buffer chunk included
             incoming = bufferinfo.first;
             incomingtime.refframe = bufferinfo.second;
-            //cout << incomingtime.refframe << " " << workqueue_.size() << endl;
+            //cout << incomingtime.refframe << endl;
             // TODO: Check whether we actually need this intermediate buffer or could we just copy directly to the GPU
             std::copy(incoming, incoming + inbuffsize_, hstreambuffer_ + stream * inbuffsize_);
 
@@ -634,9 +661,9 @@ void GpuPool::FilterbankData(int stream) {
             UnpackKernel<<<48, 128, 0, gpustreams_[stream]>>>(reinterpret_cast<int2*>(dstreambuffer_ + stream * inbuffsize_), dunpackedbuffer_ + skip);
             cufftCheckError(cufftExecC2C(fftplans_[stream], dunpackedbuffer_ + skip, dfftedbuffer_ + skip, CUFFT_FORWARD));
 
-            if (true) {
+            if (scaled_) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, reinterpret_cast<float*>(pfil[0]), pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, pfil[0], pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 //filbuffer_ -> UpdateFilledTimes(incomingtime);
@@ -690,7 +717,7 @@ void GpuPool::SendForDedispersion(void) {
     CPU_ZERO(&cpuset);
 
     CPU_SET((int)(poolid_) * cores_ + 1 + nostreams_ , &cpuset);
-    int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
+    int retaff = pthread_setaffinity_np(gputhreads_[2].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for dedisp thread on pool", poolid_);
         exit(EXIT_FAILURE);
@@ -705,7 +732,7 @@ void GpuPool::SendForDedispersion(void) {
     // NOTE: This is really where we should send the header to the DADA buffer
     // We will not have the start time before this point - this is decided by the receiver threads
 
-
+    cout << "Have the info: " << beamno_ << ", " << starttime_.refepoch << ", " << starttime_.refsecond << ", " << starttime_.refframe << endl;
 
     //ObsTime sendtime;
     int sendframe;
@@ -769,10 +796,15 @@ void GpuPool::SendForDedispersion(void) {
             sendframe = filbuffer_->GetTime(ready-1);
             headerfil.tstart = GetMjd(starttime_.refepoch, (double)starttime_.refsecond + (double)starttime_.refframe * 27.0 / 250000.0 + (double)(sendframe) * config_.tsamp);
 
+            dadamutex.lock();
             dcontext_.buffno = ready;
+            dadamutex.unlock();
             cout.precision(8);
-            cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to the DADA buffer" << endl;
-
+            //cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to the DADA buffer" << endl;
+            // NOTE: This is a quick and dirty hack to reset the received frames buffer
+            // NOTE: This caused the data to be sent twice, lag in the processing            
+            //filbuffer_ -> SendToRam(ready, dedispstream_, ready - 1);
+            filbuffer_ -> RestartSentFrames(ready);
             gulpssent_++;
             if (gulpssent_ == 1) {
                 string scalestr = config_.outdir + "/scale.dat";
@@ -794,7 +826,9 @@ void GpuPool::SendForDedispersion(void) {
             // NOTE: This should work when something is skipped
             if (((double)sendframe * config_.tsamp) >= secondstorecord_) {
                 working_ = false;
+                dadamutex.lock();
                 dcontext_.buffno = -1;
+                dadamutex.unlock();
             }
 /*
             // NOTE: Old file saving approach
@@ -872,11 +906,6 @@ void GpuPool::ReceiveData(int portid, int recport) {
 
     bool checkexpected;
 
-    while (std::chrono::high_resolution_clock::now() < config_.recordstart) {
-        //if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
-          //  PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
-    }
-
     if (portid == 0) {
         std::lock_guard<std::mutex> frameguard(framemutex_);
         unsigned char *tmpbuffer = receivebuffers_[0];
@@ -922,8 +951,24 @@ void GpuPool::ReceiveData(int portid, int recport) {
         startrecord_.wait(framelock, [this]{return (starttime_.refepoch != -1) && (starttime_.refsecond != -1) && (starttime_.refframe != -1);});
     }
 
+
+/*    if (portid == 0) {
+        std::lock_guard<std::mutex> frameguard(framemutex_);
+        unsigned char *tmpbuffer = receivebuffers_[0];
+        numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen);
+        starttime_.refepoch = (int)(tmpbuffer[12] >> 2);
+        starttime_.refsecond = (int)(tmpbuffer[3] | (tmpbuffer[2] << 8) | (tmpbuffer[1] << 16) | ((tmpbuffer[0] & 0x3f) << 24));
+        starttime_.refframe = (int)(tmpbuffer[7] | (tmpbuffer[6] << 8) | (tmpbuffer[5] << 16) | (tmpbuffer[4] << 24));
+        beamno_ = (int)(tmpbuffer[23] | (tmpbuffer[22] << 8));
+        cout << beamno_ << " on pool " << poolid_ << endl;
+        startrecord_.notify_all();
+    } else {
+        std::unique_lock<std::mutex> framelock(framemutex_);
+        startrecord_.wait(framelock, [this]{return starttime_.refframe != -1;});
+    }
+*/
     while(working_) {
-        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_ - 1, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
+        if ((numbytes = recvfrom(filedesc_[portid], receivebuffers_[portid], codiflen_ + headlen_, 0, (struct sockaddr*)&senderaddr, &addrlen)) == -1)
             PrintSafe("recvfrom error on port", recport, "on pool", poolid_, "with code", errno);
 
         // NOTE: This code assumes that the observations are not done over the epoch changed
@@ -934,12 +979,17 @@ void GpuPool::ReceiveData(int portid, int recport) {
         frame = (int)(receivebuffers_[portid][7] | (receivebuffers_[portid][6] << 8) | (receivebuffers_[portid][5] << 16) | (receivebuffers_[portid][4] << 24));
         frame = frame + (refsecond - starttime_.refsecond) / 27 * 250000 - starttime_.refframe;
         fpga = ((short)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 16) & 0xff) - 1) * 6 + ((int)((((struct sockaddr_in*)&senderaddr)->sin_addr.s_addr >> 24)& 0xff) - 1) / 2;
+        //if (fpga == 0)
+        //    cout << frame << ", " << fpga << endl;
         // NOTE: If we get a late frame coming in, it can have an absolute number less than 0
         // This will happen only at the beginning of receiving and should be unnecesary after first few packets
         if (frame < 0) {
             continue;
         }
 
+        //cout << frame << ", " << refsecond << ", " << fpga << endl;
+        //cout << refsecond << ", " << frame << endl;
+        //cout.flush();
         // NOTE: Which stream buffer the data is saved to
         bufidx = (int)(frame / accumulate_) % userecbuffers_;
         // NOTE: Number of packets to skip to get to the start of the stream buffer
@@ -1028,7 +1078,7 @@ void GpuPool::AddForFilterbank(void) {
     CPU_ZERO(&cpuset);
     // NOTE: 2 ports per CPU core
     CPU_SET((int)(poolid_) * cores_ + cores_ - 1, &cpuset);
-    int retaff = pthread_setaffinity_np(gputhreads_[nostreams_].native_handle(), sizeof(cpu_set_t), &cpuset);
+    int retaff = pthread_setaffinity_np(gputhreads_[1].native_handle(), sizeof(cpu_set_t), &cpuset);
     if (retaff != 0) {
         PrintSafe("Error setting thread affinity for the producer thread on pool", poolid_);
         exit(EXIT_FAILURE);
@@ -1057,7 +1107,7 @@ void GpuPool::AddForFilterbank(void) {
                         }
                         //cout << refframe << endl;
                         //cout.flush();
-                        break;
+                        //break;
                     }
                 }
                 // TODO: Fill the frame numbers with -1
@@ -1067,12 +1117,18 @@ void GpuPool::AddForFilterbank(void) {
                 workmutex_.lock();
                 workqueue_.push(std::make_pair(hinbuffer_ + istream * inbuffsize_, refframe));
                 if (workqueue_.size() > 1) {
-                    cerr << "WARNING: GPU is not keeping up with the work! (" << workqueue_.size() << ")" << endl;
+                    if (workqueue_.size() <= userecbuffers_) {
+                        cerr << "WARNING: GPU is not keeping up with the work! (" << workqueue_.size() << ")" << endl;
+                    } else {
+                        cerr << "ERROR: GPU is not keeping up with the work and we are overwriting the data! (" << workqueue_.size() << ")" << endl;
+                    }
                 }
                 workmutex_.unlock();
                 workready_.notify_one();
+                
                 break;
             }
         }
     }
+
 }
