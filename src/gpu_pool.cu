@@ -432,7 +432,7 @@ void GpuPool::Initialise(void) {
             cufftCheckError(cufftPlanMany(&fftplans_[igstream], 1, fftsizes_, NULL, 1, fftpoints_, NULL, 1, fftpoints_, CUFFT_C2C, fftbatchsize_));
             cufftCheckError(cufftSetStream(fftplans_[igstream], gpustreams_[igstream]));
             gputhreads_.push_back(thread(&GpuPool::FilterbankData, this, igstream));
-    }    
+    }
 
     memset(&starttime_, sizeof(starttime_), 0);
     starttime_.refepoch = -1;
@@ -461,7 +461,7 @@ void GpuPool::Initialise(void) {
 
     dcontext_.devicememory = pfil[0];
     dcontext_.haveinfo = false;
-    
+
     if (dada_hdu_connect(dcontext_.hdu) < 0) {
         multilog(dcontext_.log, LOG_ERR, "Could not connect to the HDU!\n");
         exit(EXIT_FAILURE);
@@ -485,7 +485,7 @@ void GpuPool::Initialise(void) {
     client_ -> close_function = DadaPafClose;
     client_ -> direction = dada_client_writer;
     client_ -> quit = false;
-    
+
     //gputhreads_.push_back(thread(&GpuPool::SendToDada, this));
 
     gputhreads_.push_back(thread(&GpuPool::SendForDedispersion, this));
@@ -733,6 +733,8 @@ void GpuPool::SendForDedispersion(void) {
     // NOTE: This is really where we should send the header to the DADA buffer
     // We will not have the start time before this point - this is decided by the receiver threads
 
+    float gulptime = dedispgulpsamples_ * config_.tsamp;
+
     cout << "Have the info: " << beamno_ << ", " << starttime_.refepoch << ", " << starttime_.refsecond << ", " << starttime_.refframe << endl;
 
     //ObsTime sendtime;
@@ -783,9 +785,9 @@ void GpuPool::SendForDedispersion(void) {
                 castdiff = std::chrono::duration_cast<std::chrono::milliseconds>(diff).count() / 1000.0f;
                 cout << "Previous buffer sent " << castdiff << "s ago" << endl;
 
-                if (castdiff > 7.10f) {
+                if (castdiff > (gulptime + 0.1f)) {
                     cout << "ERROR: This buffer is late" << endl;
-                } else if (castdiff < 7.0f) {
+                } else if (castdiff < (gulptime - 0.1f)) {
                     cout << "ERROR: This buffer is too early" << endl;
                 }
             }
@@ -806,7 +808,7 @@ void GpuPool::SendForDedispersion(void) {
             cout.precision(8);
             //cout << "Filterbank " << gulpssent_ << " with MJD " << headerfil.tstart << " for beam " << beamno_ << " on pool " << poolid_ << " sent to the DADA buffer" << endl;
             // NOTE: This is a quick and dirty hack to reset the received frames buffer
-            // NOTE: This caused the data to be sent twice, lag in the processing            
+            // NOTE: This caused the data to be sent twice, lag in the processing
             //filbuffer_ -> SendToRam(ready, dedispstream_, ready - 1);
             filbuffer_ -> RestartSentFrames(ready);
             gulpssent_++;
@@ -854,7 +856,7 @@ void GpuPool::SendForDedispersion(void) {
             // NOTE: Save the scaling factors with the first filterbank file dump
             if (gulpssent_ == 1) {
                 string scalename = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
-                std::ofstream outscale(scalename.c_str(), std::ios_base::out | std::ios_base::trunc); 
+                std::ofstream outscale(scalename.c_str(), std::ios_base::out | std::ios_base::trunc);
                 if (!outscale) {
                     cerr << "Could not create the scales file" << endl;
                 } else {
@@ -1129,7 +1131,7 @@ void GpuPool::AddForFilterbank(void) {
                 }
                 workmutex_.unlock();
                 workready_.notify_one();
-                
+
                 break;
             }
         }
