@@ -813,7 +813,7 @@ void GpuPool::SendForDedispersion(void) {
             filbuffer_ -> RestartSentFrames(ready);
             gulpssent_++;
             if (gulpssent_ == 1) {
-                string scalestr = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat"
+                string scalestr = config_.outdir + "/scale_beam_" + std::to_string(beamno_) + ".dat";
                 std::ofstream outscale(scalestr.c_str());
                 if (!outscale) {
                     cerr << "Could not create the scales file" << endl;
