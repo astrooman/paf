@@ -111,18 +111,18 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         unpackedbuffersize_(config.nopols * config.nochans * NACCUMULATE * 128),
                                         verbose_(config.verbose) {
 
-    start_ = std::chrono::system_clock::now();
-    cores_ = thread::hardware_concurrency();
+    //start_ = std::chrono::system_clock::now();
+    //cores_ = thread::hardware_concurrency();
     // NOTE: Divide by 2 to get cores per Pool
-    cores_ /= 2;
-    cout << "Number of cores: " << cores_ << endl;
-    if (cores_ == 0) {
-        cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
+    //cores_ /= 2;
+    //cout << "Number of cores: " << cores_ << endl;
+    //if (cores_ == 0) {
+    //    cerr << "Could not obtain the number of cores on node " << poolid << "!\n";
 
-        cerr << "Will set to 10!" << endl;
-        // NOTE: That should be 10 for the Effelsberg PAF machines - need to be careful when used on different machines.
+    //    cerr << "Will set to 10!" << endl;
+    //    // NOTE: That should be 10 for the Effelsberg PAF machines - need to be careful when used on different machines.
         cores_ = 10;
-    }
+        cout << "Number of cores: " << cores_ << endl;
 
     if (verbose_)
         PrintSafe("Starting GPU pool", gpuid_);
