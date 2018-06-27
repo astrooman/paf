@@ -101,6 +101,8 @@ int main(int argc, char *argv[])
                 config.inputheader = strdup(argv[iarg]);
             } else if (string(argv[iarg]) == "-v") {
                 config.verbose = true;
+            } else if (string(argv[iarg]) == "-i") {
+                config.interactive = true;
             } else if ((string(argv[iarg]) == "-h") || (string(argv[iarg]) == "--help")) {
                 cout << "Options:\n"
                         << "\t -h --help - print out this message\n"

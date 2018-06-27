@@ -22,6 +22,7 @@ struct InConfig {
 
     bool test;
     bool verbose;
+    bool interactive;
 
     double band;                //!< Sampling rate for each band in MHz
     double dmend;
@@ -72,6 +73,7 @@ struct InConfig {
 };
 
 inline void SetDefaultConfig(InConfig &config) {
+    config.interactive = false;
     config.test = false;
     config.verbose = false;
 

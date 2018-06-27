@@ -256,6 +256,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         gulpssent_(0),
                                         headlen_(config.headlen),
                                         ipstring_(config.ips[poolid]),
+                                        interactive_(config.interactive),
                                         // NOTE: There are config.nochans * NACCUMULATE * 128 8-byte words
                                         inbuffsize_(8  * config.nochans * NACCUMULATE * 128),
                                         inchans_(config.nochans),
@@ -933,24 +934,32 @@ void GpuPool::ReceiveData(int portid, int recport) {
         struct stat checkfile;
         string instr = config_.outdir + "/start_now.dat";
 
-        while(true) {
-            if (stat(instr.c_str(), &checkfile) != 0) {
-                continue;
-            }
-            if (checkfile.st_size > 0) {
-                std::ifstream infile(instr.c_str());
-                if (infile) {
-                    infile >> starttime_.refepoch >> starttime_.refsecond >> starttime_.refframe;
-                    cout << starttime_.refepoch << ", " << starttime_.refsecond << ", " << starttime_.refframe << endl;
-                } else {
-                    cout << "Could not read the start time file" << endl;
-                    starttime_.refepoch = refepoch;
-                    starttime_.refsecond = refsecond;
-                    starttime_.refframe = refframe;
+        // When no launch time supervisor is used
+        if (interactive_) {
+            starttime_.refepoch = refepoch;
+            starttime_.refsecond = refsecond;
+            starttime_.refframe = refframe;
+        } else {
+            while(true) {
+                if (stat(instr.c_str(), &checkfile) != 0) {
+                    continue;
                 }
-                break;
+                if (checkfile.st_size > 0) {
+                    std::ifstream infile(instr.c_str());
+                    if (infile) {
+                        infile >> starttime_.refepoch >> starttime_.refsecond >> starttime_.refframe;
+                        cout << starttime_.refepoch << ", " << starttime_.refsecond << ", " << starttime_.refframe << endl;
+                    } else {
+                        cout << "Could not read the start time file" << endl;
+                        starttime_.refepoch = refepoch;
+                        starttime_.refsecond = refsecond;
+                        starttime_.refframe = refframe;
+                    }
+                    break;
+                }
             }
         }
+
         startrecord_.notify_all();
     } else {
         std::unique_lock<std::mutex> framelock(framemutex_);
