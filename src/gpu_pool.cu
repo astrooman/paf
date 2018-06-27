@@ -274,7 +274,8 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
                                         verbose_(config.verbose) {
 
     start_ = std::chrono::system_clock::now();
-    cores_ = thread::hardware_concurrency();
+    cores_ = 10;
+    /*cores_ = thread::hardware_concurrency();
     // NOTE: Divide by 2 to get cores per Pool
     cores_ /= 2;
     cout << "Number of cores: " << cores_ << endl;
@@ -285,7 +286,7 @@ GpuPool::GpuPool(int poolid, InConfig config) : accumulate_(NACCUMULATE),
         // NOTE: That should be 10 for the Effelsberg PAF machines - need to be careful when used on different machines.
         cores_ = 10;
     }
-
+    */
     if (verbose_)
         PrintSafe("Starting GPU pool", gpuid_);
 }
