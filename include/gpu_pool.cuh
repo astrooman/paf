@@ -53,7 +53,7 @@ class GpuPool
         dada_client_t *client_;
         key_t dadakey_;
 
-        bool interative_;
+        bool interactive_;
         bool scaled_;
         bool verbose_;
         static bool working_;
