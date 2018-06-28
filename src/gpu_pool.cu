@@ -319,6 +319,7 @@ void GpuPool::Initialise(void) {
     PrintSafe("Preparing the memory on pool", poolid_, "...");
 
     scalesamples_ = (int)(config_.scaleseconds / config_.tsamp) / (2 * NACCUMULATE) * 2 * NACCUMULATE;
+    // NOTE: This assumes each CODIF data frame results in the output 2 time samples
     skipframes_ = scalesamples_ / 2;
     alreadyscaled_.store(0);
 
@@ -666,7 +667,7 @@ void GpuPool::FilterbankData(int stream) {
 
             if (scaled_) {
                 // NOTE: Path for when the scaling factors have already been obtained
-                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, pfil[0], pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe);
+                DetectScrunchScaleKernel<<<2 * NACCUMULATE, 1024, 0, gpustreams_[stream]>>>(dfftedbuffer_ + skip, pfil[0], pdmeans_, pdscales_, outfilchans_, dedispnobuffers_, dedispgulpsamples_, dedispextrasamples_, incomingtime.refframe - skipframes_);
                 //cudaStreamSynchronize(gpustreams_[stream]);
                 cudaCheckError(cudaGetLastError());
                 //filbuffer_ -> UpdateFilledTimes(incomingtime);
