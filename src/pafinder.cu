@@ -1,3 +1,5 @@
+#include <Python.h>
+
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -22,6 +24,8 @@ using std::vector;
 
 int main(int argc, char *argv[])
 {
+    Py_SetProgramName(argv[0]);
+
     string configfile;
     InConfig config;
     SetDefaultConfig(config);

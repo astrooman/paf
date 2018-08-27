@@ -1,3 +1,4 @@
+NPY_INC = /anaconda2/lib/python2.7/site-packages/numpy/core/include
 SRC_DIR = ./src
 INC_DIR = ./include
 OBJ_DIR = ./obj

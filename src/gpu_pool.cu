@@ -728,7 +728,9 @@ void GpuPool::ReceiveMetadata(void) {
     Py_Initialize();
 
     PyRun_SimpleString("import sys");
-    PyRun_SimpleString("sys.path.insert(0, \"./scripts/\")");
+    PyRun_SimpleString("print sys.path");
+    PyRun_SimpleString("sys.path.insert(0, \"/pafinder/scripts/\")");
+    PyRun_SimpleString("print sys.path");
     PyObject *pFunc, *pModule, *pName, *pValue;
 
     // NOTE: That imports the buff2utc module file
@@ -750,6 +752,7 @@ void GpuPool::ReceiveMetadata(void) {
         }
     } else {
         cerr << "Failed to load the Python module" << endl;
+        PyErr_Print();
         working_ = false;
     }
 
@@ -816,7 +819,7 @@ void GpuPool::ReceiveMetadata(void) {
 
         string bufstr = string(buffer);
         pValue = PyObject_CallFunction(pFunc, "s", bufstr.c_str());
-
+        memset(buffer, 0, buffsize);
     }
 
     Py_Finalize();
