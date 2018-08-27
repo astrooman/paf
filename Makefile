@@ -6,7 +6,7 @@ DEDISP_DIR = ./dedisp_paf
 CC=g++
 NVCC=/usr/local/cuda/bin/nvcc
 DEBUG=#-g -G
-INCLUDE = -I${INC_DIR} -I/usr/local/cuda/include -I/usr/include/python2.7 -I/usr/include/x86_64-linux-gnu/python2.7 -I/site-packages/numpy/core/include
+INCLUDE = -I${INC_DIR} -I/usr/local/cuda/include -I/usr/include/python2.7 -I/usr/include/x86_64-linux-gnu/python2.7 -I${NPY_INC}
 LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda/lib64 -L/usr/lib/python2.7/config-x86_64-linux-gnu -L/usr/lib -lpython2.7 -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
 
 CFLAGS = -Wall -Wextra -std=c++11
