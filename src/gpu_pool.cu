@@ -1,3 +1,8 @@
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+
+#include <Python.h>
+#include <numpy/arrayobject.h>
+
 #include <algorithm>
 #include <atomic>
 #include <bitset>
@@ -200,7 +205,6 @@ void GpuPool::Initialise(void) {
 
     // End of the page-locked memory allocation
 
-
     dedispplan_ = unique_ptr<DedispPlan>(new DedispPlan(filchans_, config_.tsamp, config_.ftop, config_.foff, gpuid_));
     filbuffer_ = unique_ptr<FilterbankBuffer>(new FilterbankBuffer(gpuid_));
     gpustreams_ = new cudaStream_t[nostreams_];
@@ -331,14 +335,15 @@ void GpuPool::Initialise(void) {
     for (int iport = 0; iport < noports_; iport++)
         receivethreads_.push_back(thread(&GpuPool::ReceiveData, this, iport, ports_.at(iport)));
 
+    receivethreads_.push_back(thread(&GpuPool::ReceiveMetadata, this));
 }
 
 GpuPool::~GpuPool(void) {
 
-    for(int ithread = 0; ithread < gputhreads_.size(); ithread++)
+    for(int ithread = 0; ithread < gputhreads_.size(); ++ithread)
         gputhreads_[ithread].join();
 
-    for (int ithread = 0; ithread < noports_; ithread++)
+    for (int ithread = 0; ithread < receivethreads_.size(); ++ithread)
         receivethreads_[ithread].join();
 
     stop_ = std::chrono::system_clock::now();
@@ -710,10 +715,112 @@ void GpuPool::ReceiveData(int portid, int recport) {
                 }
             }
         }*/
-
+        
     }
     // NOTE: Wakes the consumer threads up to let them know their struggle is over
     workready_.notify_all();
+}
+
+void GpuPool::ReceiveMetadata(void) {
+    
+    PrintSafe("Preparing metadata recording on pool", poolid_);
+
+    Py_Initialize();
+
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.insert(0, \"./scripts/\")");
+    PyObject *pFunc, *pModule, *pName, *pValue;
+
+    // NOTE: That imports the buff2utc module file
+    pName = PyString_FromString("buff2utc");
+    pModule = PyImport_Import(pName);
+
+    // NOTE: Decreases the reference count for object - object deallocation function is invoked if the counter reaches 0
+    Py_DECREF(pName);
+    
+    if (pModule != NULL) {
+        pFunc = PyObject_GetAttrString(pModule, "buff2utc");
+
+        // NOTE: Checks if retrieved attribute is callable - means function if it is
+        if (pFunc && PyCallable_Check(pFunc)) { 
+
+        } else {
+            cerr << "Cannot find the relevant Python function" << endl;
+            working_ = false; 
+        }
+    } else {
+        cerr << "Failed to load the Python module" << endl;
+        working_ = false;
+    }
+
+    int filedesc, numbytes;
+    ip_mreq group;
+    sockaddr_in hints;
+    
+    hints.sin_family = AF_INET;
+    hints.sin_port = htons(5007);
+    hints.sin_addr.s_addr = inet_addr("224.1.1.1");
+
+    if ((filedesc = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        cerr << "Metadata socket creation error!" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    int reuse = 1;
+
+    if (setsockopt(filedesc, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse)) == -1) {
+        cerr << "Could not set the SO_REUSEADDR option on the metadata socket!" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    if (bind(filedesc, (sockaddr*)&hints, sizeof(hints)) == -1) {
+        close(filedesc);
+        cerr << "Bind error on the metadata socket!" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    group.imr_multiaddr = hints.sin_addr;
+    group.imr_interface.s_addr = INADDR_ANY;
+
+    if (setsockopt(filedesc, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&group, sizeof(group)) == -1) {
+        cerr << "Adding to multicast group error!" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    int buffsize = 1 << 16;
+    char *buffer = new char[buffsize];
+    memset(buffer, 0, buffsize);
+
+    sockaddr_storage senderaddr;
+    memset(&senderaddr, 0, sizeof(senderaddr));
+    socklen_t addrlen;
+    memset(&addrlen, 0, sizeof(addrlen));
+    addrlen = sizeof(senderaddr);
+
+    unsigned int recfail = 0;
+
+    while(working_) {
+        numbytes = recvfrom(filedesc, reinterpret_cast<char*>(buffer), buffsize, 0, (sockaddr*)&senderaddr, &addrlen);
+
+        if (numbytes < 0) {
+            cerr << "Error on the metadata receive!" << endl;
+            recfail++;
+            if (recfail > 15) {
+                cerr << "ERROR: No metadata information for " << recfail << "s" << endl;
+            }
+            continue;
+        }
+
+        // NOTE: Restart the failed receive counter - we are only interested in fails in a row
+        recfail = 0;
+
+        string bufstr = string(buffer);
+        pValue = PyObject_CallFunction(pFunc, "s", bufstr.c_str());
+
+    }
+
+    Py_Finalize();
+
 }
 
 void GpuPool::AddForFilterbank(void) {

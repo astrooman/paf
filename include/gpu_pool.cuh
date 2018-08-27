@@ -99,7 +99,7 @@ class GpuPool
         unsigned int filchans_;                //!< Number of output filterbank channels
         unsigned int gulpssent_;
         unsigned int packperbuffer_;
-	unsigned int scalesamples_;
+	    unsigned int scalesamples_;
         unsigned int secondstorecord_;
         unsigned int userecbuffers_;
 
@@ -171,6 +171,8 @@ class GpuPool
         void FilterbankData(int stream);
 
         void ReceiveData(int portid, int recport);
+
+        void ReceiveMetadata(void);
 
 };
 

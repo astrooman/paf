@@ -4,10 +4,10 @@ OBJ_DIR = ./obj
 BIN_DIR = ./bin
 DEDISP_DIR = ./dedisp_paf
 CC=g++
-NVCC=/usr/local/cuda-8.0/bin/nvcc
+NVCC=/usr/local/cuda/bin/nvcc
 DEBUG=#-g -G
-INCLUDE = -I${INC_DIR} -I/usr/local/cuda-8.0/include
-LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda-8.0/lib64 -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
+INCLUDE = -I${INC_DIR} -I/usr/local/cuda/include -I/usr/include/python2.7 -I/usr/include/x86_64-linux-gnu/python2.7 -I/site-packages/numpy/core/include
+LIBS = -L${DEDISP_DIR}/lib -L/usr/local/cuda/lib64 -L/usr/lib/python2.7/config-x86_64-linux-gnu -L/usr/lib -lpython2.7 -lstdc++ -lboost_system -lpthread -lcudart -lcuda -lnuma
 
 CFLAGS = -Wall -Wextra -std=c++11
 NVCC_FLAG = --std=c++11 -lcufft -Xcompiler ${DEBUG} #--default-stream per-thread
