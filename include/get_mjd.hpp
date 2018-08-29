@@ -47,7 +47,7 @@ inline double GetMjd(int refepoch, double refsecond) {
     return mjd;
 }
 
-// NOTE: QUick hack to also get the start UTC time
+// NOTE: Quick hack to also get the start UTC time
 inline std::string GetUtc(int refepoch, double refsecond) {
 // NOTE: Leap year has few rules, but I don't think anyone will be using
 // this code in the year 2100 (sorry if you are), when the divisibility by 100 is taken into account.
@@ -68,6 +68,8 @@ for (int imonth = 0; imonth < 6; imonth++) {
     }
     break;
 }
+
+month++;
 short hour = (int)(rem / 3600.0);
 short minute = (int)((rem - hour * 3600.0) / 60.0);
 double second = rem - (hour * 3600.0 + minute * 60.0);
